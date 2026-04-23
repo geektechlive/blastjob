@@ -214,9 +214,7 @@ def _parse_score(text: str, work_history_md: str) -> FitScore:
     score.unsupported_count = sum(1 for c in score.claims if not c.grounded)
 
     if score.claims:
-        grounded_pct = int(
-            100 * sum(1 for c in score.claims if c.grounded) / len(score.claims)
-        )
+        grounded_pct = int(100 * sum(1 for c in score.claims if c.grounded) / len(score.claims))
         score.groundedness_score = grounded_pct
         score.overall_score = int(grounded_pct * 0.7 + score.jd_alignment_score * 0.3)
 
