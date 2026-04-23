@@ -12,7 +12,9 @@ You give it your resume files. It extracts a complete, deduplicated work history
 
 **Build.** Paste a job description, enter the company name, and pick your format. blastjob researches the company (if you have an Anthropic API key), generates a resume targeted to that specific role, scores the fit against the job description, and exports to Markdown, PDF, DOCX, or ATS plain text. Every run gets its own dated folder so you always know who you applied to and when.
 
-**History.** A built-in screen shows every resume you have generated, with cost, token count, and cache hit ratio.
+**Work History.** A built-in editor lets you view and edit your `work_history.md` and resume templates without leaving the app.
+
+**History.** A built-in screen shows every resume you have generated, with cost, token count, and cache hit ratio. Select any past run and hit Rebuild to pre-populate the Build screen with the original job description so you can tweak and regenerate without re-pasting anything.
 
 ---
 
@@ -77,7 +79,7 @@ You ingest once (or re-ingest when you have new material). After that, every res
 
 ### Resume output
 
-Each build creates a folder under `~/Documents/blastjob/`:
+Each build creates a folder under `~/Documents/blastjob/`. After the build completes, an Open Output Folder button appears so you can jump straight to the files in Finder.
 
 ```
 ~/Documents/blastjob/
@@ -102,7 +104,7 @@ blastjob generates resumes the way a good career coach would tell you to write t
 
 ## Configuration
 
-Config lives at `~/.config/blastjob/config.toml`. blastjob creates it with defaults on first run. You can also edit it from the Settings screen inside the app.
+Config lives at `~/.config/blastjob/config.toml`. blastjob creates it with defaults on first run. You can also edit it from the Settings screen inside the app. Use the Test Connection button there to verify your provider is reachable before running a build.
 
 ```toml
 [paths]
