@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "blastjob"
+version = "0.1.0"
+description = "AI-powered resume management and generation TUI"
+requires-python = ">=3.11"
+
+dependencies = [
+    "textual>=0.80",
+    "anthropic>=0.40",
+    "pydantic>=2.8",
+    "pymupdf>=1.24",
+    "python-docx>=1.1",
+    "weasyprint>=62.0",
+    "markdown>=3.6",
+    "platformdirs>=4.2",
+    "tomli-w>=1.1",
+]
+
+[project.optional-dependencies]
+openai = [
+    "openai>=1.30",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "textual-dev>=0.80",
+]
+
+[project.scripts]
+blastjob = "blastjob.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/blastjob"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

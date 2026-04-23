@@ -1,0 +1,60 @@
+/* Base layout */
+Screen {
+    layout: horizontal;
+}
+
+/* Footer polish */
+Footer {
+    background: $panel;
+    color: $text-muted;
+}
+
+/* Cost bar */
+CostBar {
+    dock: bottom;
+    height: 1;
+    background: $panel;
+}
+
+/* Home */
+#home-content {
+    width: 1fr;
+    align: center middle;
+    padding: 4;
+}
+
+#home-title {
+    margin-bottom: 1;
+    text-style: bold;
+}
+
+/* Ingest and Build: side-by-side panels */
+#ingest-main,
+#build-main {
+    width: 1fr;
+    height: 1fr;
+}
+
+/* History */
+#history-content {
+    width: 1fr;
+}
+
+/* Settings */
+#settings-content {
+    width: 1fr;
+}
+
+/* Modal overlay */
+CostModal {
+    align: center middle;
+    background: $background 60%;
+}
+
+CostModal .modal-content {
+    width: 72;
+    height: auto;
+    background: $surface;
+    border: double $primary;
+    padding: 2 4;
+}
