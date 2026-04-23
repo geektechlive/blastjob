@@ -12,18 +12,24 @@ _DISPATCH = {
 }
 
 
-def collect(path: Path) -> list[tuple[Path, str]]:
+def collect(
+    path: Path,
+    on_skip: Callable[[Path, str], None] | None = None,
+) -> list[tuple[Path, str]]:
     """Return (file_path, text_content) pairs for all supported files under path."""
     if path.is_file():
-        return _extract_file(path)
+        return _extract_file(path, on_skip)
     results = []
     for child in sorted(path.rglob("*")):
         if child.is_file():
-            results.extend(_extract_file(child))
+            results.extend(_extract_file(child, on_skip))
     return results
 
 
-def _extract_file(path: Path) -> list[tuple[Path, str]]:
+def _extract_file(
+    path: Path,
+    on_skip: Callable[[Path, str], None] | None = None,
+) -> list[tuple[Path, str]]:
     ext = path.suffix.lower()
     fn = _DISPATCH.get(ext)
     if fn is None:
@@ -32,17 +38,19 @@ def _extract_file(path: Path) -> list[tuple[Path, str]]:
         content = fn(path)
         if content.strip():
             return [(path, content)]
-    except Exception:
-        pass
+    except Exception as exc:
+        if on_skip:
+            on_skip(path, str(exc))
     return []
 
 
 def labeled_chunks(
     path: Path,
     on_file: Callable[[int, int, str], None] | None = None,
+    on_skip: Callable[[Path, str], None] | None = None,
 ) -> list[str]:
     """Return XML-tagged text chunks. Calls on_file(index, total, filename) per file."""
-    pairs = collect(path)
+    pairs = collect(path, on_skip=on_skip)
     total = len(pairs)
     chunks = []
     for i, (file_path, content) in enumerate(pairs, 1):

@@ -1,4 +1,5 @@
 from blastjob.exporters.ats import _strip_markdown, _wrap
+from blastjob.exporters.ats import write as ats_write
 from blastjob.exporters.markdown import write as md_write
 
 
@@ -30,8 +31,30 @@ def test_wrap_long_line():
         assert len(line) <= 80
 
 
+def test_wrap_short_line_preserved():
+    short = "This is a short line."
+    result = _wrap(short)
+    assert result == short
+
+
 def test_markdown_write(tmp_path):
     content = "# Hello\n\nWorld"
     out = md_write(content, tmp_path)
     assert out.exists()
     assert out.read_text() == content
+
+
+def test_ats_write_creates_file(tmp_path):
+    content = "## Experience\n\nBuilt **things** at *Acme*."
+    out = ats_write(content, tmp_path)
+    assert out.exists()
+    assert out.name == "resume.ats.txt"
+    text = out.read_text()
+    assert "EXPERIENCE:" in text
+    assert "**" not in text
+    assert "*" not in text
+
+
+def test_ats_write_returns_path(tmp_path):
+    out = ats_write("Plain text resume.", tmp_path)
+    assert out == tmp_path / "resume.ats.txt"

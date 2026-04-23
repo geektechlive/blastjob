@@ -91,6 +91,15 @@ class BuildResumeScreen(Screen):
             self.query_one("#inp-company", Input).value = pending.get("company", "")
             self.query_one("#inp-role", Input).value = pending.get("role", "")
             self.query_one("#jd-area", TextArea).load_text(pending.get("jd", ""))
+        from blastjob import config as cfg_mod
+
+        data_path = cfg_mod.data_dir(self.app.config)  # type: ignore[attr-defined]
+        if not (data_path / "work_history.md").exists():
+            self.query_one("#build-error", Label).update("No work history yet. Go to Ingest first.")
+            self.query_one("#btn-generate", Button).disabled = True
+        else:
+            self.query_one("#build-error", Label).update("")
+            self.query_one("#btn-generate", Button).disabled = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-open-output":

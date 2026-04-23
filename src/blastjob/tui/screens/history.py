@@ -93,10 +93,13 @@ class HistoryScreen(Screen):
             self.query_one("#history-detail", Label).update("[dim]Select a row first.[/dim]")
             return
         jd_file = entry.path / "job_description.md"
-        jd = ""
-        if jd_file.exists():
-            content = jd_file.read_text(encoding="utf-8")
-            parts = content.split("\n\n", 2)
-            jd = parts[2] if len(parts) >= 3 else content
+        if not jd_file.exists():
+            self.query_one("#history-detail", Label).update(
+                "[dim]Job description not found — cannot rebuild.[/dim]"
+            )
+            return
+        content = jd_file.read_text(encoding="utf-8")
+        parts = content.split("\n\n", 2)
+        jd = parts[2] if len(parts) >= 3 else content
         self.app.pending_build = {"company": entry.company, "role": entry.role, "jd": jd}
         self.app.switch_screen("build")

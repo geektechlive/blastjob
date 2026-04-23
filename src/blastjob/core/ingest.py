@@ -33,7 +33,10 @@ async def run_ingestion(
     def on_file(index: int, total: int, name: str) -> None:
         emit(f"  [{index}/{total}] Reading {name}\n")
 
-    chunks = labeled_chunks(path, on_file=on_file)
+    def on_skip(file_path: Path, reason: str) -> None:
+        emit(f"  [SKIP] {file_path.name}: {reason}\n")
+
+    chunks = labeled_chunks(path, on_file=on_file, on_skip=on_skip)
     if not chunks:
         raise ValueError("No supported files found at the given path.")
 

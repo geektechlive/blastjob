@@ -75,6 +75,9 @@ async def run_build(
     call_cost = cost_from_usage(final.usage, app_config.pricing)
     cost_tracker.record(call_cost)
 
+    if not resume_md.strip():
+        raise ValueError("Resume generation returned empty content — nothing to export.")
+
     # Step 3: Create output folder
     out_dir = make_output_dir(out_root, company, role)
 

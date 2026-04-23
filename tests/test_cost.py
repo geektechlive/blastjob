@@ -46,3 +46,28 @@ def test_tracker_reset():
     tracker.record(CallCost(cost_usd=1.0))
     tracker.reset()
     assert tracker.total_cost == 0.0
+
+
+def test_call_cost_total_tokens():
+    call = CallCost(input_tokens=300, output_tokens=200)
+    assert call.total_tokens == 500
+
+
+def test_cache_hit_ratio_zero_denom():
+    call = CallCost()
+    assert call.cache_hit_ratio == 0.0
+
+
+def test_tracker_total_tokens():
+    tracker = CostTracker()
+    tracker.record(CallCost(input_tokens=100, output_tokens=50))
+    tracker.record(CallCost(input_tokens=200, output_tokens=100))
+    assert tracker.total_tokens == 450
+
+
+def test_tracker_session_summary():
+    tracker = CostTracker()
+    tracker.record(CallCost(cost_usd=0.05, input_tokens=1000, output_tokens=500))
+    summary = tracker.session_summary
+    assert "$0.0500" in summary
+    assert "1,500" in summary
