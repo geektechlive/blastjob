@@ -2,6 +2,15 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Button, Label
 
+_NAV = [
+    ("nav-home", "Home", "home"),
+    ("nav-ingest", "Ingest", "ingest"),
+    ("nav-work-history", "Work History", "work-history"),
+    ("nav-build", "Build Resume", "build"),
+    ("nav-history", "History", "history"),
+    ("nav-settings", "Settings", "settings"),
+]
+
 
 class NavSidebar(Widget):
     DEFAULT_CSS = """
@@ -40,24 +49,25 @@ NavSidebar > Button:focus {
     color: $text;
     border-left: solid $primary;
 }
+NavSidebar > Button.active {
+    background: $primary-darken-2;
+    color: $text;
+    border-left: solid $primary;
+}
 """
+
+    def __init__(self, active: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._active = active
 
     def compose(self) -> ComposeResult:
         yield Label("blastjob")
-        yield Button("Home", id="nav-home", variant="default")
-        yield Button("Ingest", id="nav-ingest", variant="default")
-        yield Button("Build Resume", id="nav-build", variant="default")
-        yield Button("History", id="nav-history", variant="default")
-        yield Button("Settings", id="nav-settings", variant="default")
+        for btn_id, label, screen_name in _NAV:
+            classes = "active" if screen_name == self._active else ""
+            yield Button(label, id=btn_id, variant="default", classes=classes)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        nav_map = {
-            "nav-home": "home",
-            "nav-ingest": "ingest",
-            "nav-build": "build",
-            "nav-history": "history",
-            "nav-settings": "settings",
-        }
+        nav_map = {btn_id: screen_name for btn_id, _label, screen_name in _NAV}
         screen = nav_map.get(event.button.id or "")
         if screen:
             self.app.switch_screen(screen)

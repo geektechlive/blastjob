@@ -1,3 +1,5 @@
+import subprocess
+
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
@@ -48,7 +50,7 @@ class BuildResumeScreen(Screen):
     """
 
     def compose(self) -> ComposeResult:
-        yield NavSidebar()
+        yield NavSidebar(active="build")
         with Horizontal(id="build-main"):
             with Vertical(id="build-left"):
                 yield Label("[bold]Build Resume[/bold]", markup=True)
@@ -72,11 +74,29 @@ class BuildResumeScreen(Screen):
                 yield Button("Generate", id="btn-generate", variant="success")
                 yield Label("", id="build-error")
                 yield Label("", id="build-result")
+                yield Button(
+                    "Open Output Folder",
+                    id="btn-open-output",
+                    variant="default",
+                    disabled=True,
+                )
             with Vertical(id="build-right"):
                 yield StreamLog(id="build-log", highlight=True, markup=True)
         yield Footer()
 
+    def on_screen_resume(self) -> None:
+        pending = getattr(self.app, "pending_build", None)
+        if pending:
+            self.app.pending_build = None
+            self.query_one("#inp-company", Input).value = pending.get("company", "")
+            self.query_one("#inp-role", Input).value = pending.get("role", "")
+            self.query_one("#jd-area", TextArea).load_text(pending.get("jd", ""))
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-open-output":
+            if hasattr(self, "_last_out_dir"):
+                subprocess.run(["open", str(self._last_out_dir)], check=False)
+            return
         if event.button.id != "btn-generate":
             return
 
@@ -148,12 +168,16 @@ class BuildResumeScreen(Screen):
                 confidential=confidential,
             )
             log.flush()
+            self._last_out_dir = out_dir
+            self.query_one("#btn-open-output", Button).disabled = False
             result = f"Saved to: {out_dir}"
             if fit_score is not None:
                 result += (
                     f" · Fit: {fit_score.overall_score}/100"
                     f" · {fit_score.unsupported_count} unsupported"
                 )
+            else:
+                result += " · Score unavailable"
             self.query_one("#build-result", Label).update(result)
             self.app.query_one("CostBar").update_cost(tracker.session_summary)
         except Exception as e:

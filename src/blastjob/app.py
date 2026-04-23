@@ -9,6 +9,7 @@ from blastjob.tui.screens.history import HistoryScreen
 from blastjob.tui.screens.home import HomeScreen
 from blastjob.tui.screens.ingest import IngestScreen
 from blastjob.tui.screens.settings import SettingsScreen
+from blastjob.tui.screens.work_history import WorkHistoryScreen
 from blastjob.tui.widgets.cost_bar import CostBar
 
 
@@ -18,6 +19,7 @@ class BlastJobApp(App):
 
     BINDINGS = [
         ("i", "switch_screen('ingest')", "Ingest"),
+        ("w", "switch_screen('work-history')", "Work History"),
         ("b", "switch_screen('build')", "Build"),
         ("h", "switch_screen('history')", "History"),
         ("s", "switch_screen('settings')", "Settings"),
@@ -27,6 +29,7 @@ class BlastJobApp(App):
     SCREENS = {
         "home": HomeScreen,
         "ingest": IngestScreen,
+        "work-history": WorkHistoryScreen,
         "build": BuildResumeScreen,
         "history": HistoryScreen,
         "settings": SettingsScreen,
@@ -36,6 +39,7 @@ class BlastJobApp(App):
         super().__init__()
         self.config = load_config()
         self.cost_tracker = CostTracker()
+        self.pending_build: dict | None = None
 
     def compose(self) -> ComposeResult:
         yield CostBar()

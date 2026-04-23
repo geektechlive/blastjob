@@ -58,3 +58,21 @@ CostModal .modal-content {
     border: double $primary;
     padding: 2 4;
 }
+
+/* Work History */
+#wh-content {
+    width: 1fr;
+    height: 100%;
+    padding: 1 2;
+}
+
+#wh-actions {
+    height: auto;
+    padding: 1 0 0 0;
+    layout: horizontal;
+}
+
+#wh-msg {
+    padding: 0 2;
+    color: $success;
+}

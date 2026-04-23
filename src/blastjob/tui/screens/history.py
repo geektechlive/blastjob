@@ -27,10 +27,14 @@ class HistoryScreen(Screen):
     #btn-open {
         width: 20;
     }
+    #btn-rebuild {
+        width: 20;
+        margin-left: 1;
+    }
     """
 
     def compose(self) -> ComposeResult:
-        yield NavSidebar()
+        yield NavSidebar(active="history")
         with Vertical(id="history-content"):
             yield Label("[bold]Resume History[/bold]", markup=True)
             table = DataTable(id="history-table")
@@ -38,6 +42,7 @@ class HistoryScreen(Screen):
             yield table
             yield Label("", id="history-detail")
             yield Button("Open Folder", id="btn-open", variant="default")
+            yield Button("Rebuild", id="btn-rebuild", variant="primary")
         yield Footer()
 
     def on_screen_resume(self) -> None:
@@ -69,10 +74,29 @@ class HistoryScreen(Screen):
             entry = self._entries[idx]
             self.query_one("#history-detail", Label).update(f"[dim]{entry.path}[/dim]")
             self._selected_path = entry.path
+            self._selected_entry = entry
         event.stop()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-open":
             path = getattr(self, "_selected_path", None)
-            if path:
-                subprocess.run(["open", str(path)], check=False)
+            if path is None:
+                self.query_one("#history-detail", Label).update("[dim]Select a row first.[/dim]")
+                return
+            subprocess.run(["open", str(path)], check=False)
+        elif event.button.id == "btn-rebuild":
+            self._rebuild_selected()
+
+    def _rebuild_selected(self) -> None:
+        entry = getattr(self, "_selected_entry", None)
+        if entry is None:
+            self.query_one("#history-detail", Label).update("[dim]Select a row first.[/dim]")
+            return
+        jd_file = entry.path / "job_description.md"
+        jd = ""
+        if jd_file.exists():
+            content = jd_file.read_text(encoding="utf-8")
+            parts = content.split("\n\n", 2)
+            jd = parts[2] if len(parts) >= 3 else content
+        self.app.pending_build = {"company": entry.company, "role": entry.role, "jd": jd}
+        self.app.switch_screen("build")

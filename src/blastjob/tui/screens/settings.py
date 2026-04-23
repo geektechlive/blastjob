@@ -53,7 +53,7 @@ class SettingsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         cfg = self.app.config  # type: ignore[attr-defined]
-        yield NavSidebar()
+        yield NavSidebar(active="settings")
         with Vertical(id="settings-content"):
             yield Label("[bold]Settings[/bold]", markup=True)
 
@@ -89,6 +89,7 @@ class SettingsScreen(Screen):
             yield Input(value=cfg.paths.output_dir, id="inp-output-dir")
 
             yield Button("Save", id="settings-save", variant="primary")
+            yield Button("Test Connection", id="settings-test", variant="default")
             yield Label("", id="settings-msg")
         yield Footer()
 
@@ -99,6 +100,9 @@ class SettingsScreen(Screen):
             self.query_one("#provider-help", Label).update(help_text)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "settings-test":
+            self._test_connection()
+            return
         if event.button.id != "settings-save":
             return
         cfg = self.app.config  # type: ignore[attr-defined]
@@ -116,3 +120,12 @@ class SettingsScreen(Screen):
         from blastjob.llm.providers import active_model
 
         self.app.query_one("CostBar").set_provider(active_model(cfg))
+
+    def _test_connection(self) -> None:
+        from blastjob.llm.providers import ProviderNotConfiguredError, active_model
+
+        try:
+            model_str = active_model(self.app.config)  # type: ignore[attr-defined]
+            self.query_one("#settings-msg", Label).update(f"[green]Connected: {model_str}[/green]")
+        except ProviderNotConfiguredError as e:
+            self.query_one("#settings-msg", Label).update(f"[red]Not connected: {e}[/red]")

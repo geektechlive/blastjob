@@ -40,7 +40,7 @@ class IngestScreen(Screen):
     """
 
     def compose(self) -> ComposeResult:
-        yield NavSidebar()
+        yield NavSidebar(active="ingest")
         with Horizontal(id="ingest-main"):
             with Vertical(id="ingest-left"):
                 yield Label("[bold]Ingest Work History[/bold]", markup=True)

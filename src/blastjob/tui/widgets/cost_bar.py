@@ -38,4 +38,14 @@ class CostBar(Widget):
 
     def update_cost(self, summary: str) -> None:
         # Called from screens after a build/ingest completes — show cost briefly
-        self.status = f"[dim]{summary}[/dim]"
+        try:
+            cost = float(summary.split("$")[1].split()[0])
+            if cost >= 5.0:
+                formatted = f"[bold red]{summary}[/bold red]"
+            elif cost >= 1.0:
+                formatted = f"[yellow]{summary}[/yellow]"
+            else:
+                formatted = f"[dim]{summary}[/dim]"
+        except Exception:
+            formatted = f"[dim]{summary}[/dim]"
+        self.status = formatted

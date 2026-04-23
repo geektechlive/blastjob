@@ -24,7 +24,7 @@ def scan_history(output_root: Path) -> list[HistoryEntry]:
     if not output_root.exists():
         return entries
 
-    for meta_file in sorted(output_root.rglob("metadata.json"), reverse=True):
+    for meta_file in output_root.rglob("metadata.json"):
         try:
             data = json.loads(meta_file.read_text(encoding="utf-8"))
             entries.append(
@@ -44,4 +44,5 @@ def scan_history(output_root: Path) -> list[HistoryEntry]:
         except Exception:
             continue
 
+    entries.sort(key=lambda e: e.timestamp, reverse=True)
     return entries

@@ -34,7 +34,7 @@ class HomeScreen(Screen):
     """
 
     def compose(self) -> ComposeResult:
-        yield NavSidebar()
+        yield NavSidebar(active="home")
         with Vertical(id="home-content"):
             yield Label("[bold]blastjob[/bold]", markup=True, id="home-title")
             yield Label(self._work_history_status(), id="home-status", markup=True)
@@ -76,6 +76,10 @@ class HomeScreen(Screen):
                 "or install Claude Code (claude.ai/code) for automatic access.\n"
                 "Go to [bold]Settings[/bold] to configure manually."
             )
+
+    def on_screen_resume(self) -> None:
+        self.query_one("#home-status", Label).update(self._work_history_status())
+        self.query_one("#home-provider", Label).update(self._provider_status())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         routes = {

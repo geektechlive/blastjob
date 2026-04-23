@@ -107,7 +107,7 @@ def _emit_summary(master: MasterHistory, emit: Callable[[str], None]) -> None:
     if master.experience:
         emit("\n  Roles:\n")
         for exp in master.experience:
-            dates = f"{exp.dates.start}–{exp.dates.end}" if exp.dates.start else ""
+            dates = f"{exp.dates.start} - {exp.dates.end}" if exp.dates.start else ""
             emit(f"    • {exp.title} at {exp.company}")
             if dates:
                 emit(f" ({dates})")
