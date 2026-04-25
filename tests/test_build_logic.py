@@ -1,10 +1,13 @@
 """Unit tests for pure functions in core/build.py."""
 
+import asyncio
 import json
 
 import pytest
 
-from blastjob.core.build import _parse_score, _render_score_md
+from blastjob.core.build import _generate_cover_letter, _parse_score, _render_score_md
+from blastjob.llm.cost import CostTracker
+from blastjob.models.config import BlastJobConfig
 from blastjob.models.fit_score import ClaimCheck, FitScore
 
 # ---------------------------------------------------------------------------
@@ -191,3 +194,131 @@ def test_render_score_md_no_claims():
     )
     md = _render_score_md(score)
     assert "## Claim Analysis" in md
+
+
+# ---------------------------------------------------------------------------
+# _generate_cover_letter
+# ---------------------------------------------------------------------------
+
+
+class _FakeUsage:
+    input_tokens = 100
+    output_tokens = 50
+    cache_creation_input_tokens = 0
+    cache_read_input_tokens = 80
+
+
+class _FakeFinal:
+    usage = _FakeUsage()
+
+
+class _FakeStream:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    @property
+    def text_stream(self):
+        async def _iter():
+            for chunk in self._chunks:
+                yield chunk
+
+        return _iter()
+
+    async def get_final_message(self):
+        return _FakeFinal()
+
+
+async def _fake_stream_factory(*_args, **_kwargs):
+    return _FakeStream(["Dear team,\n\n", "I am excited about this role.\n"])
+
+
+async def _empty_stream_factory(*_args, **_kwargs):
+    return _FakeStream([""])
+
+
+def test_cover_letter_writes_md_and_records_cost(tmp_path, monkeypatch):
+    monkeypatch.setattr("blastjob.core.build.make_stream", _fake_stream_factory)
+    cfg = BlastJobConfig()
+    tracker = CostTracker()
+
+    asyncio.run(
+        _generate_cover_letter(
+            resume_md="# Resume\n\nBullets.",
+            work_history_md="History.",
+            job_description="JD.",
+            research_md="",
+            formats={"md"},
+            out_dir=tmp_path,
+            app_config=cfg,
+            cost_tracker=tracker,
+            on_text=None,
+        )
+    )
+
+    cover_md = tmp_path / "cover_letter.md"
+    assert cover_md.exists()
+    assert "Dear team" in cover_md.read_text()
+    # No PDF/DOCX requested
+    assert not (tmp_path / "cover_letter.pdf").exists()
+    assert not (tmp_path / "cover_letter.docx").exists()
+    # Cost recorded
+    assert len(tracker.calls) == 1
+    assert tracker.calls[0].input_tokens == 100
+    assert tracker.calls[0].output_tokens == 50
+
+
+def test_cover_letter_skipped_when_response_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr("blastjob.core.build.make_stream", _empty_stream_factory)
+    cfg = BlastJobConfig()
+    tracker = CostTracker()
+
+    result = asyncio.run(
+        _generate_cover_letter(
+            resume_md="resume",
+            work_history_md="history",
+            job_description="jd",
+            research_md="",
+            formats={"md"},
+            out_dir=tmp_path,
+            app_config=cfg,
+            cost_tracker=tracker,
+            on_text=None,
+        )
+    )
+
+    assert result is None
+    assert not (tmp_path / "cover_letter.md").exists()
+    assert tracker.calls == []
+
+
+def test_cover_letter_failure_is_silent(tmp_path, monkeypatch):
+    async def _boom(*_a, **_kw):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("blastjob.core.build.make_stream", _boom)
+    cfg = BlastJobConfig()
+    tracker = CostTracker()
+
+    # Should not raise — fail-soft
+    result = asyncio.run(
+        _generate_cover_letter(
+            resume_md="resume",
+            work_history_md="history",
+            job_description="jd",
+            research_md="",
+            formats={"md"},
+            out_dir=tmp_path,
+            app_config=cfg,
+            cost_tracker=tracker,
+            on_text=None,
+        )
+    )
+
+    assert result is None
+    assert not (tmp_path / "cover_letter.md").exists()

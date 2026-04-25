@@ -71,6 +71,7 @@ class BuildResumeScreen(Screen):
                     yield Checkbox("DOCX", id="fmt-docx", value=True)
                     yield Checkbox("ATS .txt", id="fmt-ats", value=True)
                 yield Checkbox("ATS-optimized resume", id="use-ats", value=False)
+                yield Checkbox("Include cover letter", id="chk-cover-letter", value=True)
                 yield Button("Generate", id="btn-generate", variant="success")
                 yield Label("", id="build-error")
                 yield Label("", id="build-result")
@@ -135,13 +136,14 @@ class BuildResumeScreen(Screen):
 
         use_ats = self.query_one("#use-ats", Checkbox).value
         confidential = self.query_one("#chk-confidential", Checkbox).value
+        include_cover_letter = self.query_one("#chk-cover-letter", Checkbox).value
 
         self.query_one("#build-error", Label).update("")
         self.query_one("#build-result", Label).update("")
         self.query_one("#btn-generate", Button).disabled = True
         self.query_one("#build-log", StreamLog).clear()
         self.run_worker(
-            self._do_build(company, role, jd, formats, use_ats, confidential),
+            self._do_build(company, role, jd, formats, use_ats, confidential, include_cover_letter),
             exclusive=True,
         )
 
@@ -153,6 +155,7 @@ class BuildResumeScreen(Screen):
         formats: set,
         use_ats: bool,
         confidential: bool = False,
+        include_cover_letter: bool = False,
     ) -> None:
         from blastjob.core.build import run_build
 
@@ -175,6 +178,7 @@ class BuildResumeScreen(Screen):
                 tracker,
                 on_text,
                 confidential=confidential,
+                include_cover_letter=include_cover_letter,
             )
             log.flush()
             self._last_out_dir = out_dir

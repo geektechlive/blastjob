@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 
-def write(resume_md: str, out_dir: Path) -> Path:
+def write(content_md: str, out_dir: Path, stem: str = "resume") -> Path:
     from docx import Document
     from docx.shared import Pt
 
@@ -13,7 +13,7 @@ def write(resume_md: str, out_dir: Path) -> Path:
     section.top_margin = section.bottom_margin = Pt(54)
     section.left_margin = section.right_margin = Pt(54)
 
-    lines = resume_md.splitlines()
+    lines = content_md.splitlines()
     for line in lines:
         line = line.rstrip()
 
@@ -35,7 +35,7 @@ def write(resume_md: str, out_dir: Path) -> Path:
             p = doc.add_paragraph()
             _add_inline(p, line)
 
-    dest = out_dir / "resume.docx"
+    dest = out_dir / f"{stem}.docx"
     doc.save(str(dest))
     return dest
 

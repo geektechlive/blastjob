@@ -1,6 +1,7 @@
 """Unit tests for llm/caching.py."""
 
 from blastjob.llm.caching import (
+    build_cover_letter_messages,
     build_ingest_messages,
     build_resume_messages,
     build_score_messages,
@@ -113,3 +114,35 @@ def test_build_score_messages_structure():
 def test_build_score_messages_user_block_count():
     _, user = build_score_messages("sys", "history", "resume", "jd")
     assert len(user) == 2
+
+
+# ---------------------------------------------------------------------------
+# build_cover_letter_messages
+# ---------------------------------------------------------------------------
+
+
+def test_build_cover_letter_messages_three_cache_breakpoints():
+    system, user = build_cover_letter_messages(
+        "Cover system prompt.",
+        "Work history content.",
+        "Resume markdown.",
+        "Job description.",
+        "Company research.",
+    )
+    # BP1: system cached
+    assert system[0]["cache_control"] == {"type": "ephemeral"}
+    # BP2: work_history cached (warm from resume gen)
+    assert user[0]["cache_control"] == {"type": "ephemeral"}
+    assert user[0]["text"] == "Work history content."
+    # BP3: resume cached
+    assert user[1]["cache_control"] == {"type": "ephemeral"}
+    assert user[1]["text"] == "Resume markdown."
+    # JD + research: plain
+    assert "cache_control" not in user[2]
+    assert "Job description." in user[2]["text"]
+    assert "Company research." in user[2]["text"]
+
+
+def test_build_cover_letter_messages_user_block_count():
+    _, user = build_cover_letter_messages("sys", "history", "resume", "jd", "research")
+    assert len(user) == 3

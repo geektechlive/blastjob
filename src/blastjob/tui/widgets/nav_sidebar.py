@@ -7,7 +7,7 @@ _NAV = [
     ("nav-ingest", "Ingest", "ingest"),
     ("nav-work-history", "Work History", "work-history"),
     ("nav-build", "Build Resume", "build"),
-    ("nav-history", "History", "history"),
+    ("nav-history", "Applications", "history"),
     ("nav-settings", "Settings", "settings"),
 ]
 

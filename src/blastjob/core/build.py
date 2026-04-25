@@ -25,6 +25,7 @@ async def run_build(
     cost_tracker: CostTracker,
     on_text: Callable[[str], None] | None = None,
     confidential: bool = False,
+    include_cover_letter: bool = False,
 ) -> tuple[Path, FitScore | None]:
     data_path = cfg_mod.data_dir(app_config)
     out_root = cfg_mod.output_dir(app_config)
@@ -110,7 +111,22 @@ async def run_build(
     if research_md:
         (out_dir / "company_research.md").write_text(research_md, encoding="utf-8")
 
-    # Step 6: Score — fail-soft so resume delivery is unaffected if scoring errors
+    # Step 6: Cover letter — fail-soft, optional
+    cover_letter_cost = None
+    if include_cover_letter:
+        cover_letter_cost = await _generate_cover_letter(
+            resume_md,
+            work_history_md,
+            job_description,
+            research_md,
+            formats,
+            out_dir,
+            app_config,
+            cost_tracker,
+            on_text,
+        )
+
+    # Step 7: Score — fail-soft so resume delivery is unaffected if scoring errors
     fit_score = await _score_resume(
         resume_md, work_history_md, job_description, app_config, cost_tracker, on_text
     )
@@ -139,6 +155,16 @@ async def run_build(
                 "fit_score": fit_score.overall_score if fit_score else None,
                 "groundedness_score": fit_score.groundedness_score if fit_score else None,
                 "unsupported_claims": fit_score.unsupported_count if fit_score else None,
+                "include_cover_letter": include_cover_letter,
+                "cover_letter_cost_usd": (
+                    round(cover_letter_cost.cost_usd, 6) if cover_letter_cost else None
+                ),
+                "cover_letter_input_tokens": (
+                    cover_letter_cost.input_tokens if cover_letter_cost else None
+                ),
+                "cover_letter_output_tokens": (
+                    cover_letter_cost.output_tokens if cover_letter_cost else None
+                ),
             },
             indent=2,
         ),
@@ -149,6 +175,76 @@ async def run_build(
         on_text("Done!\n")
 
     return out_dir, fit_score
+
+
+async def _generate_cover_letter(
+    resume_md: str,
+    work_history_md: str,
+    job_description: str,
+    research_md: str,
+    formats: set[str],
+    out_dir: Path,
+    app_config: BlastJobConfig,
+    cost_tracker: CostTracker,
+    on_text: Callable[[str], None] | None = None,
+):
+    """Generate cover letter alongside the resume. Fail-soft."""
+    if on_text:
+        on_text("\nGenerating cover letter...\n\n")
+
+    try:
+        system, user_content = caching.build_cover_letter_messages(
+            prompts.COVER_LETTER_SYSTEM,
+            work_history_md,
+            resume_md,
+            job_description,
+            research_md,
+        )
+        cover_md = ""
+        stream = await make_stream(
+            app_config, system, [{"role": "user", "content": user_content}], max_tokens=2048
+        )
+        async with stream:
+            async for text in stream.text_stream:
+                cover_md += text
+                if on_text:
+                    on_text(text)
+            final = await stream.get_final_message()
+
+        if not cover_md.strip():
+            if on_text:
+                on_text("\nCover letter returned empty — skipping.\n")
+            return None
+
+        call_cost = cost_from_usage(final.usage, app_config.pricing)
+        cost_tracker.record(call_cost)
+
+        markdown.write(cover_md, out_dir, stem="cover_letter")
+        if "pdf" in formats:
+            try:
+                pdf.write(cover_md, out_dir, stem="cover_letter")
+            except Exception as e:
+                if on_text:
+                    on_text(f"\nCover letter PDF export failed: {e}\n")
+        if "docx" in formats:
+            try:
+                docx.write(cover_md, out_dir, stem="cover_letter")
+            except Exception as e:
+                if on_text:
+                    on_text(f"\nCover letter DOCX export failed: {e}\n")
+
+        if on_text:
+            metric = (
+                f" · ${call_cost.cost_usd:.4f}"
+                f" · {call_cost.input_tokens + call_cost.output_tokens} tokens"
+            )
+            on_text(f"\n\nCover letter saved.{metric}\n")
+        return call_cost
+
+    except Exception as e:
+        if on_text:
+            on_text(f"\nCover letter skipped: {e}\n")
+        return None
 
 
 async def _score_resume(

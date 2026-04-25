@@ -25,7 +25,7 @@ AI-powered resume management and generation TUI.
 - `src/blastjob/core/` — ingest, build, history, paths pipelines
 - `src/blastjob/importers/` — PDF, DOCX, text, folder ingestion
 - `src/blastjob/exporters/` — MD, PDF, DOCX, ATS text output
-- `src/blastjob/models/` — Pydantic models for config, history, resume, research
+- `src/blastjob/models/` — Pydantic models for config, history, fit_score, tracking
 
 ## Data store
 
@@ -53,6 +53,9 @@ pytest tests/test_paths.py::test_slugify_special_chars
 # Lint
 ruff check src/ tests/
 ruff format src/ tests/
+
+# Coverage (TUI excluded via pyproject.toml omit config — test non-TUI code only)
+pytest --cov=src/blastjob --cov-report=term-missing tests/
 ```
 
 Ruff enforces rules E, F, I (isort), UP (pyupgrade) at line length 100.
@@ -106,10 +109,6 @@ NEVER interpolate per-call data into cached blocks — kills cache hit rate. Per
 ### LLM client
 
 `get_client()` (`llm/client.py`) returns an `AsyncAnthropic` singleton via `lru_cache`, keyed on the env var name. Always async. Resume generation uses `claude.messages.stream()`; text chunks iterate via `async for text in stream.text_stream`. Company research uses `messages.create()` (non-streaming).
-
-### Models note
-
-`TailoredResume` and `CompanyResearch` Pydantic models exist in `models/` but are not currently wired into the live pipelines — pipelines work with raw markdown strings throughout after the initial `MasterHistory` parse.
 
 ## Running
 

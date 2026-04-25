@@ -41,7 +41,7 @@ class HomeScreen(Screen):
             yield Label(self._provider_status(), id="home-provider", markup=True)
             yield Button("Ingest Work History", id="btn-ingest", variant="primary")
             yield Button("Build Resume", id="btn-build", variant="success")
-            yield Button("History", id="btn-history", variant="default")
+            yield Button("Applications", id="btn-history", variant="default")
             yield Button("Settings", id="btn-settings", variant="default")
         yield Footer()
 

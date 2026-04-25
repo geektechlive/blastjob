@@ -41,6 +41,29 @@ def build_resume_messages(
     return system, user_content
 
 
+def build_cover_letter_messages(
+    system_prompt: str,
+    work_history_md: str,
+    resume_md: str,
+    job_description: str,
+    company_research: str,
+) -> tuple[list[dict], list[dict]]:
+    """Return (system_blocks, user_message_content) for cover letter generation.
+
+    Cache breakpoints: system, work_history (warm from resume gen), resume_md.
+    JD + research are per-call and stay plain.
+    """
+    system = [cached_text(system_prompt)]  # BP 1
+    user_content = [
+        cached_text(work_history_md),  # BP 2 — warm from resume gen
+        cached_text(resume_md),  # BP 3
+        plain_text(
+            f"## Job Description\n\n{job_description}\n\n## Company Research\n\n{company_research}"
+        ),
+    ]
+    return system, user_content
+
+
 def build_score_messages(
     system_prompt: str,
     work_history_md: str,

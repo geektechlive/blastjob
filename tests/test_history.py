@@ -126,3 +126,62 @@ def test_scan_history_multiple_entries(tmp_path):
         )
     result = scan_history(tmp_path)
     assert len(result) == 5
+
+
+# ---------------------------------------------------------------------------
+# Tracking integration
+# ---------------------------------------------------------------------------
+
+
+def test_default_status_is_drafted_when_tracking_missing(tmp_path):
+    folder = tmp_path / "run" / "acme" / "engineer"
+    _write_metadata(folder, _valid_meta())
+    result = scan_history(tmp_path)
+    assert result[0].status == "drafted"
+    assert result[0].applied_at is None
+    assert result[0].next_action == ""
+
+
+def test_tracking_fields_loaded_when_present(tmp_path):
+    folder = tmp_path / "run" / "acme" / "engineer"
+    _write_metadata(folder, _valid_meta())
+    (folder / "tracking.json").write_text(
+        json.dumps(
+            {
+                "status": "interview",
+                "applied_at": "2026-04-10",
+                "next_action": "Follow up",
+                "next_action_due": "2026-04-15",
+                "notes": "Spoke with hiring manager.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = scan_history(tmp_path)
+    assert result[0].status == "interview"
+    assert result[0].applied_at == "2026-04-10"
+    assert result[0].next_action == "Follow up"
+    assert result[0].next_action_due == "2026-04-15"
+    assert result[0].notes == "Spoke with hiring manager."
+
+
+def test_sort_prioritizes_live_applications(tmp_path):
+    runs = [
+        ("RejectedCo", "2026-04-20T00:00:00", "rejected"),
+        ("InterviewCo", "2026-04-10T00:00:00", "interview"),
+        ("DraftedCo", "2026-04-15T00:00:00", "drafted"),
+        ("AppliedCo", "2026-04-12T00:00:00", "applied"),
+    ]
+    for i, (company, ts, status) in enumerate(runs):
+        folder = tmp_path / f"run-{i}" / company.lower() / "engineer"
+        _write_metadata(folder, _valid_meta(company=company, timestamp=ts))
+        (folder / "tracking.json").write_text(json.dumps({"status": status}), encoding="utf-8")
+
+    result = scan_history(tmp_path)
+    # Interview > applied > drafted > rejected, regardless of timestamp
+    assert [e.company for e in result] == [
+        "InterviewCo",
+        "AppliedCo",
+        "DraftedCo",
+        "RejectedCo",
+    ]

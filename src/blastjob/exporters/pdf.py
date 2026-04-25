@@ -27,12 +27,12 @@ HTML_WRAPPER = """<!DOCTYPE html>
 </html>"""
 
 
-def write(resume_md: str, out_dir: Path) -> Path:
+def write(content_md: str, out_dir: Path, stem: str = "resume") -> Path:
     import markdown as md_lib
     from weasyprint import CSS, HTML
 
-    html_body = md_lib.markdown(resume_md, extensions=["tables", "nl2br", "fenced_code"])
+    html_body = md_lib.markdown(content_md, extensions=["tables", "nl2br", "fenced_code"])
     full_html = HTML_WRAPPER.format(css=RESUME_CSS, body=html_body)
-    dest = out_dir / "resume.pdf"
+    dest = out_dir / f"{stem}.pdf"
     HTML(string=full_html).write_pdf(str(dest), stylesheets=[CSS(string=RESUME_CSS)])
     return dest
