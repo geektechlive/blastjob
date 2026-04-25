@@ -64,6 +64,44 @@ def build_cover_letter_messages(
     return system, user_content
 
 
+def build_coverage_messages(
+    system_prompt: str,
+    work_history_md: str,
+    job_description: str,
+) -> tuple[list[dict], list[dict]]:
+    """Return (system_blocks, user_message_content) for JD coverage analysis.
+
+    Cache breakpoints: system, work_history. JD is per-call.
+    """
+    system = [cached_text(system_prompt)]  # BP 1
+    user_content = [
+        cached_text(work_history_md),  # BP 2
+        plain_text(f"## Job Description\n\n{job_description}"),
+    ]
+    return system, user_content
+
+
+def build_refine_messages(
+    system_prompt: str,
+    work_history_md: str,
+    current_resume_md: str,
+    feedback: str,
+    job_description: str,
+) -> tuple[list[dict], list[dict]]:
+    """Return (system_blocks, user_message_content) for resume revision.
+
+    Cache breakpoints: system, work_history, current_resume.
+    Feedback + JD are per-call and stay plain.
+    """
+    system = [cached_text(system_prompt)]  # BP 1
+    user_content = [
+        cached_text(work_history_md),  # BP 2
+        cached_text(current_resume_md),  # BP 3
+        plain_text(f"## Feedback\n\n{feedback}\n\n## Job Description\n\n{job_description}"),
+    ]
+    return system, user_content
+
+
 def build_score_messages(
     system_prompt: str,
     work_history_md: str,

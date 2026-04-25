@@ -50,6 +50,7 @@ def _seed_data(root: Path) -> tuple[Path, Path]:
         )
     )
     (run / "job_description.md").write_text("# JD\n\n**Company:** Acme\n\nPaste\n")
+    (run / "resume.md").write_text("# Old resume\n\n- bullet\n", encoding="utf-8")
     return data, out
 
 
@@ -67,8 +68,17 @@ async def _run() -> int:
         app = BlastJobApp()
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
-            # Walk every screen
-            for screen_name in ["ingest", "work-history", "build", "history", "settings", "home"]:
+            # Walk every screen, including the new refine screen
+            screens = [
+                "ingest",
+                "work-history",
+                "build",
+                "history",
+                "refine",
+                "settings",
+                "home",
+            ]
+            for screen_name in screens:
                 app.switch_screen(screen_name)
                 await pilot.pause()
                 await pilot.pause()
@@ -109,15 +119,51 @@ async def _run() -> int:
                 print(f"  saved tracking.json with status={data['status']}, "
                       f"applied_at={data.get('applied_at')}")
 
-            # Build screen — confirm cover letter checkbox is present
+            # Build screen — confirm cover letter and coverage controls are present
             app.switch_screen("build")
             await pilot.pause()
-            from textual.widgets import Checkbox
+            from textual.widgets import Button, Checkbox
 
-            cb = app.screen.query_one("#chk-cover-letter", Checkbox)
-            print(f"  cover-letter checkbox present, default value={cb.value}")
+            build_screen = app.screen
+            cb = build_screen.query_one("#chk-cover-letter", Checkbox)
+            coverage_btn = build_screen.query_one("#btn-coverage", Button)
+            print(f"  cover-letter checkbox: default={cb.value}")
+            print(f"  coverage button: present, disabled={coverage_btn.disabled}")
+            if not coverage_btn.disabled:
+                print("FAIL: coverage button should be disabled when JD is empty")
+                return 1
+            # Type into JD area, confirm coverage button enables
+            jd_area = build_screen.query_one("#jd-area")
+            jd_area.load_text("Need a senior engineer.")
+            await pilot.pause()
+            await pilot.pause()
+            if coverage_btn.disabled:
+                print("FAIL: coverage button still disabled after JD entered")
+                return 1
+            print("  coverage button enables when JD has content")
 
-        print("PASS — TUI mounted, navigated all screens, saved tracking, found checkbox")
+            # Refine screen — open via the Applications row + Refine button path
+            run_dir = out / "2026-04-20" / "acme" / "engineer"
+            app.pending_refine = {
+                "run_dir": str(run_dir),
+                "company": "Acme",
+                "role": "Engineer",
+            }
+            app.switch_screen("refine")
+            await pilot.pause()
+            from blastjob.tui.screens.refine import RefineScreen
+            from textual.widgets import TextArea
+
+            refine_screen = app.screen
+            assert isinstance(refine_screen, RefineScreen)
+            current = refine_screen.query_one("#current-resume", TextArea)
+            if "Old resume" not in current.text:
+                print(f"FAIL: refine screen didn't load current resume, got: {current.text!r}")
+                return 1
+            print("  refine screen loaded current resume into read-only view")
+
+        print("PASS — TUI mounted, all screens navigated, tracking saved, "
+              "coverage gates on JD, refine loads selected run")
         return 0
 
 

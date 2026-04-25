@@ -8,6 +8,7 @@ from blastjob.tui.screens.build import BuildResumeScreen
 from blastjob.tui.screens.history import HistoryScreen
 from blastjob.tui.screens.home import HomeScreen
 from blastjob.tui.screens.ingest import IngestScreen
+from blastjob.tui.screens.refine import RefineScreen
 from blastjob.tui.screens.settings import SettingsScreen
 from blastjob.tui.screens.work_history import WorkHistoryScreen
 from blastjob.tui.widgets.cost_bar import CostBar
@@ -32,6 +33,7 @@ class BlastJobApp(App):
         "work-history": WorkHistoryScreen,
         "build": BuildResumeScreen,
         "history": HistoryScreen,
+        "refine": RefineScreen,
         "settings": SettingsScreen,
     }
 
@@ -40,6 +42,7 @@ class BlastJobApp(App):
         self.config = load_config()
         self.cost_tracker = CostTracker()
         self.pending_build: dict | None = None
+        self.pending_refine: dict | None = None
 
     def compose(self) -> ComposeResult:
         yield CostBar()

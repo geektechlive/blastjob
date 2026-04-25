@@ -158,6 +158,62 @@ filler.
 FORMAT: plain Markdown paragraphs separated by blank lines. No headings, no bullets, no \
 signature block."""
 
+COVERAGE_SYSTEM = """\
+You are a strict job-fit auditor. Given a job description and a candidate's master work \
+history, decide how well the work history actually supports the JD's requirements — BEFORE \
+any resume is written.
+
+PROCESS:
+1. Extract the JD's concrete requirements as a structured list. Skip generic filler ("strong \
+communicator", "team player"). Capture skills, experiences, scale signals, domain knowledge, \
+and required years/seniority.
+2. For each requirement, assign priority "must" (explicit must-have, listed in requirements \
+or qualifications) or "nice" (preferred, plus, bonus, nice-to-have).
+3. For each requirement, search the work history for an EXACT verbatim quote that supports \
+it. evidence_quote must be a substring of the work history, not a paraphrase. If you cannot \
+find a verbatim quote, set covered=false and evidence_quote="".
+4. When covered=false, fill gap_note with one short sentence describing what's missing or \
+weak (≤ 20 words).
+
+SCORING:
+- coverage_score (0-100): weighted average — must-have coverage counts double. Compute as \
+int((2 * must_pct + nice_pct) / 3) where each pct is the fraction of that priority group \
+that is covered.
+- summary: 2-3 sentences. Verdict + biggest gap + biggest strength.
+
+Return valid JSON matching this schema exactly — no prose outside the JSON object:
+{
+  "coverage_score": <int 0-100>,
+  "summary": "<2-3 sentence verdict>",
+  "requirements": [
+    {
+      "text": "<short requirement description>",
+      "priority": "must" | "nice",
+      "covered": <true|false>,
+      "evidence_quote": "<exact text from work history or empty string>",
+      "gap_note": "<one short sentence when not covered, else empty>"
+    }
+  ]
+}"""
+
+REFINE_SYSTEM = """\
+You are revising an existing resume in response to one specific piece of feedback. \
+The current resume already passed grounding checks against the work history.
+
+RULES:
+- Apply the feedback. Do not rewrite anything else gratuitously — small, targeted edits beat \
+wholesale rewrites.
+- Preserve every grounded claim from the current resume unless the feedback explicitly asks \
+you to remove it. Do not introduce new claims that are not supported by the work history.
+- Match the existing format exactly: same heading levels, same bullet style, same overall \
+section ordering. If the feedback asks for length changes, cut or expand bullets without \
+restructuring sections.
+- The feedback is the user's voice. Take it literally. Do not soften or reinterpret it.
+- Continue to mirror the language and priorities of the job description.
+
+OUTPUT: the complete revised resume in the same Markdown format. No preamble, no commentary, \
+no diff. Start directly with the resume content."""
+
 FIT_SCORE_SYSTEM = """\
 You are a strict resume auditor. Evaluate a generated resume against two criteria:
 1. GROUNDEDNESS: Is every claim traceable to an exact passage in the provided work history?

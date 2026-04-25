@@ -22,10 +22,10 @@ AI-powered resume management and generation TUI.
 
 - `src/blastjob/tui/` — Textual screens and widgets
 - `src/blastjob/llm/` — Claude client, cost tracking, prompt caching utilities
-- `src/blastjob/core/` — ingest, build, history, paths pipelines
+- `src/blastjob/core/` — ingest, build, history, paths, scoring, refine, coverage, tracking pipelines
 - `src/blastjob/importers/` — PDF, DOCX, text, folder ingestion
 - `src/blastjob/exporters/` — MD, PDF, DOCX, ATS text output
-- `src/blastjob/models/` — Pydantic models for config, history, fit_score, tracking
+- `src/blastjob/models/` — Pydantic models for config, history, fit_score, tracking, coverage
 
 ## Data store
 

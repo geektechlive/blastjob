@@ -85,6 +85,7 @@ class HistoryScreen(Screen):
                 with Horizontal(id="action-row"):
                     yield Button("Save", id="btn-save", variant="primary")
                     yield Button("Open Folder", id="btn-open", variant="default")
+                    yield Button("Refine", id="btn-refine", variant="default")
                     yield Button("Rebuild", id="btn-rebuild", variant="default")
                 yield Label("", id="edit-status")
         yield Footer()
@@ -146,6 +147,8 @@ class HistoryScreen(Screen):
             subprocess.run(["open", str(self._selected_path)], check=False)
         elif event.button.id == "btn-rebuild":
             self._rebuild_selected()
+        elif event.button.id == "btn-refine":
+            self._refine_selected()
         elif event.button.id == "btn-save":
             self._save_selected()
 
@@ -182,6 +185,21 @@ class HistoryScreen(Screen):
 
         self._set_status("[green]Saved.[/green]")
         self._load_history()
+
+    def _refine_selected(self) -> None:
+        entry = self._selected_entry
+        if entry is None:
+            self._set_status("[dim]Select a row first.[/dim]")
+            return
+        if not (entry.path / "resume.md").exists():
+            self._set_status("[dim]No resume.md in this run — cannot refine.[/dim]")
+            return
+        self.app.pending_refine = {
+            "run_dir": str(entry.path),
+            "company": entry.company,
+            "role": entry.role,
+        }
+        self.app.switch_screen("refine")
 
     def _rebuild_selected(self) -> None:
         entry = self._selected_entry

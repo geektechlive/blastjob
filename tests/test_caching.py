@@ -2,7 +2,9 @@
 
 from blastjob.llm.caching import (
     build_cover_letter_messages,
+    build_coverage_messages,
     build_ingest_messages,
+    build_refine_messages,
     build_resume_messages,
     build_score_messages,
     cached_text,
@@ -146,3 +148,52 @@ def test_build_cover_letter_messages_three_cache_breakpoints():
 def test_build_cover_letter_messages_user_block_count():
     _, user = build_cover_letter_messages("sys", "history", "resume", "jd", "research")
     assert len(user) == 3
+
+
+# ---------------------------------------------------------------------------
+# build_refine_messages
+# ---------------------------------------------------------------------------
+
+
+def test_build_refine_messages_three_cache_breakpoints():
+    system, user = build_refine_messages(
+        "Refine system prompt.",
+        "Work history.",
+        "Current resume.",
+        "Make it shorter.",
+        "Job description.",
+    )
+    assert system[0]["cache_control"] == {"type": "ephemeral"}
+    assert user[0]["cache_control"] == {"type": "ephemeral"}
+    assert user[0]["text"] == "Work history."
+    assert user[1]["cache_control"] == {"type": "ephemeral"}
+    assert user[1]["text"] == "Current resume."
+    assert "cache_control" not in user[2]
+    assert "Make it shorter." in user[2]["text"]
+    assert "Job description." in user[2]["text"]
+
+
+def test_build_refine_messages_user_block_count():
+    _, user = build_refine_messages("sys", "history", "resume", "feedback", "jd")
+    assert len(user) == 3
+
+
+# ---------------------------------------------------------------------------
+# build_coverage_messages
+# ---------------------------------------------------------------------------
+
+
+def test_build_coverage_messages_two_cache_breakpoints():
+    system, user = build_coverage_messages(
+        "Coverage system prompt.", "Work history.", "Job description."
+    )
+    assert system[0]["cache_control"] == {"type": "ephemeral"}
+    assert user[0]["cache_control"] == {"type": "ephemeral"}
+    assert user[0]["text"] == "Work history."
+    assert "cache_control" not in user[1]
+    assert "Job description." in user[1]["text"]
+
+
+def test_build_coverage_messages_user_block_count():
+    _, user = build_coverage_messages("sys", "history", "jd")
+    assert len(user) == 2

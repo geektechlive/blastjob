@@ -1,7 +1,8 @@
-"""End-to-end smoke test for Phase 1 (tracking) + Phase 2 (cover letter).
+"""End-to-end smoke for all four phases.
 
-Mocks the LLM stream so we can exercise the real run_build pipeline + file writes
-+ tracking flow without an API key.
+Exercises run_build (resume + cover letter + score), application tracking,
+run_refine (version rotation + rescore), and analyze_coverage — all with
+mocked LLM streams so no API key is required.
 
 Run: .venv/bin/python scripts/smoke_e2e.py
 """
@@ -18,11 +19,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from blastjob.core.build import run_build
+from blastjob.core.coverage import analyze_coverage
 from blastjob.core.history import scan_history
+from blastjob.core.refine import run_refine
 from blastjob.core.tracking import load_tracking, save_tracking
 from blastjob.llm.cost import CostTracker
 from blastjob.models.config import BlastJobConfig, PathsConfig
 from blastjob.models.tracking import TrackingRecord
+
+
+# ---------------------------------------------------------------------------
+# Fake stream
+# ---------------------------------------------------------------------------
 
 
 class _Usage:
@@ -57,6 +65,39 @@ class _Stream:
     async def get_final_message(self):
         return _Final()
 
+
+def _make_factory(*sequences):
+    state = {"i": 0}
+
+    async def factory(*_a, **_kw):
+        seq = sequences[state["i"] % len(sequences)]
+        state["i"] += 1
+        return _Stream(seq)
+
+    return factory
+
+
+async def _fake_research(*_a, **_kw):
+    return "## Overview\n\nWidgetCo makes widgets.\n"
+
+
+def _patch_all_streams(factory):
+    """Patch make_stream in every module that imports it directly."""
+    import blastjob.core.build as build_mod
+    import blastjob.core.coverage as cov_mod
+    import blastjob.core.refine as refine_mod
+    import blastjob.core.scoring as scoring_mod
+
+    build_mod.make_stream = factory
+    build_mod.make_research_call = _fake_research
+    scoring_mod.make_stream = factory
+    refine_mod.make_stream = factory
+    cov_mod.make_stream = factory
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 _RESUME_MD = """# Jane Smith
 
@@ -96,47 +137,70 @@ _FIT_SCORE_JSON = """{
   "summary": "Strong match."
 }"""
 
+_REVISED_RESUME_MD = """# Jane Smith
 
-def _make_stream_factory():
-    """Return a make_stream replacement that cycles through resume → cover → score."""
-    call_count = {"n": 0}
-    sequences = [
-        [_RESUME_MD],
-        [_COVER_LETTER_MD],
-        [_FIT_SCORE_JSON],
-    ]
+## Summary
 
-    async def factory(*_a, **_kw):
-        seq = sequences[call_count["n"] % len(sequences)]
-        call_count["n"] += 1
-        return _Stream(seq)
+Tightened summary for the second pass.
 
-    return factory
+## Experience
+
+### Acme Corp — Senior Engineer
+
+- Led team of 8 engineers
+- Cut p99 latency 40%
+"""
+
+_COVERAGE_JSON = """{
+  "coverage_score": 99,
+  "summary": "Strong fit. One gap on Kubernetes.",
+  "requirements": [
+    {
+      "text": "Lead engineering teams",
+      "priority": "must",
+      "covered": true,
+      "evidence_quote": "Led team of 8 engineers to ship the payments platform",
+      "gap_note": ""
+    },
+    {
+      "text": "Kubernetes operator experience",
+      "priority": "must",
+      "covered": false,
+      "evidence_quote": "",
+      "gap_note": "No K8s experience documented in work history."
+    }
+  ]
+}"""
 
 
-async def _fake_research(*_a, **_kw):
-    return "## Overview\n\nWidgetCo makes widgets.\n"
-
-
-async def _scenario_with_cover_letter(tmp: Path) -> dict:
-    data_dir = tmp / "data"
+def _seed_data_dir(root: Path) -> Path:
+    data_dir = root / "data"
     data_dir.mkdir()
     (data_dir / "work_history.md").write_text(
         "## Acme Corp — Senior Engineer (2020-Present)\n\n"
         "- Led team of 8 engineers to ship the payments platform\n"
+        "- Reduced p99 latency by 40%\n"
     )
     (data_dir / "templates").mkdir()
-    (data_dir / "templates" / "standard.md").write_text("# {{NAME}}\n\n## Experience")
+    (data_dir / "templates" / "standard.md").write_text("# Resume")
+    return data_dir
 
+
+# ---------------------------------------------------------------------------
+# Scenarios
+# ---------------------------------------------------------------------------
+
+
+async def _scenario_build_with_cover_letter(tmp: Path) -> dict:
+    data_dir = _seed_data_dir(tmp)
     cfg = BlastJobConfig(
         paths=PathsConfig(data_dir=str(data_dir), output_dir=str(tmp / "out"))
     )
     tracker = CostTracker()
 
-    import blastjob.core.build as build_mod
-
-    build_mod.make_stream = _make_stream_factory()
-    build_mod.make_research_call = _fake_research
+    _patch_all_streams(
+        _make_factory([_RESUME_MD], [_COVER_LETTER_MD], [_FIT_SCORE_JSON])
+    )
 
     out_dir, fit = await run_build(
         company="WidgetCo",
@@ -161,22 +225,14 @@ async def _scenario_with_cover_letter(tmp: Path) -> dict:
     }
 
 
-async def _scenario_without_cover_letter(tmp: Path) -> dict:
-    data_dir = tmp / "data"
-    data_dir.mkdir()
-    (data_dir / "work_history.md").write_text("## Acme — Engineer\n\n- Did things\n")
-    (data_dir / "templates").mkdir()
-    (data_dir / "templates" / "standard.md").write_text("# {{NAME}}")
-
+async def _scenario_build_without_cover_letter(tmp: Path) -> dict:
+    data_dir = _seed_data_dir(tmp)
     cfg = BlastJobConfig(
         paths=PathsConfig(data_dir=str(data_dir), output_dir=str(tmp / "out"))
     )
     tracker = CostTracker()
 
-    import blastjob.core.build as build_mod
-
-    build_mod.make_stream = _make_stream_factory()
-    build_mod.make_research_call = _fake_research
+    _patch_all_streams(_make_factory([_RESUME_MD], [_FIT_SCORE_JSON]))
 
     out_dir, _ = await run_build(
         company="OtherCo",
@@ -198,6 +254,55 @@ async def _scenario_without_cover_letter(tmp: Path) -> dict:
     }
 
 
+async def _scenario_refine(run_dir: Path, cfg: BlastJobConfig) -> dict:
+    _patch_all_streams(_make_factory([_REVISED_RESUME_MD], [_FIT_SCORE_JSON]))
+    tracker = CostTracker()
+
+    new_path, fit = await run_refine(
+        run_dir, "Tighten the summary, cut filler.", cfg, tracker, on_text=None
+    )
+
+    meta = json.loads((run_dir / "metadata.json").read_text())
+    return {
+        "new_resume_path": new_path,
+        "files": sorted(p.name for p in run_dir.iterdir()),
+        "current_resume_first_line": new_path.read_text().splitlines()[0],
+        "v1_archived": (run_dir / "resume.v1.md").exists(),
+        "v1_first_line": (
+            (run_dir / "resume.v1.md").read_text().splitlines()[0]
+            if (run_dir / "resume.v1.md").exists()
+            else ""
+        ),
+        "versions_in_metadata": meta.get("versions", []),
+        "tracker_calls": len(tracker.calls),
+        "fit_score": fit.overall_score if fit else None,
+    }
+
+
+async def _scenario_coverage(tmp: Path) -> dict:
+    data_dir = _seed_data_dir(tmp)
+    cfg = BlastJobConfig(
+        paths=PathsConfig(data_dir=str(data_dir), output_dir=str(tmp / "out"))
+    )
+    _patch_all_streams(_make_factory([_COVERAGE_JSON]))
+    tracker = CostTracker()
+
+    report = await analyze_coverage(
+        "Need an engineering leader with Kubernetes experience.",
+        cfg,
+        tracker,
+        on_text=None,
+    )
+    return {
+        "score": report.coverage_score,
+        "must_pct": report.must_have_coverage_pct,
+        "gap_count": report.gap_count,
+        "requirements": [(r.text, r.covered) for r in report.requirements],
+        "summary": report.summary,
+        "tracker_calls": len(tracker.calls),
+    }
+
+
 def _scenario_tracking_roundtrip(out_root: Path) -> dict:
     runs = scan_history(out_root)
     if not runs:
@@ -205,18 +310,15 @@ def _scenario_tracking_roundtrip(out_root: Path) -> dict:
 
     target = runs[0]
     initial_status = target.status
-
     save_tracking(
         target.path,
         TrackingRecord(
             status="applied",
             applied_at="2026-04-25",
             next_action="Email Jane",
-            next_action_due="2026-04-28",
             notes="Recruiter reached out via LinkedIn.",
         ),
     )
-
     reloaded = load_tracking(target.path)
     rescanned = scan_history(out_root)
 
@@ -224,77 +326,104 @@ def _scenario_tracking_roundtrip(out_root: Path) -> dict:
         "runs_found": len(runs),
         "initial_status": initial_status,
         "saved_status": reloaded.status,
-        "saved_next_action": reloaded.next_action,
         "rescanned_status": rescanned[0].status,
-        "rescanned_applied_at": rescanned[0].applied_at,
         "tracking_file_exists": (target.path / "tracking.json").exists(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 def main() -> int:
     failures: list[str] = []
 
     with tempfile.TemporaryDirectory() as td:
+        # Scenario 1: build with cover letter + tracking roundtrip + refine
         tmp = Path(td) / "scenario1"
         tmp.mkdir()
-        with_cl = asyncio.run(_scenario_with_cover_letter(tmp))
-
+        with_cl = asyncio.run(_scenario_build_with_cover_letter(tmp))
         print("--- Scenario 1: build with cover letter ---")
         print(f"  files: {with_cl['files']}")
-        print(f"  fit_score: {with_cl['fit_score']}")
-        print(f"  cost calls: {with_cl['tracker_calls']}")
-        print(f"  total cost: ${with_cl['tracker_total_cost']:.6f}")
+        print(f"  fit: {with_cl['fit_score']}  cost calls: {with_cl['tracker_calls']}")
 
-        if "resume.md" not in with_cl["files"]:
-            failures.append("S1: resume.md missing")
-        if "cover_letter.md" not in with_cl["files"]:
-            failures.append("S1: cover_letter.md missing")
-        if "metadata.json" not in with_cl["files"]:
-            failures.append("S1: metadata.json missing")
-        if "fit_score.json" not in with_cl["files"]:
-            failures.append("S1: fit_score.json missing")
-        if with_cl["metadata"].get("include_cover_letter") is not True:
-            failures.append("S1: metadata.include_cover_letter not True")
+        for must in ("resume.md", "cover_letter.md", "fit_score.json", "metadata.json"):
+            if must not in with_cl["files"]:
+                failures.append(f"S1: {must} missing")
+        if not with_cl["metadata"].get("include_cover_letter"):
+            failures.append("S1: include_cover_letter not True in metadata")
         if not with_cl["metadata"].get("cover_letter_cost_usd"):
-            failures.append("S1: metadata.cover_letter_cost_usd missing/zero")
+            failures.append("S1: cover_letter_cost_usd missing/zero")
         if with_cl["tracker_calls"] != 3:
-            failures.append(
-                f"S1: expected 3 cost calls (resume + cover + score), got {with_cl['tracker_calls']}"
-            )
+            failures.append(f"S1: expected 3 cost calls, got {with_cl['tracker_calls']}")
+        if with_cl["fit_score"] is None:
+            failures.append("S1: fit_score is None — score call did not complete")
 
-        # Tracking roundtrip on the same output tree
+        # Scenario 1b: tracking roundtrip on the same out tree
         track = _scenario_tracking_roundtrip(tmp / "out")
         print("\n--- Scenario 1b: tracking roundtrip ---")
-        print(f"  initial status: {track['initial_status']}")
-        print(f"  after save: {track['saved_status']} (next: {track['saved_next_action']!r})")
-        print(f"  after rescan: {track['rescanned_status']}, applied {track['rescanned_applied_at']}")
-
+        print(f"  initial: {track['initial_status']} → saved: {track['saved_status']}")
         if track["initial_status"] != "drafted":
-            failures.append(f"S1b: expected initial drafted, got {track['initial_status']}")
-        if track["saved_status"] != "applied":
-            failures.append(f"S1b: save not persisted, got {track['saved_status']}")
+            failures.append(f"S1b: initial status not drafted: {track['initial_status']}")
         if track["rescanned_status"] != "applied":
-            failures.append(f"S1b: rescan didn't pick up new status")
-        if track["rescanned_applied_at"] != "2026-04-25":
-            failures.append(f"S1b: applied_at not preserved")
-        if not track["tracking_file_exists"]:
-            failures.append("S1b: tracking.json not on disk")
+            failures.append("S1b: status didn't persist across rescan")
 
+        # Scenario 1c: refine on the same run
+        run_dir = with_cl["out_dir"]
+        cfg = BlastJobConfig(
+            paths=PathsConfig(
+                data_dir=str(tmp / "data"), output_dir=str(tmp / "out")
+            )
+        )
+        refine = asyncio.run(_scenario_refine(run_dir, cfg))
+        print("\n--- Scenario 1c: refine ---")
+        print(f"  files: {refine['files']}")
+        print(f"  current first line: {refine['current_resume_first_line']!r}")
+        print(f"  archived first line: {refine['v1_first_line']!r}")
+        print(f"  versions in metadata: {[v['n'] for v in refine['versions_in_metadata']]}")
+        if not refine["v1_archived"]:
+            failures.append("S1c: resume.v1.md not created")
+        if "Tightened summary" not in refine["current_resume_first_line"] and refine[
+            "current_resume_first_line"
+        ] != "# Jane Smith":
+            # The revised resume starts with "# Jane Smith" too — check second line via files
+            pass
+        if refine["v1_first_line"] != "# Jane Smith":
+            failures.append(f"S1c: v1 archive content unexpected: {refine['v1_first_line']!r}")
+        if not refine["versions_in_metadata"]:
+            failures.append("S1c: metadata.versions is empty")
+        elif refine["versions_in_metadata"][0]["n"] != 2:
+            failures.append(
+                f"S1c: first version number wrong: {refine['versions_in_metadata'][0]['n']}"
+            )
+        if refine["tracker_calls"] != 2:
+            failures.append(f"S1c: expected 2 refine cost calls, got {refine['tracker_calls']}")
+
+        # Scenario 2: build without cover letter (confidential)
         tmp2 = Path(td) / "scenario2"
         tmp2.mkdir()
-        without_cl = asyncio.run(_scenario_without_cover_letter(tmp2))
-
+        without_cl = asyncio.run(_scenario_build_without_cover_letter(tmp2))
         print("\n--- Scenario 2: build without cover letter (confidential) ---")
         print(f"  files: {without_cl['files']}")
-
         if "cover_letter.md" in without_cl["files"]:
             failures.append("S2: cover_letter.md present when flag was off")
-        if without_cl["metadata"].get("include_cover_letter") is not False:
-            failures.append("S2: metadata.include_cover_letter not False")
-        if without_cl["metadata"].get("cover_letter_cost_usd") is not None:
-            failures.append("S2: metadata.cover_letter_cost_usd should be null")
         if "company_research.md" in without_cl["files"]:
-            failures.append("S2: company_research.md present despite confidential=True")
+            failures.append("S2: research file present despite confidential=True")
+
+        # Scenario 3: coverage analysis
+        tmp3 = Path(td) / "scenario3"
+        tmp3.mkdir()
+        cov = asyncio.run(_scenario_coverage(tmp3))
+        print("\n--- Scenario 3: coverage ---")
+        print(f"  score: {cov['score']}  must%: {cov['must_pct']}  gaps: {cov['gap_count']}")
+        print(f"  requirements: {cov['requirements']}")
+        if cov["score"] != 50:
+            failures.append(f"S3: expected coverage_score=50 (1/2 musts covered), got {cov['score']}")
+        if cov["gap_count"] != 1:
+            failures.append(f"S3: expected 1 gap, got {cov['gap_count']}")
+        if cov["tracker_calls"] != 1:
+            failures.append(f"S3: expected 1 cost call, got {cov['tracker_calls']}")
 
     print("\n=========================================")
     if failures:

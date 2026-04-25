@@ -5,6 +5,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Footer, Input, Label, TextArea
 
+from blastjob.tui.widgets.coverage_panel import CoveragePanel
 from blastjob.tui.widgets.nav_sidebar import NavSidebar
 from blastjob.tui.widgets.stream_log import StreamLog
 
@@ -72,7 +73,14 @@ class BuildResumeScreen(Screen):
                     yield Checkbox("ATS .txt", id="fmt-ats", value=True)
                 yield Checkbox("ATS-optimized resume", id="use-ats", value=False)
                 yield Checkbox("Include cover letter", id="chk-cover-letter", value=True)
-                yield Button("Generate", id="btn-generate", variant="success")
+                with Horizontal(classes="format-row"):
+                    yield Button(
+                        "Check coverage",
+                        id="btn-coverage",
+                        variant="default",
+                        disabled=True,
+                    )
+                    yield Button("Generate", id="btn-generate", variant="success")
                 yield Label("", id="build-error")
                 yield Label("", id="build-result")
                 yield Button(
@@ -81,6 +89,7 @@ class BuildResumeScreen(Screen):
                     variant="default",
                     disabled=True,
                 )
+                yield CoveragePanel(id="coverage-panel")
             with Vertical(id="build-right"):
                 yield StreamLog(id="build-log", highlight=True, markup=True)
         yield Footer()
@@ -102,10 +111,22 @@ class BuildResumeScreen(Screen):
             self.query_one("#build-error", Label).update("")
             self.query_one("#btn-generate", Button).disabled = False
 
+        has_jd = bool(self.query_one("#jd-area", TextArea).text.strip())
+        self.query_one("#btn-coverage", Button).disabled = not has_jd
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id != "jd-area":
+            return
+        has_jd = bool(event.text_area.text.strip())
+        self.query_one("#btn-coverage", Button).disabled = not has_jd
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-open-output":
             if hasattr(self, "_last_out_dir"):
                 subprocess.run(["open", str(self._last_out_dir)], check=False)
+            return
+        if event.button.id == "btn-coverage":
+            self._run_coverage()
             return
         if event.button.id != "btn-generate":
             return
@@ -200,3 +221,40 @@ class BuildResumeScreen(Screen):
             self.query_one("#build-error", Label).update(f"Error: {e}  (see {applog.log_path()})")
         finally:
             self.query_one("#btn-generate", Button).disabled = False
+
+    def _run_coverage(self) -> None:
+        jd = self.query_one("#jd-area", TextArea).text.strip()
+        if not jd:
+            self.query_one("#build-error", Label).update("Paste a job description first.")
+            return
+        self.query_one("#build-error", Label).update("")
+        self.query_one("#btn-coverage", Button).disabled = True
+        self.query_one("#build-log", StreamLog).clear()
+        self.query_one("#coverage-panel", CoveragePanel).clear_report()
+        self.run_worker(self._do_coverage(jd), exclusive=True)
+
+    async def _do_coverage(self, jd: str) -> None:
+        from blastjob.core.coverage import analyze_coverage
+
+        log = self.query_one("#build-log", StreamLog)
+        panel = self.query_one("#coverage-panel", CoveragePanel)
+
+        def on_text(text: str) -> None:
+            log.append_text(text)
+
+        cfg = self.app.config  # type: ignore[attr-defined]
+        tracker = self.app.cost_tracker  # type: ignore[attr-defined]
+        try:
+            report = await analyze_coverage(jd, cfg, tracker, on_text)
+            log.flush()
+            panel.render_report(report)
+            self.app.query_one("CostBar").update_cost(tracker.session_summary)
+        except Exception as e:
+            import blastjob.logging as applog
+
+            applog.log_exception("coverage", e)
+            self.query_one("#build-error", Label).update(
+                f"Coverage check failed: {e}  (see {applog.log_path()})"
+            )
+        finally:
+            self.query_one("#btn-coverage", Button).disabled = False
