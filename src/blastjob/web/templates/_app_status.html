@@ -1,0 +1,35 @@
+<div id="app-status" class="app-status"{% if oob %} hx-swap-oob="true"{% endif %}>
+  <h3>Application status</h3>
+  {% if followup_reason %}
+    <div class="followup-nudge">⏰ {{ followup_reason }} — time to follow up?</div>
+  {% endif %}
+  {# A send that could not be snapshotted says so. Silence here used to mean
+     the as-sent record simply never happened, with nothing on screen. #}
+  {% if send_note %}
+    <div class="followup-nudge">{{ send_note }}</div>
+  {% endif %}
+  <div class="app-status-current">
+    <span class="badge state">{{ (job.application_state or 'not applied') | replace('_', ' ') }}</span>
+    {% if job.applied_at %}<span class="app-applied-at">applied {{ job.applied_at }}</span>{% endif %}
+  </div>
+  <div class="app-status-actions">
+    {% for st in ['applied', 'screen', 'interview', 'offer', 'rejected', 'withdrawn'] %}
+      <button class="btn-status{% if job.application_state == st %} active{% endif %}"
+              hx-post="/jobs/{{ job.id }}/status" hx-vals='{"status": "{{ st }}"}'
+              {% if apply_confirm is defined and apply_confirm and st in ('applied', 'screen', 'interview', 'offer') and job.application_state != st %}hx-confirm="{{ apply_confirm }}"{% endif %}
+              hx-target="#app-status" hx-swap="outerHTML">{{ st|capitalize }}</button>
+    {% endfor %}
+  </div>
+  <form class="app-followup-form" hx-post="/jobs/{{ job.id }}/followup"
+        hx-target="#app-status" hx-swap="outerHTML">
+    <label>Follow up on
+      <input type="date" name="next_action_due" value="{{ job.next_action_due }}">
+    </label>
+    <button type="submit">Set reminder</button>
+  </form>
+  <form class="app-notes-form" hx-post="/jobs/{{ job.id }}/notes"
+        hx-target="#app-status" hx-swap="outerHTML">
+    <textarea name="notes" rows="3" placeholder="Notes (recruiter, referral, next step)…">{{ job.app_notes }}</textarea>
+    <button type="submit">Save notes</button>
+  </form>
+</div>

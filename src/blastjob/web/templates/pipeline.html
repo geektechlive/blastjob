@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Pipeline &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Pipeline</h1>
+{# Every kept job in exactly one lane, grouped by stage. #}
+{% set groups = [
+  ('Shortlist', '/shortlist', [('none', 'Not tailored'), ('tailoring', 'Tailoring'), ('tailored', 'Tailored'), ('failed', 'Tailor failed')]),
+  ('Applied', '/applied', [('applied', 'Applied'), ('screen', 'Screen'), ('interview', 'Interview'), ('offer', 'Offer')]),
+  ('Closed', '/closed', [('closed', 'Closed')]),
+] %}
+<div class="board">
+  {% for group, href, lanes in groups %}
+  {% for state, label in lanes %}
+  <div class="board-col">
+    <h3>{% if loop.first %}<a href="{{ href }}">{{ group }}</a> &middot; {% endif %}{{ label }} <span class="col-count">{{ board.get(state, [])|length }}</span></h3>
+    {% for job in board.get(state, []) %}
+      <div class="board-card">
+        <a href="/jobs/{{ job.id }}">{{ job.title }}</a>
+        <div class="board-sub">{{ job.company }}
+          {% if job.alignment_score is not none %}· {{ job.alignment_score }}%{% endif %}
+          {% if job.comp_provenance == 'posted' and job.comp_max %}· ${{ (job.comp_max // 1000) }}k{% elif job.comp_provenance == 'inferred' and job.comp_max %}· ~${{ (job.comp_max // 1000) }}k inferred{% endif %}
+        </div>
+      </div>
+    {% else %}
+      <p class="empty small">&mdash;</p>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  {% endfor %}
+</div>
+{% endblock %}

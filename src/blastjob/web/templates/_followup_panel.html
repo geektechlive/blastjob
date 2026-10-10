@@ -1,0 +1,26 @@
+{# _build_panel with one extra line in the done handler, so other run types keep
+   their existing behaviour. #}
+<div class="build-panel">
+  <div class="build-status" id="bs-{{ run.id }}">{{ heading }}&hellip;</div>
+  <pre class="build-out" id="bo-{{ run.id }}"></pre>
+  <div id="fl-{{ run.id }}"></div>
+  <script>
+  (function () {
+    var out = document.getElementById("bo-{{ run.id }}");
+    var st = document.getElementById("bs-{{ run.id }}");
+    var es = new EventSource("/builds/{{ run.id }}/events");
+    es.addEventListener("output", function (e) {
+      out.textContent += e.data;
+      out.scrollTop = out.scrollHeight;
+    });
+    es.addEventListener("log", function (e) { st.textContent = e.data; });
+    es.addEventListener("done", function () {
+      es.close();
+      htmx.ajax("GET", "/builds/{{ run.id }}/followup-link", "#fl-{{ run.id }}");
+    });
+    es.addEventListener("error", function (e) {
+      if (e && e.data) { st.textContent = "Error: " + e.data; es.close(); }
+    });
+  })();
+  </script>
+</div>

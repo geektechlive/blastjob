@@ -1,0 +1,57 @@
+{# Where the tailored bundle landed. Rendered on the job page and swapped in when
+   a tailor run finishes, so the path survives a refresh -- the SSE log line did not. #}
+<div id="packet-{{ job_id }}" class="detail-block packet">
+{% if not packet %}
+  <p class="dim">No packet yet. Tailor this role to build one.</p>
+{% else %}
+  <h3>Packet
+    {% if packet.stale %}<span class="badge state stale">needs re-tailoring</span>
+    {% else %}<span class="badge comp">current</span>{% endif %}
+  </h3>
+
+  {% if packet.previous %}
+    <p class="error">The most recent tailor attempt {{ packet.latest_status }}. Showing the
+    last packet that succeeded &mdash; re-tailor before you send anything from it.</p>
+  {% endif %}
+
+  <p class="dim">Built {{ packet.built_at[:16] }}{% if packet.stale %} &mdash; {{ packet.stale_reason }}{% endif %}</p>
+
+  {% if not packet.exists %}
+    <p class="error">The folder is no longer on disk: <code>{{ packet.dir }}</code></p>
+  {% else %}
+    <ul class="facts packet-files">
+      {% for f in packet.files %}
+        <li>
+          {% if f.is_resume %}<span class="badge">resume</span>
+          {% elif f.is_cover %}<span class="badge">cover letter</span>{% endif %}
+          <a href="/jobs/{{ job_id }}/files/{{ f.name | urlencode }}">{{ f.name }}</a>
+          <span class="dim">{{ (f.size // 1024) }} KB</span>
+        </li>
+      {% endfor %}
+    </ul>
+    <p class="dim"><code>{{ packet.dir }}</code></p>
+  {% endif %}
+
+  {# The action that answers the groundedness list without a full re-tailor.
+     core/refine.py was dead for months, so this is its first working caller. #}
+  <form class="refine-form" hx-post="/jobs/{{ job_id }}/refine"
+        hx-target="#action-panel" hx-swap="innerHTML">
+    <input type="text" name="feedback" maxlength="500"
+           placeholder="what to change — e.g. drop the NIST claim, it is not in my history">
+    <button type="submit">Revise</button>
+  </form>
+
+  <div class="packet-actions">
+    {% if is_local and packet.exists %}
+      {# Only from this Mac: `open` would raise a Finder window here while the user is
+         holding a tablet. The Origin check cannot tell them apart; the peer can. #}
+      <button hx-post="/jobs/{{ job_id }}/reveal"
+              hx-target="#packet-{{ job_id }}" hx-swap="outerHTML">Reveal in Finder</button>
+    {% endif %}
+    <button hx-post="/jobs/{{ job_id }}/retailor"
+            hx-target="#action-panel" hx-swap="innerHTML">Re-tailor</button>
+  </div>
+{% endif %}
+{% include "_groundedness.html" %}
+{% include "_packet_report.html" %}
+</div>

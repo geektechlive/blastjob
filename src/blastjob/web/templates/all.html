@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}All discovered &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">All discovered &mdash; every active job and why it's where it is</h1>
+<p class="all-legend">
+  Most jobs are filtered on purpose (wrong role type, wrong location, or low fit).
+  Anything here can still be kept &mdash; if the filter got one wrong, grab it.
+</p>
+{% include "_status_filters.html" %}
+{% if not jobs and status != 'all' %}<p class="empty">Nothing with this status. Show all above.</p>{% endif %}
+<table class="all-table">
+  <thead>
+    <tr><th>Fit</th><th>Title</th><th>Company</th><th>Where</th><th>Status</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for job in jobs %}
+    <tr class="disp-{{ job.disposition | replace(' ', '-') }}">
+      <td class="c-fit">{% if job.alignment_score is not none %}{{ job.alignment_score }}%{% else %}&mdash;{% endif %}</td>
+      <td class="c-title"><a href="/jobs/{{ job.id }}">{{ job.title }}</a></td>
+      <td class="c-co">{{ job.company }}</td>
+      <td class="c-loc">{% if job.geo_remote %}remote{% elif job.geo_city %}{{ job.geo_city }}{% else %}&mdash;{% endif %}</td>
+      <td class="c-disp"><span class="disp-badge">{{ job.disposition }}</span> <span class="disp-reason">{{ job.reason }}</span></td>
+      <td class="c-act">
+        {% if job.review_state not in ('kept', 'archived') %}
+          <button class="btn-keep sm" hx-post="/jobs/{{ job.id }}/keep" hx-swap="none"
+                  hx-on::after-request="window.location.reload()">keep</button>
+        {% endif %}
+        {% if job.review_state == 'kept' or job.work_key != 'not_tailored' %}
+          <span class="badge work work-{{ job.work_key }}">{{ job.work_label }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

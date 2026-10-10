@@ -1,0 +1,6 @@
+<div class="same-role-actions">
+  <button class="btn-keep" hx-post="/jobs/{{ job_id }}/same-role/{{ c.job_id }}/same"
+          hx-target="#same-role" hx-swap="outerHTML">Same role</button>
+  <button class="btn-archive" hx-post="/jobs/{{ job_id }}/same-role/{{ c.job_id }}/different"
+          hx-target="#same-role" hx-swap="outerHTML">Not the same</button>
+</div>

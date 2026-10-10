@@ -1,0 +1,7 @@
+{% if job.review_state == 'kept' %}
+<div id="activity-panel" class="detail-block activity-panel"
+     hx-get="/jobs/{{ job.id }}/activity" hx-trigger="load" hx-swap="outerHTML">
+  <h3>Activity</h3>
+  <p class="posting-note">Loading&hellip;</p>
+</div>
+{% endif %}

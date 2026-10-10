@@ -1,0 +1,20 @@
+{% set is_snippet = is_jd_snippet(job.raw_jd, job.jd_pasted_at) %}
+<div class="detail-block" id="jd-block">
+  <h3>Job description
+    {% if is_snippet %}<span class="jd-note">— only a snippet; scoring and tailoring can't see the rest</span>
+    {% elif job.jd_pasted_at %}<span class="jd-note jd-pasted">— pasted {{ job.jd_pasted_at[:10] }}</span>{% endif %}
+  </h3>
+  <pre class="jd">{{ job.raw_jd }}</pre>
+  {% set full = job.url | safe_url %}
+  {% if is_snippet %}
+    {% if full %}
+      <a class="ext" href="{{ full }}" target="_blank" rel="noopener noreferrer">open the full posting &rarr;</a>
+    {% endif %}
+    <form class="jd-paste-form" hx-post="/jobs/{{ job.id }}/jd" hx-target="#jd-block" hx-swap="outerHTML">
+      <label for="jd-{{ job.id }}">Paste the full description</label>
+      <textarea id="jd-{{ job.id }}" name="jd" rows="8" placeholder="Copy the whole posting from the employer's page and paste it here."></textarea>
+      <button type="submit">Save description</button>
+    </form>
+  {% endif %}
+  {% if jd_error %}<p class="jd-note">{{ jd_error }}</p>{% endif %}
+</div>

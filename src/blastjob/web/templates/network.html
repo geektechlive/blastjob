@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Network &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Network</h1>
+<p class="dim">Your own LinkedIn connections export &mdash; who you already know at a
+target company, and standing recruiter contacts. No scraping, no automation: this is
+your data, exported by you through LinkedIn's own data-privacy download.</p>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if import_result %}
+  <p class="dim">Imported: {{ import_result.added }} added, {{ import_result.updated }} updated,
+  {{ import_result.skipped }} skipped.</p>
+{% endif %}
+
+<form class="settings-form" method="post" action="/network/import" enctype="multipart/form-data">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <label>LinkedIn export
+    <input type="file" name="file" accept=".csv,.zip" required>
+    <small>
+      Settings &rarr; Data Privacy &rarr; Get a copy of your data.
+      Either the <strong>full archive .zip</strong> (best &mdash; adds recommendations,
+      who you last spoke to, and companies you follow) or just <strong>Connections.csv</strong>.
+      Message bodies are never stored, only who and when.
+    </small>
+  </label>
+  <button type="submit">Import</button>
+</form>
+
+<h2>Read the titles properly</h2>
+<p class="dim">A deeper pass over the import: it reads each job title and works out the real
+seniority, the function (an "AVP Strategic Sales" is a senior <i>sales</i> person, which a
+keyword rule will never get right), and whether a recruiter is in-house, an agency or retained
+search. It sends <b>distinct title and company strings only &mdash; never a name, never your
+message history</b> &mdash; and it is resumable, so re-running after an import does just the new
+ones.</p>
+<button hx-post="/network/enrich" hx-target="#enrich-panel" hx-swap="innerHTML">Read the titles</button>
+<div id="enrich-panel"></div>
+
+<h2>Summary</h2>
+<ul class="network-summary">
+  <li>{{ summary.total }} total connections</li>
+  <li>{{ summary.recruiter_count }} recruiters</li>
+  {% for tier in ("exec", "director", "manager", "ic") %}
+    <li>{{ summary.by_seniority.get(tier, 0) }} {{ tier }}</li>
+  {% endfor %}
+</ul>
+
+<h2>Top companies</h2>
+<ul class="network-companies">
+  {% for c in summary.top_companies %}
+    <li>{{ c.company }} &mdash; {{ c.n }}</li>
+  {% else %}
+    <li class="dim">No connections imported yet.</li>
+  {% endfor %}
+</ul>
+
+<h2>Advocates</h2>
+<p class="dim">People who publicly recommended you &mdash; the strongest referral ask in
+your network. They already wrote the endorsement.</p>
+<ul class="network-advocates">
+  {% for a in advocates %}
+    <li>{{ a.full_name }} &mdash; {{ a.position }}{% if a.company %} at {{ a.company }}{% endif %}
+      {% if a.last_message_at %}<span class="dim">last spoke {{ a.last_message_at }}</span>{% endif %}
+    </li>
+  {% else %}
+    <li class="dim">No recommendations imported yet.</li>
+  {% endfor %}
+</ul>
+
+{# The bare lists that used to live here had no links, no last-spoke dates and no
+   actions, so none of this data could actually be used. Loaded on demand so the
+   page stays fast with 1,300+ contacts. #}
+<div hx-get="/network/recruiters" hx-trigger="load" hx-swap="outerHTML">
+  <p class="dim">Loading recruiter desk&hellip;</p>
+</div>
+
+<div hx-get="/network/dormant" hx-trigger="load" hx-swap="outerHTML">
+  <p class="dim">Loading dormant ties&hellip;</p>
+</div>
+
+<div hx-get="/network/follows" hx-trigger="load" hx-swap="outerHTML">
+  <p class="dim">Loading followed companies&hellip;</p>
+</div>
+{% endblock %}

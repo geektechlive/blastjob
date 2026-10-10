@@ -1,0 +1,21 @@
+{# The actual people the user knows at this company, not just a count. Recommenders first:
+   they already wrote the endorsement, which is the strongest referral ask there is. #}
+{% if warm_people %}
+<div class="detail-block">
+  <h3>People you know here <span class="col-count">{{ warm_people|length }}</span></h3>
+  <ul class="facts">
+    {% for p in warm_people %}
+    <li>
+      {% set u = p.url | safe_url %}
+      {% if u %}<a class="ext" href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ p.name }}</a>
+      {% else %}<b>{{ p.name }}</b>{% endif %}
+      &mdash; {{ p.position }}
+      {% if p.seniority %}<span class="badge">{{ p.seniority }}</span>{% endif %}
+      {% if p.recommended_me %}<span class="badge comp">recommended you</span>{% endif %}
+      {% if p.last_message_at %}<span class="dim">last spoke {{ p.last_message_at }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="dim">Verify on LinkedIn before writing &mdash; this is your own export, not a lookup.</p>
+</div>
+{% endif %}

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} &mdash; blastjob{% endblock %}
+{% block content %}
+<a class="back" href="{{ back | default("/") }}">&larr; back</a>
+<article class="detail">
+  <h1>{{ job.title }}</h1>
+  <div class="detail-sub">
+    <span class="job-company">{{ job.company }}</span>
+    <span class="badge src">{{ job.source }}</span>
+    {% if apply is defined and apply %}<a class="apply-link ext" href="{{ apply.url }}" target="_blank" rel="noopener noreferrer">apply on {{ apply.label }} &rarr;</a>{% endif %}
+    {% set posting = job.url | safe_url %}
+    {% if posting %}<a class="ext" href="{{ posting }}" target="_blank" rel="noopener noreferrer">open posting &rarr;</a>{% endif %}
+  </div>
+
+  {% if url_dropped %}
+    <p class="due-line">The posting URL you entered wasn't a valid http(s) link, so it wasn't saved. Everything else was.</p>
+  {% endif %}
+
+  <div class="detail-badges">
+    {% if job.alignment_score is not none %}
+      <span class="badge fit fit-{{ 'hi' if job.alignment_score >= threshold else 'mid' }}">{{ job.alignment_score }}% fit</span>
+    {% endif %}
+    {% if job.comp_provenance == 'posted' and job.comp_max %}
+      <span class="badge comp">${{ (job.comp_min // 1000) }}k&ndash;${{ (job.comp_max // 1000) }}k posted</span>
+    {% elif job.comp_provenance == 'inferred' and job.comp_max %}
+      <span class="badge comp comp-inferred">${{ (job.comp_min // 1000) }}k&ndash;${{ (job.comp_max // 1000) }}k
+        inferred (read from the posting, not published)</span>
+    {% else %}
+      <span class="badge comp comp-unknown">comp unverified</span>
+    {% endif %}
+    {% if job.geo_remote %}<span class="badge geo">remote</span>
+    {% elif job.geo_city %}<span class="badge geo">{{ job.geo_city }}, {{ job.geo_region }}{% if job.geo_distance_mi %} · {{ job.geo_distance_mi|round|int }}mi{% endif %}</span>{% endif %}
+    <span class="badge state">{{ job.review_state }}</span>
+    {% if job.review_state == 'archived' and job.archive_reason %}
+      <span class="badge state">{{ archive_reasons.get(job.archive_reason, job.archive_reason) }}{% if job.archive_note %} · {{ job.archive_note }}{% endif %}</span>
+    {% endif %}
+    {% if job.warm_count is defined and job.warm_count %}
+      <span class="badge fit fit-hi" title="connections at this company">{{ job.warm_count }} in your network</span>
+    {% endif %}
+    {% if job.is_alumni is defined and job.is_alumni %}
+      <span class="badge fit fit-hi" title="a former employer">you worked here</span>
+    {% endif %}
+  </div>
+
+
+  {% include "_same_role.html" %}
+
+  {% if job.rationale %}
+    <div class="detail-block"><h3>Why this scored {{ job.alignment_score }}</h3><p>{{ job.rationale }}</p></div>
+  {% endif %}
+
+  {% if job.match_strengths or job.match_gaps %}
+    <div class="detail-block match-breakdown">
+      {% if job.match_strengths %}
+        <div class="mb-col">
+          <h3 class="mb-strong">Strengths</h3>
+          <ul>{% for s in job.match_strengths.split('\n') if s %}<li>{{ s }}</li>{% endfor %}</ul>
+        </div>
+      {% endif %}
+      {% if job.match_gaps %}
+        <div class="mb-col">
+          <h3 class="mb-gap">Gaps to probe</h3>
+          <ul>{% for g in job.match_gaps.split('\n') if g %}<li>{{ g }}</li>{% endfor %}</ul>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div class="detail-actions" id="detail-actions">
+    {% if job.review_state in ('surfaced', 'queued') %}
+      <button class="btn-keep" hx-post="/jobs/{{ job.id }}/keep" hx-target="body" hx-swap="none"
+              hx-on::after-request="window.location.reload()">Keep &amp; tailor</button>
+      <span class="archive-ctl">
+        <select name="reason" id="reason-{{ job.id }}" class="reason-select">
+          <option value="">why?</option>
+          {% for code, label in archive_reasons.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+        </select>
+        <input type="text" name="note" id="note-{{ job.id }}" class="reason-note" placeholder="note (optional)" maxlength="300">
+        <button class="btn-archive" hx-post="/jobs/{{ job.id }}/archive" hx-include="#reason-{{ job.id }}, #note-{{ job.id }}"
+                hx-target="body" hx-swap="none" hx-on::after-request="window.location='/'">Archive</button>
+      </span>
+    {% elif job.review_state == 'kept' %}
+      <span class="kept-badge">{{ (stage or 'kept') | upper }} &#10003;</span>
+      {% if job.build_state == 'tailored' %}<span class="badge state">tailored</span>{% endif %}
+      {% if job.build_state == 'tailored' %}
+        {# Tailoring again needs build_state reset first, or claim_for_build refuses
+           and the panel reports a build "already in progress" that finished days ago. #}
+        <button class="btn-tailor" hx-post="/jobs/{{ job.id }}/retailor"
+                hx-target="#action-panel" hx-swap="innerHTML">Re-tailor</button>
+      {% else %}
+        <button class="btn-tailor" hx-post="/jobs/{{ job.id }}/tailor"
+                hx-target="#action-panel" hx-swap="innerHTML">Tailor resume + cover letter</button>
+      {% endif %}
+      <button hx-post="/jobs/{{ job.id }}/outreach"
+              hx-target="#action-panel" hx-swap="innerHTML">Draft outreach email</button>
+      <button hx-post="/jobs/{{ job.id }}/prep" hx-target="#action-panel" hx-swap="innerHTML">Interview prep</button>
+      <button hx-post="/jobs/{{ job.id }}/followup/draft"
+              hx-target="#action-panel" hx-swap="innerHTML">Draft follow-up</button>
+      {% if stage == 'shortlist' %}
+      <button class="btn-archive" hx-post="/jobs/{{ job.id }}/unkeep" hx-target="body" hx-swap="none"
+              hx-confirm="Remove from the shortlist? It goes back to Surfaced or the Queue by its fit score (or out of view if the fit is low or the posting is gone). Your notes are kept."
+              hx-on::after-request="window.location.reload()">Remove from shortlist</button>
+      {% endif %}
+    {% elif job.review_state == 'archived' %}
+      <span class="badge state">archived{% if job.archive_reason %} &middot; {{ job.archive_reason }}{% endif %}</span>
+      <button hx-post="/jobs/{{ job.id }}/unarchive" hx-target="body" hx-swap="none"
+              hx-on::after-request="window.location.reload()">Unarchive</button>
+    {% endif %}
+  </div>
+  <div id="action-panel"></div>
+
+  {% include "_packet.html" %}
+  {% include "_warm_paths.html" %}
+  {% include "_posting_status.html" %}
+  {% include "_activity_files.html" %}
+
+  {% if job.review_state == 'kept' %}
+    {% include "_app_status.html" %}
+    {% include "_company_snapshot.html" %}
+    {% include "_comp_signals.html" %}
+    {% include "_contacts.html" %}
+  {% endif %}
+
+  {% include "_jd_block.html" %}
+</article>
+{% endblock %}

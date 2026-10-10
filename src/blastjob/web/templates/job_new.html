@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Add a job &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Add a job</h1>
+<p class="dim">For a posting no source picked up &mdash; a screenshot, a forwarded link, a
+tip from a contact. It goes through the same fit scoring as everything else.</p>
+
+{% if errors %}
+  <ul class="due-line">
+    {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+  </ul>
+{% endif %}
+{% if url_dropped %}
+  <p class="due-line">That URL wasn't a valid http(s) link, so it wasn't saved.</p>
+{% endif %}
+
+<form class="settings-form" method="post" action="/jobs/new">
+  <input type="hidden" name="_token" value="{{ token }}">
+
+  <label>Company
+    <input type="text" name="company" value="{{ form.company }}" required>
+  </label>
+
+  <label>Title
+    <input type="text" name="title" value="{{ form.title }}" required>
+  </label>
+
+  <label>Posting URL (optional)
+    <input type="url" name="url" value="{{ form.url }}" placeholder="https://...">
+  </label>
+
+  <label>Location (optional)
+    <input type="text" name="location" value="{{ form.location }}" placeholder="e.g. Springfield, OH">
+  </label>
+
+  <label class="checkbox">
+    <input type="checkbox" name="remote" {% if form.remote %}checked{% endif %}> Remote
+  </label>
+
+  <label>Job description
+    <textarea name="raw_jd" rows="14" required>{{ form.raw_jd }}</textarea>
+    <small>Paste the whole posting, not a summary &mdash; it's what fit scoring and interview
+      prep both read from.</small>
+  </label>
+
+  <button type="submit" class="btn-save">Add &amp; score</button>
+</form>
+{% endblock %}

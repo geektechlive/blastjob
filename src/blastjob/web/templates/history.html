@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Packets &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Packets <span class="col-count">{{ rows|length }}</span></h1>
+<p class="dim">Every resume and cover letter bundle built, newest first.</p>
+{% if not rows %}
+  <p class="empty">No packets yet. Keep a role and tailor it.</p>
+{% else %}
+<div class="table-scroll">
+<table class="funnel-table packets-table">
+  <tr>
+    <th>Built</th><th>Company</th><th>Role</th><th>Documents</th><th class="num">Cost</th>
+  </tr>
+  {% for row in rows %}
+  {% set e = row.entry %}
+  <tr>
+    <td class="num">{{ e.timestamp[:10] }} <span class="dim">{{ e.timestamp[11:16] }}</span></td>
+    {% if row.job_id %}
+      <td><a href="/jobs/{{ row.job_id }}">{{ e.company }}</a></td>
+      <td><a href="/jobs/{{ row.job_id }}">{{ e.role }}</a>{% if e.ats_mode %} <span class="badge">ATS</span>{% endif %}</td>
+    {% else %}
+      <td>{{ e.company }}</td>
+      <td>{{ e.role }}{% if e.ats_mode %} <span class="badge">ATS</span>{% endif %}
+        <span class="dim">&middot; not linked to a job</span></td>
+    {% endif %}
+    <td class="packet-docs">
+      {% if row.job_id and row.docs.resume %}<a href="/jobs/{{ row.job_id }}/files/{{ row.docs.resume | urlencode }}">Resume</a>{% endif %}
+      {% if row.job_id and row.docs.cover %}<a href="/jobs/{{ row.job_id }}/files/{{ row.docs.cover | urlencode }}">Cover letter</a>{% endif %}
+      {% if is_local and row.job_id and row.is_latest %}
+        <button class="link-button" hx-post="/jobs/{{ row.job_id }}/reveal" hx-swap="none">Finder</button>
+      {% endif %}
+      {% if not row.job_id %}<code class="dim">{{ e.path.name }}</code>{% endif %}
+    </td>
+    <td class="num">{% if e.cost_usd is none %}<span class="dim">unknown</span>
+      {% else %}${{ '%.2f' % e.cost_usd }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

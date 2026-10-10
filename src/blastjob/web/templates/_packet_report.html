@@ -1,0 +1,160 @@
+{# Packet verification panel for one tailored bundle.
+   Context: `packet_report` = blastjob.web.packet_view.PacketReportView | None.
+   `job_id` and `packet` (blastjob.web.packets.packet_for_job's dict) are read
+   only for the release form, and are optional -- a standalone include with
+   neither present simply omits that form.
+   Include it anywhere; with packet_report absent or None it renders nothing.
+   No |safe anywhere -- message/evidence/source come from parsed resume/cover-letter
+   text and model output over untrusted JD text, so everything renders through
+   Jinja autoescaping. #}
+{% if packet_report %}
+<div id="packet-report" class="detail-block packet-report">
+<style>
+  .packet-report .pr-badge-ready { color: var(--lime); border-color: var(--lime-dim); }
+  .packet-report .pr-badge-quarantined { color: var(--red); border-color: var(--red); }
+  .packet-report .pr-badge-other { color: var(--amber); border-color: var(--amber); }
+  .packet-report h4 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px;
+    margin: 0.9rem 0 0.3rem; color: var(--ink-dim); }
+  .packet-report .pr-finding { border-left: 3px solid var(--line); padding: 0.35rem 0.6rem;
+    margin: 0.4rem 0; }
+  .packet-report .pr-finding.pr-fatal { border-left-color: var(--red); }
+  .packet-report .pr-finding.pr-major { border-left-color: var(--amber); }
+  .packet-report .pr-finding.pr-minor { border-left-color: var(--ink-dim); }
+  .packet-report .pr-finding p { margin: 0.15rem 0; word-break: break-word; }
+  .packet-report .pr-source { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-dim); }
+  .packet-report details summary { cursor: pointer; color: var(--ink-dim); margin-top: 0.6rem; }
+</style>
+  <h3>Packet verification
+    {% if packet_report.state == "ready" %}
+      <span class="badge pr-badge-ready">ready</span>
+    {% elif packet_report.state == "quarantined" %}
+      <span class="badge pr-badge-quarantined">quarantined</span>
+    {% elif packet_report.state == "verification_failed" %}
+      <span class="badge pr-badge-other">not verified</span>
+    {% elif packet_report.state %}
+      <span class="badge pr-badge-other">{{ packet_report.state }}</span>
+    {% else %}
+      <span class="badge comp-unknown">unknown</span>
+    {% endif %}
+    {% if not packet_report.sendable %}<span class="badge pr-badge-quarantined">not sendable</span>{% endif %}
+  </h3>
+
+  {% if packet_report.checks_failed %}
+  <p class="error">Verification incomplete &mdash; {{ packet_report.checks_failed | length }} of
+    {{ (packet_report.checks_run | length) + (packet_report.checks_failed | length) }} checks
+    crashed and did not run: {{ packet_report.checks_failed | join(", ") }}. A packet whose
+    checks did not run is not a clean packet.</p>
+  {% endif %}
+
+  {% if packet_report.quarantined_artifacts %}
+  <p class="error">Held in quarantine: {{ packet_report.quarantined_artifacts | join(", ") }}.</p>
+  {% endif %}
+
+  {% if packet_report.reasons %}
+  <ul class="dim">
+    {% for reason in packet_report.reasons %}<li>{{ reason }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if packet is defined and packet and packet.quarantined %}
+  <form class="release-form" hx-post="/jobs/{{ job_id }}/packet/release"
+        hx-target="this" hx-swap="outerHTML"
+        hx-confirm="Send this packet anyway? It was held for: {{ packet_report.reasons | join('; ') }}">
+    <label for="release-reason-{{ job_id }}">Send anyway &mdash; say why:</label>
+    <textarea id="release-reason-{{ job_id }}" name="reason" required rows="2"
+              placeholder="e.g. the flagged character is in the company's own name"></textarea>
+    <button type="submit">Release &amp; send</button>
+  </form>
+  {% endif %}
+
+  <div class="table-wrap">
+  <table class="facts">
+    {% if packet_report.groundedness is not none %}
+    <tr>
+      <td>Groundedness</td>
+      <td class="num">{{ packet_report.groundedness }}/100</td>
+      <td class="dim">Uncalibrated &mdash; not validated against a human-reviewed claim set.
+        A prompt to look, not a guarantee.</td>
+    </tr>
+    {% endif %}
+    {% if packet_report.jd_phrasing is not none %}
+    <tr>
+      <td>JD phrasing</td>
+      <td class="num">{{ packet_report.jd_phrasing }}/100</td>
+      <td class="dim"><strong>Not a fit score.</strong> It measures how closely the resume's
+        wording echoes the posting's own wording, nothing about whether you're qualified.
+        A low number can describe a strong, honestly-worded resume.</td>
+    </tr>
+    {% endif %}
+    {% if packet_report.cover_letter_groundedness is not none %}
+    <tr>
+      <td>Cover letter groundedness</td>
+      <td class="num">{{ packet_report.cover_letter_groundedness }}/100</td>
+      <td class="dim">Uncalibrated, same caveat as the resume score above.</td>
+    </tr>
+    {% endif %}
+  </table>
+  </div>
+
+  {% if not packet_report.fatal and not packet_report.major and not packet_report.minor %}
+  <p class="dim">No findings recorded &mdash; {{ packet_report.checks_run | length }} checks ran.</p>
+  {% endif %}
+
+  {% if packet_report.fatal %}
+  <h4>Fatal &mdash; {{ packet_report.fatal_count }}</h4>
+  {% for f in packet_report.fatal %}
+  <div class="pr-finding pr-fatal">
+    <p>{{ f.message }}</p>
+    {% if f.evidence %}<p class="dim">&ldquo;{{ f.evidence }}&rdquo;</p>{% endif %}
+    <p class="pr-source">{{ f.artifact }}{% if f.line %} &middot; line {{ f.line }}{% endif %}
+      &middot; {{ f.source or "no source recorded" }}</p>
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if packet_report.major %}
+  <h4>Major &mdash; {{ packet_report.major_count }}</h4>
+  {% for f in packet_report.major %}
+  <div class="pr-finding pr-major">
+    <p>{{ f.message }}</p>
+    {% if f.evidence %}<p class="dim">&ldquo;{{ f.evidence }}&rdquo;</p>{% endif %}
+    <p class="pr-source">{{ f.artifact }}{% if f.line %} &middot; line {{ f.line }}{% endif %}
+      &middot; {{ f.source or "no source recorded" }}</p>
+  </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if packet_report.minor %}
+  <details>
+    <summary>Minor / advisory &mdash; {{ packet_report.minor_count }}</summary>
+    <p class="dim">Advisory only, never blocking. These come from a parser
+      (Textkernel's published Resume Quality spec) that does not sit behind any board
+      you actually apply through &mdash; treat them as a second opinion worth a glance,
+      not proof of a parse failure.</p>
+    {% for f in packet_report.minor %}
+    <div class="pr-finding pr-minor">
+      <p>{{ f.message }}</p>
+      {% if f.evidence %}<p class="dim">&ldquo;{{ f.evidence }}&rdquo;</p>{% endif %}
+      <p class="pr-source">{{ f.artifact }}{% if f.line %} &middot; line {{ f.line }}{% endif %}
+        &middot; {{ f.source or "no source recorded" }}</p>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+
+  {% if packet_report.coverage_gaps %}
+  <details>
+    <summary>Coverage gaps &mdash; {{ packet_report.coverage_gaps | length }}</summary>
+    <p class="dim">True material your work history proves that this resume did not use.
+      The matcher over-reports &mdash; its 0.75 overlap threshold was calibrated on a single
+      packet &mdash; so treat this as a prompt to check, not a checklist to fill.</p>
+    {% for g in packet_report.coverage_gaps %}
+    <div class="pr-finding pr-minor">
+      <p><strong>{{ g.requirement }}</strong> <span class="dim">({{ g.priority }})</span></p>
+      <p class="dim">Your own words: &ldquo;{{ g.history_quote }}&rdquo;</p>
+    </div>
+    {% endfor %}
+  </details>
+  {% endif %}
+</div>
+{% endif %}

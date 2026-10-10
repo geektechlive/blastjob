@@ -1,0 +1,30 @@
+<div id="follows" class="detail-block">
+  <h3>Companies you follow with no coverage
+    <span class="col-count">{{ summary.employers }}</span>
+  </h3>
+  <p class="dim">{{ summary.total }} followed companies have never produced a single job
+  in the cockpit; {{ summary.filtered }} look like media or communities rather than
+  employers and are set aside below.</p>
+  <p class="dim"><b>These are candidates, not boards to add.</b> Verify a hit by the
+  <i>location of a sample posting</i>, never by the company name matching &mdash; the
+  configured <code>acme</code> token turned out to be an HVAC contractor in North
+  Carolina, fetched 38 postings a day, and nothing noticed for a week.</p>
+
+  <ul class="facts follow-list">
+    {% for s in seeds if s.likely_employer %}
+      <li>{{ s.company }}{% if s.followed_at %} <span class="dim">followed {{ s.followed_at }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+
+  {% set skipped = seeds | rejectattr('likely_employer') | list %}
+  {% if skipped %}
+  <details>
+    <summary class="dim">{{ skipped | length }} set aside as not-an-employer</summary>
+    <ul class="facts">
+      {% for s in skipped %}
+        <li>{{ s.company }} <span class="dim">&mdash; {{ s.note }}</span></li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</div>

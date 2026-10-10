@@ -1,0 +1,5 @@
+{# Result of a read-only IMAP login probe. Never renders a credential value --
+   only whether the login was accepted and a classified reason if not. #}
+<p class="probe-result {{ 'ok' if ok else 'bad' }}">
+  {% if ok %}✓{% else %}✗{% endif %} {{ detail }}
+</p>

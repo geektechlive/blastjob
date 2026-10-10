@@ -1,0 +1,12 @@
+{# Filter any job list by where you stand on it. Filtering never reorders:
+   every list stays best fit first. `sort_q` carries the pay toggle through. #}
+{% if status_filters and status_counts and status_counts.all > 1 %}
+<nav class="status-filters" aria-label="Filter by status">
+  {% for key, label in status_filters %}
+    {% if key == 'all' or status_counts[key] or status == key %}
+      <a href="?{{ sort_q | default('') }}status={{ key }}" class="status-filter{% if status == key %} active{% endif %}"
+         {% if status == key %}aria-current="true"{% endif %}>{{ label }} <b>{{ status_counts[key] }}</b></a>
+    {% endif %}
+  {% endfor %}
+</nav>
+{% endif %}

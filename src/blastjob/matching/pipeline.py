@@ -1,0 +1,361 @@
+"""Matching pipeline: score & disposition active, undecided jobs.
+
+Order per job (cheap -> expensive):
+  1. geo assessment (keyless)         — skip LLM for clearly-far on-site roles
+  2. scope prefilter (deterministic)  — skip LLM for configured drop families
+  3. batched LLM alignment score      — only survivors reach here
+  4. gate + rank                      — set review_state, alignment, comp
+
+User-decided jobs (review_state kept/archived) are never re-touched. Comp that a
+source posted is authoritative; the LLM may supply posted comp it read from a JD
+when the source gave none, but it never invents estimates here.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Callable, Collection
+from dataclasses import dataclass, field
+
+from blastjob import config as cfg_mod
+from blastjob.core.company import company_key
+from blastjob.llm.cost import CostTracker
+from blastjob.matching.gate import decide
+from blastjob.matching.geo import assess_geo
+from blastjob.matching.prefilter import classify_scope
+from blastjob.matching.scorer import reuse_key, score_candidates
+from blastjob.models.config import BlastJobConfig
+from blastjob.models.job import SCORER_FEEDBACK_REASONS, CompProvenance, GeoStatus, ReviewState
+
+
+@dataclass
+class MatchResult:
+    considered: int = 0
+    prefiltered_out: int = 0
+    geo_rejected: int = 0
+    geo_unknown: int = 0  # location unplaceable -> review queue, not dropped
+    scored: int = 0
+    surfaced: int = 0
+    queued: int = 0
+    rejected: int = 0
+    scoring_failures: int = 0  # batches lost to LLM/parse failure (jobs stay unscored)
+    company_skipped: int = 0  # auto-archived: company previously rejected by the user
+    states: dict[str, int] = field(default_factory=dict)
+    # Run-level notes for the cockpit run panel / blastjob-daily digest -- never
+    # raised as an exception, since an unconfigured install is not a failure.
+    notes: list[str] = field(default_factory=list)
+
+
+# States the matcher owns. kept/archived belong to the user and are never
+# overwritten, even when a scoring result lands after the user acted.
+MACHINE_STATES = "'new','surfaced','queued'"
+_RESET_TO_NEW = (
+    f"UPDATE jobs SET review_state='new' WHERE id=? AND review_state IN ({MACHINE_STATES})"
+)
+
+# Shown when [candidate] target_titles is unset (including a "<placeholder>"
+# value): matching still runs geo + the scope prefilter, but makes no LLM call
+# and leaves every surviving job unscored. Surfaced through the same
+# run-notes channel the cockpit run panel and blastjob-daily already use.
+NO_CANDIDATE_PROFILE_NOTE = (
+    "No candidate profile: set [candidate] target_titles in config.toml "
+    "(see CUSTOMIZING.md) — skipped scoring"
+)
+
+
+def _work_history(cfg: BlastJobConfig) -> str:
+    path = cfg_mod.data_dir(cfg) / "work_history.md"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+def auto_archive_rejected_companies(conn: sqlite3.Connection) -> int:
+    """A company the user has excluded: every later posting from it is archived
+    on arrival, instead of spending an LLM call and surfacing something they
+    already said no to.
+
+    The exclusion is read from `company_exclusions` -- an explicit row the user
+    can see and delete -- NOT inferred from any job carrying
+    archive_reason='company'. The old inference was a one-way door: unarchiving
+    a single row left every sibling still satisfying the subquery, so postings
+    kept auto-archiving while the user believed the decision was reversed, and
+    nothing anywhere ever cleared archive_reason.
+    """
+    # Match on company_key, not a lowercased string. exclude/unexclude already
+    # key on it, so a raw compare let "Fabrikam's Corp." slip past an exclusion
+    # recorded for "Fabrikam's Corp" -- identical keys, different strings.
+    excluded = {
+        r["company_key"] for r in conn.execute("SELECT company_key FROM company_exclusions")
+    }
+    if not excluded:
+        return 0
+    rows = conn.execute(
+        f"SELECT id, company FROM jobs WHERE review_state IN ({MACHINE_STATES}) AND company <> ''"
+    ).fetchall()
+    hits = [r["id"] for r in rows if company_key(r["company"] or "") in excluded]
+    for jid in hits:
+        conn.execute(
+            "UPDATE jobs SET review_state='archived', archive_reason='company', "
+            "archive_note='auto: company excluded' WHERE id=?",
+            (jid,),
+        )
+    conn.commit()
+    return len(hits)
+
+
+def load_prior_scores(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Scores already held for an unchanged posting, keyed by `reuse_key`.
+
+    Without this, a repost is re-judged every run. The live evidence: one job-board
+    reseller's listing scored 90, 89, 88 and 84 on four consecutive mornings and crossed the
+    surface threshold in both directions, so the digest kept re-announcing the
+    same role while its band decision flip-flopped on scorer noise. Replaying the
+    stored score is what makes an unchanged posting stable — and it is free.
+
+    Keyed on employer + title + JD text, so two companies sharing boilerplate
+    stay two jobs.
+    """
+    out: dict[str, dict] = {}
+    for r in conn.execute(
+        "SELECT company, title, raw_jd, alignment_score, rationale, "
+        "match_strengths, match_gaps, comp_min, comp_max "
+        "FROM jobs WHERE alignment_score IS NOT NULL AND raw_jd <> ''"
+    ):
+        key = reuse_key(r["company"] or "", r["title"] or "", r["raw_jd"] or "")
+        if key is None or key in out:
+            continue
+        out[key] = {
+            "alignment": r["alignment_score"],
+            "rationale": r["rationale"] or "",
+            "strengths": _split_list(r["match_strengths"]),
+            "gaps": _split_list(r["match_gaps"]),
+            "comp_min": int(r["comp_min"] or 0),
+            "comp_max": int(r["comp_max"] or 0),
+        }
+    return out
+
+
+def _split_list(raw: str | None) -> list[str]:
+    return [p for p in (raw or "").split("\n") if p.strip()]
+
+
+def load_rejections(conn: sqlite3.Connection, limit: int = 15) -> list[dict]:
+    """Recent level/domain archives as scorer calibration examples."""
+    placeholders = ",".join("?" for _ in SCORER_FEEDBACK_REASONS)
+    rows = conn.execute(
+        "SELECT title, company, archive_reason, archive_note FROM jobs "
+        f"WHERE review_state='archived' AND archive_reason IN ({placeholders}) "
+        "ORDER BY id DESC LIMIT ?",
+        (*SCORER_FEEDBACK_REASONS, limit),
+    ).fetchall()
+    return [
+        {
+            "title": r["title"],
+            "company": r["company"],
+            "reason": r["archive_reason"],
+            "note": r["archive_note"],
+        }
+        for r in rows
+    ]
+
+
+def _load_candidates(
+    conn: sqlite3.Connection,
+    *,
+    only_unscored: bool,
+    job_ids: Collection[int] | None = None,
+) -> list[sqlite3.Row]:
+    """Machine-state jobs to (re)consider. `only_unscored` limits the LLM spend
+    to jobs that have never been scored — the daily run's mode. The cockpit's
+    Match button passes False to re-score everything after a rubric change.
+
+    `job_ids`, when given, scopes the pass to those ids only (e.g. a single
+    manually-added job) instead of the whole backlog. An explicit empty
+    collection means "nothing to score" — it must not degrade to "all jobs"."""
+    if job_ids is not None and not job_ids:
+        return []
+    extra = " AND alignment_score IS NULL" if only_unscored else ""
+    params: tuple[int, ...] = ()
+    id_clause = ""
+    if job_ids is not None:
+        placeholders = ",".join("?" for _ in job_ids)
+        id_clause = f" AND id IN ({placeholders})"
+        params = tuple(job_ids)
+    return conn.execute(
+        "SELECT id, title, company, raw_jd, comp_provenance, comp_max, "
+        "geo_remote, geo_city, geo_region, geo_location_raw "
+        "FROM jobs WHERE source_state='active' "
+        f"AND review_state IN ({MACHINE_STATES}){extra}{id_clause}",
+        params,
+    ).fetchall()
+
+
+def _set_geo(conn: sqlite3.Connection, job_id: int, status: GeoStatus, dist: float | None) -> None:
+    """Persist the geo verdict. Only status + distance are stored, but that is
+    lossless: every outcome of `assess_geo` is recoverable from persisted
+    columns, so the DB can answer "why was this dropped" without a new column.
+
+      approximate + distance                 -> pass / conditional / far, by the
+                                                configured commute + extended radii
+      verified + NULL distance + geo_remote=1 -> remote pass
+      verified + NULL distance + geo_remote=0 -> affirmative non-WI hard reject
+      unknown                                 -> unplaceable, provisional pass
+
+    A denormalised `geo_reason TEXT` would be friendlier for the cockpit, but
+    that is a schema change and is not made here.
+    """
+    conn.execute(
+        "UPDATE jobs SET geo_status=?, geo_distance_mi=? WHERE id=?",
+        (status.value, dist, job_id),
+    )
+
+
+async def run_matching(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    cost_tracker: CostTracker,
+    on_progress: Callable[[int, int], None] | None = None,
+    *,
+    only_unscored: bool = False,
+    job_ids: Collection[int] | None = None,
+) -> MatchResult:
+    res = MatchResult()
+    wh = _work_history(cfg)
+    res.company_skipped = auto_archive_rejected_companies(conn)
+    rejections = load_rejections(conn)
+    rows = _load_candidates(conn, only_unscored=only_unscored, job_ids=job_ids)
+    res.considered = len(rows)
+
+    to_score: list[dict] = []
+    geo_by_id: dict[int, tuple[GeoStatus, bool, bool]] = {}
+
+    for r in rows:
+        jid = int(r["id"])
+        status, dist, passes, conditional = assess_geo(
+            remote=bool(r["geo_remote"]),
+            city=r["geo_city"] or "",
+            region=r["geo_region"] or "",
+            location_raw=r["geo_location_raw"] or "",
+            cfg=cfg.discovery,
+        )
+        _set_geo(conn, jid, status, dist)
+        geo_by_id[jid] = (status, passes, conditional)
+
+        # Cheap rejects before spending an LLM call. An UNKNOWN location is NOT
+        # a reject: it means the string was unparseable, so the job goes on to
+        # be scored and lands in the review queue. Rejecting it here would also
+        # leave alignment_score NULL, so the daily run would re-select and
+        # re-reject the same job forever.
+        if status == GeoStatus.UNKNOWN:
+            res.geo_unknown += 1
+        elif not passes:
+            conn.execute(_RESET_TO_NEW, (jid,))
+            res.geo_rejected += 1
+            continue
+        keep, _reason = classify_scope(
+            r["title"] or "",
+            r["raw_jd"] or "",
+            cfg.discovery.title_keep_terms,
+            cfg.discovery.title_drop_terms,
+        )
+        if not keep:
+            conn.execute(_RESET_TO_NEW, (jid,))
+            res.prefiltered_out += 1
+            continue
+
+        to_score.append(
+            {
+                "job_id": jid,
+                "title": r["title"] or "",
+                "company": r["company"] or "",
+                "jd": r["raw_jd"] or "",
+            }
+        )
+
+    conn.commit()
+
+    if not cfg.candidate.is_configured():
+        # Fail safe, not loud: geo + the scope prefilter already ran above, but
+        # no candidate profile means there is nothing to judge fit against, so
+        # the LLM is never called and every surviving job stays unscored.
+        res.notes.append(NO_CANDIDATE_PROFILE_NOTE)
+        res.states = {
+            row["review_state"]: row["n"]
+            for row in conn.execute(
+                "SELECT review_state, COUNT(*) n FROM jobs GROUP BY review_state"
+            ).fetchall()
+        }
+        return res
+
+    scoring = await score_candidates(
+        cfg,
+        wh,
+        to_score,
+        cost_tracker,
+        on_progress=on_progress,
+        rejections=rejections,
+        prior_scores=load_prior_scores(conn),
+    )
+    scores = scoring.scores
+    res.scored = len(scores)
+    res.scoring_failures = scoring.failed_batches
+
+    row_by_id = {int(r["id"]): r for r in rows}
+    for jid, sc in scores.items():
+        r = row_by_id[jid]
+        alignment = sc["alignment"]
+
+        # Comp: a figure the SOURCE published stays POSTED (verified). A figure
+        # the LLM read out of the prose is INFERRED — our reading, not the
+        # employer's number. It never hard-rejects at the gate and never renders
+        # as "posted", because a guess must not be quotable in a negotiation.
+        provenance = r["comp_provenance"]
+        comp_max = int(r["comp_max"] or 0)
+        if provenance != CompProvenance.POSTED.value and sc["comp_max"] > 0:
+            provenance = CompProvenance.INFERRED.value
+            comp_max = sc["comp_max"]
+            conn.execute(
+                "UPDATE jobs SET comp_min=?, comp_max=?, comp_total_est=?, comp_provenance=? "
+                "WHERE id=?",
+                (sc["comp_min"], sc["comp_max"], sc["comp_max"], provenance, jid),
+            )
+
+        status, passes, conditional = geo_by_id[jid]
+        outcome = decide(
+            alignment=alignment,
+            comp_provenance=provenance,
+            comp_max=comp_max,
+            geo_status=status,
+            geo_passes=passes,
+            cfg=cfg.discovery,
+            geo_conditional=conditional,
+        )
+        # CAS on review_state: the cockpit may have been open while the LLM ran
+        # (daily job + a human clicking Keep). A user decision made mid-run must
+        # win over the score that arrives after it.
+        conn.execute(
+            "UPDATE jobs SET alignment_score=?, rationale=?, match_strengths=?, "
+            f"match_gaps=?, review_state=? WHERE id=? AND review_state IN ({MACHINE_STATES})",
+            (
+                alignment,
+                sc["rationale"],
+                "\n".join(sc.get("strengths", [])),
+                "\n".join(sc.get("gaps", [])),
+                outcome.review_state.value,
+                jid,
+            ),
+        )
+        if outcome.review_state == ReviewState.SURFACED:
+            res.surfaced += 1
+        elif outcome.review_state == ReviewState.QUEUED:
+            res.queued += 1
+        else:
+            res.rejected += 1
+
+    conn.commit()
+    res.states = {
+        row["review_state"]: row["n"]
+        for row in conn.execute(
+            "SELECT review_state, COUNT(*) n FROM jobs GROUP BY review_state"
+        ).fetchall()
+    }
+    return res

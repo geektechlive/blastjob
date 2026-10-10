@@ -1,0 +1,244 @@
+"""In-process registry for long-running background work (discovery, matching,
+tailoring builds).
+
+Each run has a monotonic, replayable event log so an SSE consumer that reconnects
+(browser refresh mid-build) can resume from Last-Event-ID instead of missing
+output or restarting the work (Codex #12). Runs continue regardless of whether a
+browser is attached.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from blastjob import logging as applog
+from blastjob.web import progress as progress_mod
+
+# Runs that must not overlap. Discovery and matching write the same SQLite file
+# and pay for LLM scoring, and `claim_for_build`'s CAS only protects tailoring,
+# so a double-click on "Find + Score" (or a second open tab) used to launch two
+# full passes while the banner showed one. Per-job names (tailor/prep/research)
+# stay off this list: blocking tailor B because tailor A is running would be a
+# functional regression. Ingest overwrites work_history.md -- the single most
+# irreplaceable file in the system -- so two concurrent ingests racing to write
+# it is exactly the kind of overlap this list exists to prevent.
+SINGLE_FLIGHT = ("discovery", "matching", "ingest")
+
+# How long a finished run is kept. Must stay comfortably above `active()`'s
+# `recent_seconds` default (300s) or the "done -- refresh" banner silently stops
+# appearing. Eviction matters because a tailor/prep/outreach event log holds the
+# whole streamed LLM output, one Event per chunk, and the cockpit runs as a
+# launchd KeepAlive service that never restarts on its own.
+RUN_RETENTION_SECONDS = 1800.0
+
+# Hard ceiling in case a burst of runs all land inside the retention window.
+MAX_RUNS = 200
+
+# Per-run event ceiling. One Event is appended per streamed LLM chunk, so a long
+# tailor run accumulates thousands, and the cockpit is a KeepAlive service that
+# never restarts on its own. The oldest events are dropped first: a browser
+# reconnecting with Last-Event-ID wants the tail, and the run's own transcript is
+# already on disk in the packet. Chosen to comfortably hold a full build's
+# output, not calibrated against anything finer.
+MAX_EVENTS_PER_RUN = 2000
+
+# After this long, a finished run is evicted even if an SSE consumer is still
+# parked on it. A browser tab left open on a finished run used to pin that run
+# and its whole event log for the life of the process; the waiter is woken by
+# eviction and gets the standard "run is no longer available" frame, which the
+# page already handles.
+ABANDONED_WAITER_GRACE_SECONDS = RUN_RETENTION_SECONDS * 2
+
+_GONE = (
+    "This run is no longer available -- the cockpit restarted or the run aged out. Reload the page."
+)
+
+
+@dataclass
+class Event:
+    id: int
+    kind: str  # "log" | "progress" | "done" | "error"
+    data: str
+
+    def progress(self) -> progress_mod.Progress | None:
+        """This event's structured progress, or `None` if it isn't a
+        "progress" kind or its payload doesn't parse (old free text, or a
+        malformed payload)."""
+        if self.kind != "progress":
+            return None
+        return progress_mod.parse(self.data)
+
+
+@dataclass
+class Run:
+    id: str
+    name: str
+    status: str = "running"  # running | done | failed
+    events: list[Event] = field(default_factory=list)
+    result: Any = None
+    finished_at: float | None = None  # time.monotonic() when status left "running"
+    _next_id: int = 1
+    _waiters: list[asyncio.Event] = field(default_factory=list)
+
+    def emit(self, kind: str, data: str) -> None:
+        self.events.append(Event(self._next_id, kind, data))
+        self._next_id += 1
+        # Bounded: ids keep increasing, so Last-Event-ID replay still works —
+        # a consumer that asks for an id older than the window simply gets
+        # everything still held, which is the tail it needs.
+        if len(self.events) > MAX_EVENTS_PER_RUN:
+            del self.events[: len(self.events) - MAX_EVENTS_PER_RUN]
+        for w in self._waiters:
+            w.set()
+
+    def display_event(self) -> Event | None:
+        """The event a status line should show. See
+        `progress.display_event` -- this exists so templates can call it
+        directly on the `run` they're already given."""
+        return progress_mod.display_event(self.events)
+
+    def latest_progress(self) -> progress_mod.Progress | None:
+        """The most recent structured progress reading, or `None` if no
+        progress event has landed yet (or the newest one doesn't parse)."""
+        return progress_mod.latest_progress(self.events)
+
+
+class Runtime:
+    def __init__(self) -> None:
+        self._runs: dict[str, Run] = {}
+        self._seq = 0
+        # The loop holds only a weak reference to a task, so a run whose task
+        # object is dropped can be garbage-collected mid-flight -- silently
+        # killing a discovery, matching or tailor job while the UI still says
+        # "running". Hold a strong reference until it completes.
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    def get(self, run_id: str) -> Run | None:
+        return self._runs.get(run_id)
+
+    def active(self, names: tuple[str, ...], recent_seconds: float = 300.0) -> Run | None:
+        """The run the global status banner should show: the newest *running*
+        run among `names`, else the newest one that finished within
+        `recent_seconds` (so a "done — refresh" notice survives navigating
+        between pages), else None."""
+        candidates = [r for r in reversed(list(self._runs.values())) if r.name in names]
+        for run in candidates:
+            if run.status == "running":
+                return run
+        now = time.monotonic()
+        for run in candidates:
+            if run.finished_at is not None and now - run.finished_at <= recent_seconds:
+                return run
+        return None
+
+    def _running(self, name: str) -> Run | None:
+        for run in reversed(list(self._runs.values())):
+            if run.name == name and run.status == "running":
+                return run
+        return None
+
+    def _prune(self) -> None:
+        """Drop finished runs (and their event logs) once nothing can still want
+        them. Never a run that is still going, and never one an SSE consumer is
+        parked on."""
+        now = time.monotonic()
+
+        def evictable(run: Run) -> bool:
+            if run.status == "running":
+                return False
+            if not run._waiters:
+                return True
+            # A parked consumer normally protects a run. But a browser tab left
+            # open forever is indistinguishable from an attentive one, and it
+            # used to pin the run permanently, so a waiter only buys extra time.
+            return (
+                run.finished_at is not None
+                and now - run.finished_at > ABANDONED_WAITER_GRACE_SECONDS
+            )
+
+        for rid, run in list(self._runs.items()):
+            if (
+                evictable(run)
+                and run.finished_at is not None
+                and now - run.finished_at > RUN_RETENTION_SECONDS
+            ):
+                del self._runs[rid]
+        for rid, run in list(self._runs.items()):
+            if len(self._runs) <= MAX_RUNS:
+                break
+            if evictable(run):
+                del self._runs[rid]
+
+    def start(self, name: str, work: Callable[[Run], Awaitable[Any]]) -> Run:
+        """Schedule `work(run)` on the event loop. `work` uses run.emit(...) for
+        progress/log/output; its return value becomes run.result.
+
+        For a SINGLE_FLIGHT name with a pass already in flight, `work` is NOT
+        scheduled and the in-flight Run is handed back, so the caller's status
+        panel shows the real run instead of hiding it behind a duplicate."""
+        existing = self._running(name) if name in SINGLE_FLIGHT else None
+        if existing is not None:
+            return existing
+        self._prune()
+        self._seq += 1
+        # Include a random suffix so run_id is unique across server restarts
+        # (build_runs.run_id is UNIQUE; a bare counter resets to 1 on restart and
+        # collides with rows from a prior session).
+        run_id = f"{name}-{self._seq}-{uuid.uuid4().hex[:8]}"
+        run = Run(id=run_id, name=name)
+        self._runs[run_id] = run
+
+        async def _driver() -> None:
+            try:
+                run.result = await work(run)
+                run.status = "done"
+                run.finished_at = time.monotonic()
+                run.emit("done", "")
+            except Exception as e:  # noqa: BLE001 — surface, don't crash the server
+                applog.log_exception(f"run {run.name}", e)
+                run.status = "failed"
+                run.finished_at = time.monotonic()
+                run.emit("error", f"{type(e).__name__}: {e}")
+
+        task = asyncio.create_task(_driver())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return run
+
+    async def stream(self, run_id: str, last_id: int = 0):
+        """Async generator of Events after `last_id`, ending once the run is done
+        and all events are delivered. Supports Last-Event-ID replay."""
+        run = self._runs.get(run_id)
+        if run is None:
+            # Returning nothing made the SSE route answer 200 with an empty
+            # body, which _build_panel.html cannot tell from "still connecting":
+            # it reconnected every few seconds forever and the panel sat on
+            # "Tailoring...". That is the state after a cockpit restart with a
+            # panel open. An `error` frame WITH data closes the stream and says
+            # why (a data-less error frame reads as a connection blip).
+            yield Event(last_id + 1, "error", _GONE)
+            return
+        while True:
+            pending = [e for e in run.events if e.id > last_id]
+            for e in pending:
+                last_id = e.id
+                yield e
+            if run.status != "running" and not [e for e in run.events if e.id > last_id]:
+                return
+            waiter = asyncio.Event()
+            run._waiters.append(waiter)
+            try:
+                await asyncio.wait_for(waiter.wait(), timeout=15)
+            except TimeoutError:
+                pass
+            finally:
+                run._waiters.remove(waiter)
+
+
+# Module-level singleton the app shares.
+RUNTIME = Runtime()

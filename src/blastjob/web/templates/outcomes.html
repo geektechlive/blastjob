@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Outcomes &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Outcomes <span class="col-count">{{ report|length }}</span></h1>
+<p class="dim">
+  Every packet actually sent, oldest first &mdash; the documents that went out, the
+  scores they carried, and where each application actually stopped.
+</p>
+<p class="dim outcomes-note">
+  This page is descriptive only. It does not rank packets, does not compute a
+  success rate, and has no control to sort by score or stage &mdash; seniority,
+  referrals, timing and the company itself swamp any effect a resume's wording
+  could have at the number of applications this app will ever see. A comparison
+  here would be superstition with a number next to it. What has value at n&nbsp;=&nbsp;5
+  is where each application stopped, not a statistic built from stopping points.
+</p>
+{% if not report %}
+  <p class="empty">No packet has been recorded as sent yet.</p>
+{% else %}
+<div class="table-scroll">
+<table class="funnel-table outcomes-table">
+  <tr>
+    <th>Sent</th>
+    <th>Company / Role</th>
+    <th>Documents</th>
+    <th>Scores</th>
+    <th>Shipped with</th>
+    <th>Outcomes</th>
+    <th>Furthest stage</th>
+  </tr>
+  {% for send in report %}
+  <tr>
+    <td class="num">
+      {{ send.sent_at[:10] }} <span class="dim">{{ send.sent_at[11:16] }}</span>
+    </td>
+    <td>
+      {% if send.job_id %}
+        <a href="/jobs/{{ send.job_id }}">{{ send.company or "—" }}</a>
+      {% else %}
+        {{ send.company or "—" }} <span class="dim">(job no longer in the database)</span>
+      {% endif %}
+      <div class="dim">{{ send.title or "" }}</div>
+    </td>
+    <td class="outcomes-docs">
+      <div>
+        <code title="{{ send.resume_sha256 }}">{{ send.resume_sha256[:12] }}</code>
+        {% if send.job_id and send.resume_name %}
+          <a href="/jobs/{{ send.job_id }}/files/{{ send.resume_name | urlencode }}">resume</a>
+        {% else %}
+          resume
+        {% endif %}
+      </div>
+      {% if send.cover_letter_sha256 %}
+      <div>
+        <code title="{{ send.cover_letter_sha256 }}">{{ send.cover_letter_sha256[:12] }}</code>
+        {% if send.job_id and send.cover_letter_name %}
+          <a href="/jobs/{{ send.job_id }}/files/{{ send.cover_letter_name | urlencode }}">cover letter</a>
+        {% else %}
+          cover letter
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if send.job_id %}<a class="dim" href="/jobs/{{ send.job_id }}/history">full timeline</a>{% endif %}
+    </td>
+    <td class="outcomes-scores">
+      <p class="dim small">Uncalibrated: a prompt to look, not a measurement.</p>
+      {% if send.groundedness is not none %}<div>resume groundedness: {{ send.groundedness }}/100</div>{% endif %}
+      {% if send.jd_phrasing is not none %}<div>JD phrasing: {{ send.jd_phrasing }}/100</div>{% endif %}
+      {% if send.cover_letter_groundedness is not none %}
+        <div>cover letter groundedness: {{ send.cover_letter_groundedness }}/100</div>
+      {% endif %}
+      {% if send.groundedness is none and send.jd_phrasing is none and send.cover_letter_groundedness is none %}
+        <span class="dim">not scored</span>
+      {% endif %}
+    </td>
+    <td>
+      {% if send.fatal_findings %}
+        <ul class="outcomes-findings">
+          {% for f in send.fatal_findings %}<li>{{ f.message }}</li>{% endfor %}
+        </ul>
+      {% else %}
+        <span class="dim" title="No fatal finding is recorded against this send. That means none is known -- recording only started 2026-09-17, so an older send can show 'none recorded' even if it shipped with one.">
+          none recorded
+        </span>
+      {% endif %}
+    </td>
+    <td>
+      {% if send.outcomes %}
+        <ul class="outcomes-events">
+          {% for o in send.outcomes %}
+            <li>{{ o.outcome }} <span class="dim">{{ o.observed_at[:10] }}</span>{% if o.note %} &mdash; {{ o.note }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <span class="dim">applied, no outcome recorded yet</span>
+      {% endif %}
+    </td>
+    <td>{{ send.furthest_stage }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% endif %}
+{% endblock %}

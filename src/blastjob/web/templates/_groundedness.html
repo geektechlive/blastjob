@@ -1,0 +1,69 @@
+{# Groundedness panel for one tailored packet.
+   Context: `groundedness` = blastjob.web.fitscore.GroundednessSummary.
+   Include it anywhere; with the var absent or None it renders nothing.
+   No |safe anywhere — claim text and quotes are model output over untrusted JD text. #}
+{% if groundedness %}
+<div id="groundedness" class="detail-block groundedness">
+  <h3>Groundedness
+    {% if groundedness.scored %}
+      {% if groundedness.needs_review %}
+        <span class="badge fit-mid">needs review</span>
+      {% else %}
+        <span class="badge comp">at or above floor</span>
+      {% endif %}
+    {% else %}
+      <span class="badge comp-unknown">not scored</span>
+    {% endif %}
+  </h3>
+
+  {% if groundedness.scored %}
+  <table class="facts">
+    <tr>
+      <td>Groundedness</td>
+      <td class="num">{{ groundedness.groundedness_score }}/100</td>
+      <td class="dim">floor {{ groundedness.floor }} &mdash; uncalibrated: this floor has
+        not been validated against a human-reviewed claim set, and nothing is blocked
+        by it. It is a prompt to look.</td>
+    </tr>
+    <tr>
+      <td>Unsupported claims</td>
+      <td class="num">{{ groundedness.unsupported_count }} of {{ groundedness.total_claims }}</td>
+      <td class="dim">Overall {{ groundedness.overall_score }}/100, JD alignment
+        {{ groundedness.jd_alignment_score }}/100.</td>
+    </tr>
+  </table>
+
+  {% if groundedness.summary %}<p class="dim">{{ groundedness.summary }}</p>{% endif %}
+
+  {% if groundedness.undated_employers %}
+  <p class="dim">Employers shown without dates:
+    {{ groundedness.undated_employers | join(', ') }}. Not a false claim, but a resume
+    without dates reads as hiding something.</p>
+  {% endif %}
+
+  {% if groundedness.unsupported %}
+  <table class="facts">
+    <tr><th>Claim in the packet</th><th>Quote the review was given</th><th>Section</th></tr>
+    {% for claim in groundedness.unsupported %}
+    <tr>
+      <td>{{ claim.claim_text }}</td>
+      <td class="dim">{% if claim.evidence_quote %}&ldquo;{{ claim.evidence_quote }}&rdquo;{% else %}<em>no quote offered</em>{% endif %}</td>
+      <td class="dim">{{ claim.source_section }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="dim">Each row is a sentence the review could not tie to your work history.
+    Fix the sentence or add the fact to the work history &mdash; do not send it as is.</p>
+  {% else %}
+  <p class="dim">Every claim was tied to a quote in your work history.</p>
+  {% endif %}
+
+  {% else %}
+  <p class="dim">{{ groundedness.reason }} Treat this packet as unverified: nothing has
+    checked its claims against your work history.</p>
+  {% endif %}
+
+  <p class="dim"><strong>{{ groundedness.note }}</strong>
+    {% if groundedness.scored %}{{ groundedness.stale_note }}{% endif %}</p>
+</div>
+{% endif %}

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Compare — blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Compare &mdash; {{ rows|length }} {{ state }} roles{% if source %} from {{ source }}{% endif %}</h1>
+
+<form class="filter-form" method="get" action="/compare">
+  <label>Source <input type="text" name="source" value="{{ source }}" placeholder="e.g. greenhouse"></label>
+  <label>State
+    <select name="state">
+      <option value="surfaced" {% if state == 'surfaced' %}selected{% endif %}>surfaced</option>
+      <option value="queued" {% if state == 'queued' %}selected{% endif %}>queued</option>
+      <option value="kept" {% if state == 'kept' %}selected{% endif %}>kept</option>
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+
+{% if rows %}
+<div class="table-wrap">
+<table class="companies compare">
+  <thead>
+    <tr>
+      <th class="num">Fit</th>
+      <th>Company</th>
+      <th>Title</th>
+      <th>Comp</th>
+      <th>Where</th>
+      <th>Industry / size / HQ</th>
+      <th>Strengths</th>
+      <th>Gaps</th>
+      <th>Flags</th>
+      <th>Posting</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td class="num">{% if r.alignment_score is not none %}{{ r.alignment_score }}%{% endif %}</td>
+      <td>{% if r.profile %}<a href="/companies/{{ r.company_key }}">{{ r.company }}</a>{% else %}{{ r.company }}{% endif %}</td>
+      <td><a href="/jobs/{{ r.id }}">{{ r.title }}</a></td>
+      <td>{{ r.comp }}</td>
+      <td>{{ r.where }}</td>
+      <td class="dim">{{ [r.industry, r.size, r.hq] | select | join(' · ') }}</td>
+      <td>{% if r.strengths %}<ul>{% for s in r.strengths %}<li>{{ s }}</li>{% endfor %}</ul>{% endif %}</td>
+      <td>{% if r.gaps %}<ul>{% for g in r.gaps %}<li>{{ g }}</li>{% endfor %}</ul>{% endif %}</td>
+      <td>{% for f in r.flags %}<span class="badge">{{ f }}</span>{% endfor %}</td>
+      <td>{% set ru = r.url | safe_url %}{% if ru %}<a class="ext" href="{{ ru }}" target="_blank" rel="noopener noreferrer">open &rarr;</a>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No {{ state }} roles{% if source %} from {{ source }}{% endif %} to compare yet.</p>
+{% endif %}
+{% endblock %}

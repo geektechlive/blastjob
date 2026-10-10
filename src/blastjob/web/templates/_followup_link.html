@@ -1,0 +1,8 @@
+{# Do NOT add |safe to the href. The body is model output, and Jinja escaping &
+   as &amp; inside an attribute is correct HTML -- every browser handles it. #}
+{% if result.mailto %}
+<div class="followup-actions">
+  <a class="btn" href="{{ result.mailto }}">Open in mail</a>
+  <p class="dim">Saved to <code>{{ result.path }}</code></p>
+</div>
+{% endif %}

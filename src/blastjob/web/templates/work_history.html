@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Work History &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Work History</h1>
+<p class="dim">The canonical source every resume, cover letter, interview prep pack, and
+groundedness judgment is generated from. Saves here write directly to
+<code>work_history.md</code>.</p>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if saved %}<p class="dim">Saved.</p>{% endif %}
+
+<p class="dim">
+  {% if view.exists %}
+    Last saved {{ view.mtime.strftime("%Y-%m-%d %H:%M:%S") }} &middot; {{ view.size_bytes }} bytes
+  {% else %}
+    No work_history.md yet &mdash; save below to create it.
+  {% endif %}
+</p>
+
+<form class="settings-form" method="post" action="/work-history">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <input type="hidden" name="base_version" value="{{ view.version }}">
+  <textarea name="content" rows="36"
+            style="width: 100%; max-width: none; font-family: var(--mono, monospace); font-size: 0.85rem;"
+  >{{ view.content }}</textarea>
+  <button type="submit" class="btn-save">Save</button>
+</form>
+{% endblock %}

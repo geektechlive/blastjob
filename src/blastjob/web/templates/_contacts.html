@@ -1,0 +1,34 @@
+<div id="contacts" class="detail-block contacts">
+  <h3>People at {{ job.company }}</h3>
+  {% if people_error %}<p class="dim">{{ people_error }}</p>{% endif %}
+  {% if contacts %}
+    <ul class="contact-list">
+    {% for c in contacts %}
+      <li class="contact {% if c.contacted_at %}contacted{% endif %}" id="contact-{{ c.id }}">
+        <div class="contact-head">
+          <span class="badge role">{{ c.role.replace('_', ' ') }}</span>
+          {% set cu = c.url | safe_url %}{% if cu %}<a class="ext" href="{{ cu }}" target="_blank" rel="noopener noreferrer">{{ c.name }}</a>{% else %}{{ c.name }}{% endif %}
+          {% if c.title %}<span class="dim">&mdash; {{ c.title }}</span>{% endif %}
+          {% if c.contacted_at %}<span class="badge state">contacted {{ c.contacted_at[:10] }}</span>{% endif %}
+        </div>
+        {% if c.why %}<p class="contact-why">{{ c.why }}</p>{% endif %}
+        <div class="contact-actions">
+          <button hx-post="/jobs/{{ job.id }}/outreach" hx-vals='{"contact_id": {{ c.id }}}'
+                  hx-target="#action-panel" hx-swap="innerHTML">Draft note to {{ c.name.split(' ')[0] }}</button>
+          {% if not c.contacted_at %}
+            <button hx-post="/contacts/{{ c.id }}/contacted" hx-target="#contacts" hx-swap="outerHTML">Mark contacted</button>
+          {% else %}
+            <button hx-post="/contacts/{{ c.id }}/contacted" hx-vals='{"undo": 1}' hx-target="#contacts" hx-swap="outerHTML">Undo</button>
+          {% endif %}
+        </div>
+      </li>
+    {% endfor %}
+    </ul>
+    <p class="dim">Verify each person at their link before writing. Nothing is sent from here.</p>
+  {% elif not people_error %}
+    <p class="dim">No people found yet.</p>
+  {% endif %}
+  <button hx-post="/jobs/{{ job.id }}/people" hx-target="#contacts" hx-swap="outerHTML"
+          hx-indicator="#people-busy">{% if contacts %}Search again{% else %}Find people{% endif %}</button>
+  <span id="people-busy" class="htmx-indicator dim">searching &amp; extracting (~30s)&hellip;</span>
+</div>

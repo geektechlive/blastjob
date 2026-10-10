@@ -1,0 +1,77 @@
+{# Same role, different route. Suggestions only: nothing here links two postings
+   until you click. Never names an employer the data doesn't show. #}
+<section id="same-role" class="same-role">
+  {% if sr_error %}<p class="same-role-error">{{ sr_error }}</p>{% endif %}
+
+  {% if sr_previous %}
+    <div class="same-role-warn same-role-applied">
+      {% for c in sr_previous %}
+        <p><strong>{{ sr_previous_labels[c.job_id] }}.</strong>
+          This may be a repost of
+          <a href="/jobs/{{ c.job_id }}"><strong>{{ c.company }} · {{ c.title }}</strong></a>
+          ({{ sr_labels[c.job_id] }}).
+          Evidence: {{ c.evidence | join(", ") }}.</p>
+        {% include "_same_role_buttons.html" %}
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if sr_candidates %}
+    <div class="same-role-warn{% if sr_applied %} same-role-applied{% endif %}">
+      {% if sr_agency %}
+        {% if sr_applied %}<p><strong>You've already applied there.</strong></p>{% endif %}
+        {% if sr_ambiguous %}<p>More than one employer matches. Nothing is linked until you decide.</p>{% endif %}
+        {% for c in sr_candidates %}
+          <p>Possibly the same role as
+            <a href="/jobs/{{ c.job_id }}"><strong>{{ c.company }} · {{ c.title }}</strong></a>
+            ({{ sr_labels[c.job_id] }}).
+            Evidence: {{ c.evidence | join(", ") }}.</p>
+          {% include "_same_role_buttons.html" %}
+        {% endfor %}
+        <p>Applying through both the agency and the employer can cost you the placement.</p>
+      {% else %}
+        {% if sr_applied %}<p><strong>You've already applied through an agency posting that may be this role.</strong></p>{% endif %}
+        {% for c in sr_candidates %}
+          <p>An agency may be advertising this role too:
+            <a href="/jobs/{{ c.job_id }}"><strong>{{ c.company }} · {{ c.title }}</strong></a>
+            ({{ sr_labels[c.job_id] }}).
+            Evidence: {{ c.evidence | join(", ") }}.</p>
+          {% include "_same_role_buttons.html" %}
+        {% endfor %}
+        <p>Applying through both the agency and the employer can cost you the placement.</p>
+      {% endif %}
+    </div>
+  {% elif sr_employer_hidden %}
+    <p class="same-role-note">Employer not named in this posting. Find out who it is before
+      applying, so you don't apply to the same role twice.</p>
+  {% endif %}
+
+  {% if sr_members %}
+    <div class="same-role-members">
+      <h3>Also listed as</h3>
+      <ul>
+        {% for m in sr_members %}
+          <li>
+            <a href="/jobs/{{ m.job_id }}">{{ m.company }} · {{ m.title }}</a>
+            <span class="badge geo">{{ m.city or "no location" }}</span>
+            <span class="badge src">{{ m.source }}</span>
+            <span class="badge state">{{ m.stage }}</span>
+            <button class="btn-archive" hx-post="/jobs/{{ job_id }}/same-role/{{ m.job_id }}/different"
+                    hx-target="#same-role" hx-swap="outerHTML">Not the same role</button>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {# Display-only: the preferred apply link, never closure evidence. Never fetched. #}
+  <form class="employer-link" hx-post="/jobs/{{ job_id }}/employer-link"
+        hx-target="#same-role" hx-swap="outerHTML">
+    <label for="employer-link-{{ job_id }}">Employer posting URL</label>
+    <input type="url" id="employer-link-{{ job_id }}" name="url" value="{{ employer_link_manual }}"
+           placeholder="https://careers.example.com/jobs/123">
+    <button type="submit">{{ "Update" if employer_link_manual else "Save" }}</button>
+    {% if employer_link_auto %}<span class="badge src" title="found by the closure check">linked: {{ employer_link_auto }}</span>{% endif %}
+    {% if employer_link_error %}<p class="same-role-error employer-link-error">{{ employer_link_error }}</p>{% endif %}
+  </form>
+</section>

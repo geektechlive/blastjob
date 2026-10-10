@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 class="view-title">{{ view_title }}</h1>
+
+{% set status_q = '&status=' ~ status if status != 'all' else '' %}
+{% if view in ('surfaced', 'matches') %}
+<p class="sort-toggle dim">Sorted by
+  {% if sort == 'comp' %}pay &middot; <a href="?sort=fit{{ status_q }}">sort by fit</a>
+  {% else %}fit &middot; <a href="?sort=comp{{ status_q }}">sort by pay</a>{% endif %}
+</p>
+{% endif %}
+
+{% if view == 'applied' and due_count %}
+<p class="due-line">{{ due_count }} follow-up{{ '' if due_count == 1 else 's' }} due &middot; <a href="?status=due">show</a></p>
+{% endif %}
+
+{% include "_status_filters.html" %}
+
+<div class="job-list">
+  {% for job in jobs %}
+    {% include "_job_row.html" %}
+  {% else %}
+    {% if empty_reason %}
+      <p class="empty">{{ empty_reason }}</p>
+    {% elif view in ('shortlist', 'applied', 'closed') %}
+    <p class="empty">Nothing here.</p>
+    {% else %}
+    <p class="empty">
+      Nothing here yet. Hit <b>Find + Score</b> to pull and score fresh jobs,
+      or check your target boards in <a href="/settings">Settings</a>.
+    </p>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endblock %}

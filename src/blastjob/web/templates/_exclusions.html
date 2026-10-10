@@ -1,0 +1,26 @@
+{# Companies excluded outright. This used to be inferred from any archived job
+   carrying reason 'company', which made it unreversible — unarchiving one row
+   left every sibling still satisfying the rule, so postings kept disappearing
+   while the decision looked undone. It is a visible row now. #}
+<div id="exclusions" class="detail-block">
+  <h3>Companies you've excluded <span class="col-count">{{ exclusions|length }}</span></h3>
+  {% if not exclusions %}
+    <p class="dim">None. Archiving a role with the reason <i>company</i> adds one, and
+    every future posting from that employer is then archived on arrival without
+    spending a scoring call.</p>
+  {% else %}
+  <ul class="facts">
+    {% for e in exclusions %}
+    <li>
+      <b>{{ e.company }}</b>
+      {% if e.reason %}<span class="dim">&mdash; {{ e.reason }}</span>{% endif %}
+      <span class="dim">since {{ e.created_at[:10] }}</span>
+      <button hx-post="/companies/unexclude" hx-vals='{"company": {{ e.company | tojson }}}'
+              hx-target="#exclusions" hx-swap="outerHTML">Lift</button>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="dim">Lifting one stops future postings being auto-archived. Roles already
+  archived stay archived &mdash; unarchive those individually.</p>
+  {% endif %}
+</div>

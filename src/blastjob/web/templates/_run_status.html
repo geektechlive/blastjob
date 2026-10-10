@@ -1,0 +1,22 @@
+<div id="run-{{ run.id }}" class="run-status run-{{ run.status }}"
+     {% if run.status == 'running' %}
+       hx-get="/runs/{{ run.id }}" hx-trigger="load delay:1200ms" hx-swap="outerHTML"
+     {% endif %}>
+  <span class="run-label">
+    {{ run.name }}:
+    {% if run.status == 'running' %}running&hellip;{% elif run.status == 'done' %}done{% else %}failed{% endif %}
+  </span>
+  {% set disp = run.display_event() %}
+  {% if disp %}
+    {% set p = disp.progress() %}
+    {% if p %}
+      <progress class="run-bar" value="{{ p.done }}" max="{{ p.total if p.total else 1 }}"></progress>
+      <span class="run-last">{% if p.label %}{{ p.label }} &mdash; {% endif %}{{ "{:,}".format(p.done) }} / {{ "{:,}".format(p.total) }} ({{ p.percent }}%)</span>
+    {% else %}
+      <span class="run-last">{{ disp.data }}</span>
+    {% endif %}
+  {% endif %}
+  {% if run.status == 'done' %}
+    <a class="run-refresh" href="">refresh &rarr;</a>
+  {% endif %}
+</div>

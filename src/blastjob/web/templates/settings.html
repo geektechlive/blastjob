@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Settings &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Settings</h1>
+{% if settings_error %}<p class="error" role="alert">{{ settings_error }}</p>{% endif %}
+<form class="settings-form" method="post" action="/settings">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <input type="hidden" name="revision" value="{{ revision }}">
+  <input type="hidden" name="_sections" value="core,profile,location,search,service">
+
+  <h3 id="profile">Who the search is for</h3>
+  <label>Target titles (one per line)
+    <textarea name="target_titles" rows="4">{{ cfg.candidate.target_titles | join('\n') }}</textarea>
+    <small>Nothing is scored until at least one is set.</small>
+  </label>
+  <label>Seniority
+    <input type="text" name="seniority" value="{{ cfg.candidate.seniority }}" placeholder="e.g. individual contributor, manager, director, executive">
+  </label>
+  <label>Field
+    <input type="text" name="field" value="{{ cfg.candidate.field }}" placeholder="e.g. data engineering, nursing, corporate finance">
+  </label>
+  <label>Former employers (one per line, as written in your work history)
+    <textarea name="former_employers" rows="3">{{ cfg.candidate.former_employers | join('\n') }}</textarea>
+  </label>
+
+  <h3>Fit and pay</h3>
+  <label>Comp floor (USD)
+    <input type="number" name="comp_floor_usd" value="{{ cfg.discovery.comp_floor_usd }}" step="5000" min="0">
+    <small>Verified posted comp below this is rejected; 0 turns the gate off. Unknown/estimated comp is never dropped &mdash; it goes to the queue.</small>
+  </label>
+
+  <label>Alignment threshold
+    <input type="number" name="alignment_threshold" value="{{ cfg.discovery.alignment_threshold }}" min="0" max="100">
+    <small>Surface at or above this. A visible borderline band sits {{ cfg.discovery.alignment_threshold - 5 }}&ndash;{{ cfg.discovery.alignment_threshold }} in the queue. Uncalibrated for a new profile.</small>
+  </label>
+
+  <label>Excluded companies (comma-separated)
+    <textarea name="exclude_companies" rows="2">{{ cfg.discovery.exclude_companies | join(', ') }}</textarea>
+    <small>Your current employer and any company you never want to see. Never surfaced or contacted. (Former employers go in <code>candidate.former_employers</code>: they are the warm-path signal.)</small>
+  </label>
+
+  <h3>Location</h3>
+  <label>Home (display)
+    <input type="text" name="home_location" value="{{ cfg.discovery.home_location }}" placeholder="e.g. Springfield, OH">
+  </label>
+  <label>Home state (two-letter code)
+    <input type="text" name="home_state" value="{{ cfg.discovery.home_state }}" maxlength="2" placeholder="OH">
+  </label>
+  <label>Home latitude
+    <input type="number" name="home_lat" value="{{ cfg.discovery.home_lat }}" step="any" min="-90" max="90">
+  </label>
+  <label>Home longitude
+    <input type="number" name="home_lon" value="{{ cfg.discovery.home_lon }}" step="any" min="-180" max="180">
+  </label>
+  <label>Commute radius (miles)
+    <input type="number" name="commute_radius_miles" value="{{ cfg.discovery.commute_radius_miles }}" step="1" min="0">
+    <small>Straight-line miles from your home point.</small>
+  </label>
+  <label>Extended radius (miles)
+    <input type="number" name="extended_radius_miles" value="{{ cfg.discovery.extended_radius_miles }}" step="1" min="0">
+    <small>Beyond the commute radius but inside this: queued as "OK only if hybrid &mdash; verify". At least the commute radius.</small>
+  </label>
+  <label>Towns you would consider (one per line: <code>town, lat, lon</code>)
+    <textarea name="towns" rows="6">{{ towns_text }}</textarea>
+    <small>A home-state posting in a town not listed here goes to the review queue rather than being guessed.</small>
+  </label>
+  <label class="checkbox">
+    <input type="checkbox" name="remote_ok" {% if cfg.discovery.remote_ok %}checked{% endif %}> Include remote roles
+  </label>
+
+  <h3>Where to look</h3>
+  <label>Company boards (one per line: <code>company, ats, token</code>)
+    <textarea name="target_boards" rows="6">{{ boards_text }}</textarea>
+    <small>ats is greenhouse, lever, ashby, workday or dayforce. Find tokens with <code>python -m blastjob.discovery.resolve "Company"</code>.</small>
+  </label>
+  <label class="checkbox">
+    <input type="checkbox" name="enable_aggregators" {% if cfg.discovery.enable_aggregators %}checked{% endif %}> Enable Adzuna aggregator (needs a free key in your secrets file)
+  </label>
+  <label>Title search queries (one per line)
+    <textarea name="adzuna_queries" rows="4">{{ cfg.discovery.adzuna_queries | join('\n') }}</textarea>
+    <small>Used by Adzuna and to search Workday/Dayforce boards.</small>
+  </label>
+  <label>Adzuna location
+    <input type="text" name="adzuna_where" value="{{ cfg.discovery.adzuna_where }}">
+  </label>
+  <label>Always-score title terms (one per line)
+    <textarea name="title_keep_terms" rows="3">{{ cfg.discovery.title_keep_terms | join('\n') }}</textarea>
+  </label>
+  <label>Job families to skip (one per line)
+    <textarea name="title_drop_terms" rows="3">{{ cfg.discovery.title_drop_terms | join('\n') }}</textarea>
+    <small>Dropped before any LLM call unless the description shows people-management scope.</small>
+  </label>
+  <label>Search-firm queries (one per line)
+    <textarea name="search_firm_queries" rows="3">{{ cfg.discovery.search_firm_queries | join('\n') }}</textarea>
+  </label>
+  <label>Search-firm regions (one per line)
+    <textarea name="search_firm_regions" rows="3">{{ cfg.discovery.search_firm_regions | join('\n') }}</textarea>
+  </label>
+  <label>Apple careers queries (one per line)
+    <textarea name="apple_queries" rows="3">{{ cfg.discovery.apple_queries | join('\n') }}</textarea>
+  </label>
+
+  <h3>Daily digest and cockpit</h3>
+  <label>Daily digest goes to
+    <select name="notify_mode">
+      {% for mode in ["stdout", "discord", "off"] %}
+      <option value="{{ mode }}" {% if cfg.notify.mode == mode %}selected{% endif %}>{{ mode }}</option>
+      {% endfor %}
+    </select>
+    <small>discord needs {{ cfg.notify.discord_token_env }} and {{ cfg.notify.discord_channel_env }} in your secrets file.</small>
+  </label>
+  <label>Cockpit address
+    <input type="text" name="web_host" value="{{ cfg.web.host }}">
+    <small>Takes effect after restarting the cockpit. 127.0.0.1 is this machine only; anything else exposes a tool with no login to your network.</small>
+  </label>
+  <label>Cockpit port
+    <input type="number" name="web_port" value="{{ cfg.web.port }}" min="1" max="65535">
+    <small>Takes effect after restarting the cockpit.</small>
+  </label>
+
+  <button type="submit" class="btn-save">Save</button>
+</form>
+
+<section class="settings-note">
+  <h3>Active model</h3>
+  <p class="dim">Every resume, cover letter, score and prep pack is written by
+  <code>{{ active_model }}</code>. With no API key set this is the <code>claude</code>
+  CLI; setting <code>ANTHROPIC_API_KEY</code> switches to the API and adds prompt
+  caching and live web search.</p>
+</section>
+
+{# ---- Mail accounts. Env var NAMES only: values live in the secrets file
+   and are NEVER rendered here, only reported present/missing. The cockpit is
+   LAN-bound without auth, so anything on this page is readable LAN-wide. ---- #}
+<section class="settings-note" id="mail">
+  <h3>Mail accounts</h3>
+  <p class="dim">blastjob reads two mailboxes and they are not interchangeable:
+  job alerts arrive on one, recruiters write to the other. These fields hold the
+  <strong>names</strong> of environment variables &mdash; the actual username and
+  app password live in your secrets file and are never stored in settings or
+  shown on this page.</p>
+
+  {% if mail_error %}<p class="error">{{ mail_error }}</p>{% endif %}
+
+  {% for acct in [mail.alert, mail.personal] %}
+  <div class="mail-account">
+    <h4>{{ acct.label }}</h4>
+    <p class="dim">
+      Scanning <code>{{ acct.host }}</code> / <code>{{ acct.mailbox }}</code>.
+      {{ acct.user_env }}: {% if acct.user_set %}<strong>set</strong>{% else %}<strong class="bad">missing</strong>{% endif %} &middot;
+      {{ acct.password_env }}: {% if acct.password_set %}<strong>set</strong>{% else %}<strong class="bad">missing</strong>{% endif %}
+      {% if acct.inherited %}<br><em>Inherited from the alert account: {{ acct.inherited | join(', ') }}.</em>{% endif %}
+    </p>
+    <form method="post" action="/settings/mail/test/{{ acct.role }}"
+          hx-post="/settings/mail/test/{{ acct.role }}" hx-target="#probe-{{ acct.role }}">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <button type="submit" class="btn-secondary">Test connection</button>
+    </form>
+    <div id="probe-{{ acct.role }}"></div>
+  </div>
+  {% endfor %}
+
+  {% for note in mail.notes %}<p class="warn">{{ note }}</p>{% endfor %}
+
+  <form class="settings-form" method="post" action="/settings/mail">
+    <input type="hidden" name="_token" value="{{ token }}">
+    <input type="hidden" name="revision" value="{{ revision }}">
+
+    <label class="checkbox">
+      <input type="checkbox" name="mail_alerts_enabled" {% if cfg.discovery.mail_alerts_enabled %}checked{% endif %}>
+      Ingest LinkedIn / Indeed job alerts from the alert mailbox
+      <small>Governs the job feed only. Recruiter-reply scanning is independent and keys off whether the personal mailbox has credentials.</small>
+    </label>
+
+    <h4>Alert mailbox</h4>
+    <label>IMAP host
+      <input type="text" name="mail_imap_host" value="{{ cfg.discovery.mail_imap_host }}" required>
+    </label>
+    <label>Username env var name
+      <input type="text" name="mail_user_env" value="{{ cfg.discovery.mail_user_env }}" required pattern="[A-Z][A-Z0-9_]*">
+    </label>
+    <label>App-password env var name
+      <input type="text" name="mail_password_env" value="{{ cfg.discovery.mail_password_env }}" required pattern="[A-Z][A-Z0-9_]*">
+      <small>The variable's NAME, not the password.</small>
+    </label>
+    <label>Mailbox
+      <input type="text" name="mail_mailbox" value="{{ cfg.discovery.mail_mailbox }}">
+    </label>
+
+    <h4>Personal mailbox (recruiter replies)</h4>
+    <p class="dim">Leave a field blank to inherit it from the alert mailbox above.</p>
+    <label>IMAP host
+      <input type="text" name="personal_mail_imap_host" value="{{ cfg.discovery.personal_mail_imap_host }}" placeholder="{{ cfg.discovery.mail_imap_host }}">
+    </label>
+    <label>Username env var name
+      <input type="text" name="personal_mail_user_env" value="{{ cfg.discovery.personal_mail_user_env }}" placeholder="{{ cfg.discovery.mail_user_env }}" pattern="[A-Z][A-Z0-9_]*">
+    </label>
+    <label>App-password env var name
+      <input type="text" name="personal_mail_password_env" value="{{ cfg.discovery.personal_mail_password_env }}" placeholder="{{ cfg.discovery.mail_password_env }}" pattern="[A-Z][A-Z0-9_]*">
+      <small>The variable's NAME, not the password.</small>
+    </label>
+    <label>Mailbox
+      <input type="text" name="personal_mail_mailbox" value="{{ cfg.discovery.personal_mail_mailbox }}" placeholder="{{ cfg.discovery.mail_mailbox }}">
+    </label>
+
+    <button type="submit" class="btn-save">Save mail settings</button>
+  </form>
+</section>
+
+{% endblock %}

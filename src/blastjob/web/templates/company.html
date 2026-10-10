@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ profile.company }} &mdash; blastjob{% endblock %}
+{% block content %}
+<a class="back" href="/companies">&larr; companies</a>
+<article class="detail company-page">
+  <h1>{{ profile.company }}</h1>
+  <div class="detail-sub">
+    {% set site = profile.website | safe_url %}
+    {% if site %}<a class="ext" href="{{ site }}" target="_blank" rel="noopener noreferrer">website &rarr;</a>{% endif %}
+    {% if profile.hq %}<span class="dim">{{ profile.hq }}</span>{% endif %}
+    {% if profile.founded %}<span class="dim">· founded {{ profile.founded }}</span>{% endif %}
+    <span class="dim">· updated {{ profile.updated_at[:10] }}</span>
+  </div>
+
+  {% if profile.summary %}<div class="detail-block"><h3>Read</h3><p>{{ profile.summary }}</p></div>{% endif %}
+
+  <div class="detail-block">
+    <h3>Numbers <span class="dim">{{ profile.fiscal_period }}</span></h3>
+    <table class="facts">
+      {% if profile.ownership %}<tr><th>Ownership</th><td>{{ profile.ownership }}</td></tr>{% endif %}
+      {% if profile.industry %}<tr><th>Industry</th><td>{{ profile.industry }}</td></tr>{% endif %}
+      {% if profile.employees %}<tr><th>Employees</th><td>{{ "{:,}".format(profile.employees) }}{% if profile.size_band %} <span class="dim">({{ profile.size_band }})</span>{% endif %}</td></tr>{% endif %}
+      {% if profile.revenue_usd %}<tr><th>Revenue</th><td>${{ "{:,}".format(profile.revenue_usd) }}{% if profile.revenue_growth_pct %} <span class="dim">({{ profile.revenue_growth_pct }}% YoY)</span>{% endif %}</td></tr>{% endif %}
+      {% if profile.total_assets_usd %}<tr><th>Total assets</th><td>${{ "{:,}".format(profile.total_assets_usd) }}</td></tr>{% endif %}
+      {% if profile.net_income_usd %}<tr><th>Net income</th><td>${{ "{:,}".format(profile.net_income_usd) }}</td></tr>{% endif %}
+      {% if profile.customers %}<tr><th>Customers / members</th><td>{{ "{:,}".format(profile.customers) }}</td></tr>{% endif %}
+      {% if profile.locations %}<tr><th>Locations</th><td>{{ profile.locations }}</td></tr>{% endif %}
+      {% if profile.ceo %}<tr><th>CEO</th><td>{{ profile.ceo }}{% if profile.ceo_since %} <span class="dim">since {{ profile.ceo_since }}</span>{% endif %}</td></tr>{% endif %}
+      {% if profile.culture_rating %}<tr><th>Culture</th><td>{{ profile.culture_rating }}/5 <span class="dim">{{ profile.culture_notes }}</span></td></tr>{% endif %}
+      {% for k, v in profile.extra.items() %}<tr><th class="dim">{{ k.replace('_', ' ') }}</th><td>{{ v }}</td></tr>{% endfor %}
+    </table>
+  </div>
+
+  {% if profile.strategy %}<div class="detail-block"><h3>Strategy</h3><p>{{ profile.strategy }}</p></div>{% endif %}
+
+  {% if profile.it_leadership %}
+  <div class="detail-block"><h3>Technology leadership</h3>
+    <ul>{% for p in profile.it_leadership %}<li><b>{{ p.name }}</b> &mdash; {{ p.title }}{% if p.role %} <span class="badge role">{{ p.role.replace('_',' ') }}</span>{% endif %}{% set pu = p.url | safe_url %}{% if pu %} <a class="ext" href="{{ pu }}" target="_blank" rel="noopener noreferrer">&rarr;</a>{% endif %}{% if p.note %} <span class="dim">{{ p.note }}</span>{% endif %}</li>{% endfor %}</ul>
+  </div>{% endif %}
+
+  {% if profile.tech_stack %}
+  <div class="detail-block"><h3>Technology signals</h3>
+    <ul>{% for t in profile.tech_stack %}<li><b>{{ t.area }}</b>: {{ t.vendor }}{% if t.source %} <span class="dim">({{ t.source }})</span>{% endif %}</li>{% endfor %}</ul>
+  </div>{% endif %}
+
+  {% if profile.recent_events %}
+  <div class="detail-block"><h3>Recent events</h3>
+    <ul>{% for e in profile.recent_events %}<li><span class="dim">{{ e.date }}</span> {{ e.event }}{% if e.source %} <span class="dim">— {{ e.source }}</span>{% endif %}</li>{% endfor %}</ul>
+  </div>{% endif %}
+
+  {% include "_comp_signals.html" %}
+
+  {% if profile.questions %}
+  <div class="detail-block"><h3>Questions to ask</h3><ol>{% for q in profile.questions.split('\n') if q %}<li>{{ q }}</li>{% endfor %}</ol></div>{% endif %}
+  {% if profile.risks %}<div class="detail-block"><h3>Risks</h3><p>{{ profile.risks }}</p></div>{% endif %}
+
+  <div class="detail-block"><h3>Jobs at {{ profile.company }}</h3>
+    {% if jobs %}<ul>{% for j in jobs %}<li><a href="/jobs/{{ j.id }}">{{ j.title }}</a> <span class="badge state">{{ j.review_state }}</span>{% if j.application_state %} <span class="badge state">{{ j.application_state }}</span>{% endif %}{% if j.alignment_score is not none %} <span class="dim">{{ j.alignment_score }}%</span>{% endif %}</li>{% endfor %}</ul>
+    {% else %}<p class="dim">None on file.</p>{% endif %}
+  </div>
+
+  {% if profile.sources %}
+  <div class="detail-block"><h3>Sources</h3><ul class="sources">{% for s in profile.sources %}<li>{% set su = s.url | safe_url %}{% if su %}<a class="ext" href="{{ su }}" target="_blank" rel="noopener noreferrer">{{ s.label or s.url }}</a>{% else %}{{ s.label or s.url }}{% endif %}{% if s.accessed %} <span class="dim">{{ s.accessed }}</span>{% endif %}</li>{% endfor %}</ul></div>{% endif %}
+  {% if profile.workup_path %}<p class="dim">Long-form workup: <code>{{ profile.workup_path }}</code></p>{% endif %}
+
+  <div class="detail-actions">
+    <button hx-post="/companies/{{ profile.company_key }}/research" hx-target="#action-panel" hx-swap="innerHTML">Refresh research</button>
+  </div>
+  <div id="action-panel"></div>
+</article>
+{% endblock %}

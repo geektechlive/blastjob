@@ -1,0 +1,32 @@
+<div class="build-panel">
+  <div class="build-status" id="bs-{{ run.id }}">{{ heading }}&hellip;</div>
+  <pre class="build-out" id="bo-{{ run.id }}"></pre>
+  <script>
+  (function () {
+    var out = document.getElementById("bo-{{ run.id }}");
+    var st = document.getElementById("bs-{{ run.id }}");
+    var es = new EventSource("/builds/{{ run.id }}/events");
+    es.addEventListener("output", function (e) {
+      out.textContent += e.data;
+      out.scrollTop = out.scrollHeight;
+    });
+    es.addEventListener("log", function (e) { st.textContent = e.data; });
+    es.addEventListener("done", function () {
+      // Do NOT overwrite the status line here. The last `log` event is the payoff
+      // ("Saved bundle to ...", "Saved {path}", "Profile saved"), and clobbering it
+      // with "Done." is the whole of "I clicked Tailor and nothing happened".
+      es.close();
+      {% if job_id %}
+      // The path is read back from build_runs.artifact_dir on demand, so it also
+      // survives a refresh -- which an SSE-only message never could.
+      htmx.ajax("GET", "/jobs/{{ job_id }}/packet", "#packet-{{ job_id }}");
+      {% endif %}
+    });
+    es.addEventListener("error", function (e) {
+      // Native connection blips have no data and auto-reconnect (resumes via
+      // Last-Event-ID). Only a payload means a real run error.
+      if (e && e.data) { st.textContent = "Error: " + e.data; es.close(); }
+    });
+  })();
+  </script>
+</div>

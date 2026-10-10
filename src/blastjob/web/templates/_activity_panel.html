@@ -1,0 +1,47 @@
+<div id="activity-panel" class="detail-block activity-panel">
+  <h3>Activity <span class="posting-note">(dates before 2026-10-09 reconstructed from the record)</span></h3>
+  {% if events %}
+    <ul class="activity-list">
+      {% for e in events %}
+        <li>
+          {{ e.at[:10] }} · <strong>{{ e.label }}</strong>
+          {% if e.note %} · {{ e.note }}{% endif %}
+          {% set href = e.ref | safe_url %}
+          {% if href %} · <a href="{{ href }}" target="_blank" rel="noopener noreferrer">link</a>{% endif %}
+          {% if e.source == 'manual' %}
+            <button class="btn-link" hx-post="/jobs/{{ job_id }}/events/{{ e.id }}/delete"
+                    hx-target="#activity-panel" hx-swap="outerHTML"
+                    hx-confirm="Delete this entry?">delete</button>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="posting-note">Nothing recorded yet.</p>
+  {% endif %}
+  <form class="activity-add" hx-post="/jobs/{{ job_id }}/events"
+        hx-target="#activity-panel" hx-swap="outerHTML">
+    <select name="kind">
+      {% for code, label in kinds.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+    </select>
+    <input type="date" name="at" value="{{ today }}" required>
+    <input type="text" name="note" placeholder="note (optional)" maxlength="2000">
+    <button type="submit">Add</button>
+  </form>
+
+  <h3>Files</h3>
+  {% if files %}
+    <ul class="activity-files">
+      {% for f in files %}
+        <li>
+          <span class="badge src">{{ f.kind | replace('_', ' ') }}</span>
+          {% if f.href %}<a href="{{ f.href }}" target="_blank" rel="noopener">{{ f.name }}</a>
+          {% else %}<code>{{ f.path }}</code>{% endif %}
+          <span class="posting-note">{{ f.date }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="posting-note">No files indexed for this job yet.</p>
+  {% endif %}
+</div>

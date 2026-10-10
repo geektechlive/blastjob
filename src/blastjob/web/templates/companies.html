@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Companies &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Companies &mdash; workups on file</h1>
+{% if profiles %}
+<div class="table-wrap">
+<table class="companies">
+  <thead><tr><th>Company</th><th>HQ</th><th>Industry</th><th class="num">Employees</th><th class="num">Revenue</th><th class="num">Assets</th><th class="num">Culture</th><th>As of</th><th>Jobs</th></tr></thead>
+  <tbody>
+  {% for p in profiles %}
+    <tr>
+      <td><a href="/companies/{{ p.company_key }}">{{ p.company }}</a></td>
+      <td>{{ p.hq }}</td>
+      <td>{{ p.industry }}</td>
+      <td class="num">{% if p.employees %}{{ "{:,}".format(p.employees) }}{% endif %}</td>
+      <td class="num">{% if p.revenue_usd %}${{ (p.revenue_usd / 1e6) | round | int }}M{% endif %}</td>
+      <td class="num">{% if p.total_assets_usd %}${{ (p.total_assets_usd / 1e9) | round(1) }}B{% endif %}</td>
+      <td class="num">{% if p.culture_rating %}{{ p.culture_rating }}/5{% endif %}</td>
+      <td class="dim">{{ p.fiscal_period[:40] }}</td>
+      <td class="num">{{ p.job_count }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No company workups yet. Open a kept job and hit <b>Research company</b>.</p>
+{% endif %}
+
+{% include "_exclusions.html" %}
+{% endblock %}

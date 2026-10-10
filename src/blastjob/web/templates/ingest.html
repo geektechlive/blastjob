@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Ingest &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Ingest work history</h1>
+<p class="dim">Upload resumes, cover letters, or notes (PDF, DOCX, TXT, MD). Claude reads
+them and rebuilds <code>work_history.md</code> plus the standard and ATS resume
+templates. The existing <code>work_history.md</code> is backed up first &mdash; nothing
+generated from it is ever lost to a bad ingest.</p>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<form class="settings-form" method="post" action="/work-history/ingest" enctype="multipart/form-data">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <label>Source documents
+    <input type="file" name="files" accept=".pdf,.docx,.doc,.txt,.md" multiple required>
+    <small>One or more files. Anything else is rejected before an ingest starts.</small>
+  </label>
+  <button type="submit">Ingest</button>
+</form>
+
+{% if run %}
+  <h2>In progress</h2>
+  {% with heading = "Ingesting" %}
+    {% include "_build_panel.html" %}
+  {% endwith %}
+{% endif %}
+{% endblock %}

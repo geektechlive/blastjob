@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}blastjob cockpit{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body hx-headers='{"{{ csrf_header }}": "{{ token }}"}'>
+  <header class="topbar">
+    <a class="brand" href="/">blastjob<span class="blink">_</span></a>
+    {# Main row: the pipeline's exclusive stages, in workflow order, with the
+       same counts their pages render. Everything else lives under More. #}
+    <nav class="stage-nav" aria-label="Pipeline stages">
+      {% for key, label, href in stage_nav %}
+        <a href="{{ href }}" class="stage-tab{% if view is defined and view == key %} active{% endif %}"
+           {% if view is defined and view == key %}aria-current="page"{% endif %}>{{ label }}{% if counts is defined and counts and key in counts %} <b>{{ counts[key] }}</b>{% endif %}</a>
+      {% endfor %}
+      <details class="more-menu">
+        <summary>More &#9662;</summary>
+        <div class="more-panel">
+          <div class="more-group"><span class="more-head">Browse</span>
+            <a href="/matches">Matches</a><a href="/all">All</a><a href="/compare">Compare</a></div>
+          <div class="more-group"><span class="more-head">Track</span>
+            <a href="/pipeline">Pipeline</a><a href="/funnel">Funnel</a><a href="/history">Packets</a></div>
+          <div class="more-group"><span class="more-head">Research</span>
+            <a href="/companies">Companies</a><a href="/network">Network</a></div>
+          <div class="more-group"><span class="more-head">Setup</span>
+            <a href="/work-history">Work history</a><a href="/work-history/ingest">Ingest</a><a href="/settings">Settings</a></div>
+        </div>
+      </details>
+    </nav>
+    <div class="actions">
+      <a class="btn-tailor" href="/jobs/new" title="Add a posting by hand">+ Add job</a>
+      <button hx-post="/run/discovery" hx-target="#run-status" hx-swap="innerHTML"
+              title="Fetch new jobs and score them">Find + Score</button>
+      <button hx-post="/run/matching" hx-target="#run-status" hx-swap="innerHTML"
+              title="Re-score existing jobs (after changing the threshold or settings)">Re-score</button>
+    </div>
+  </header>
+  <div id="stale-notice"></div>
+  <div id="run-status" hx-get="/runs/active" hx-trigger="load" hx-swap="innerHTML"></div>
+  <script>
+    // The CSRF token is per server launch. A tab left open across a cockpit
+    // restart (launchd, a deploy) carries a dead token, so every Keep/Archive
+    // click 403s and HTMX swaps nothing — the click looks ignored. Reload to
+    // pick up the new token and say why.
+    document.addEventListener("htmx:responseError", function (e) {
+      if (e.detail.xhr && e.detail.xhr.status === 403) {
+        try { sessionStorage.setItem("blastjob.stale", "1"); } catch (_) {}
+        location.reload();
+      }
+    });
+    document.addEventListener("DOMContentLoaded", function () {
+      var stale = false;
+      try { stale = sessionStorage.getItem("blastjob.stale") === "1"; sessionStorage.removeItem("blastjob.stale"); } catch (_) {}
+      if (stale) {
+        var el = document.getElementById("stale-notice");
+        el.innerHTML = '<div class="run-status run-failed">The cockpit restarted since this page was opened, so your last click was not applied. The page has been reloaded &mdash; please click again.</div>';
+      }
+    });
+  </script>
+  <main>
+    {% if first_run %}
+    <div class="first-run" role="status">
+      <strong>blastjob is not set up yet.</strong> With no target titles there is
+      nothing to score against, so matching makes no LLM calls.
+      <a href="/settings#profile">Set up your profile</a>, or have your AI assistant
+      follow SETUP.md and finish with <code>blastjob setup doctor</code>.
+    </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

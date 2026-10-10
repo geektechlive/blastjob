@@ -1,0 +1,26 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+dist/
+*.egg-info/
+.venv/
+venv/
+
+# Claude Code local session settings (per-machine, never shared)
+.claude.local.md
+
+# Personal layer (never tracked): your own AI notes and plans
+CLAUDE.local.md
+local/
+
+# Never tracked: databases, secrets, legacy config files
+*.db
+*.db-shm
+*.db-wal
+secrets.env
+config.toml

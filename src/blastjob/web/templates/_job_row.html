@@ -1,0 +1,103 @@
+<article class="job-card state-{{ job.review_state }}" id="job-{{ job.id }}">
+  <div class="job-main">
+    <div class="job-head">
+      <a class="job-title" href="/jobs/{{ job.id }}?source_view={{ view | default("") }}">{{ job.title }}</a>
+      <span class="job-company">{{ job.company }}</span>
+    </div>
+    <div class="job-meta">
+      {% if job.work_key is defined and (job.review_state == 'kept' or job.work_key != 'not_tailored') %}
+        <span class="badge work work-{{ job.work_key }}">{{ job.work_label }}</span>
+      {% endif %}
+      {% if job.alignment_score is not none %}
+        <span class="badge fit fit-{{ 'hi' if job.alignment_score >= threshold else 'mid' }}">
+          {{ job.alignment_score }}% fit
+        </span>
+      {% endif %}
+      {% if job.comp_provenance == 'posted' and job.comp_max %}
+        <span class="badge comp">${{ (job.comp_min // 1000) }}k&ndash;${{ (job.comp_max // 1000) }}k</span>
+      {% elif job.comp_provenance == 'inferred' and job.comp_max %}
+        <span class="badge comp comp-inferred">${{ (job.comp_min // 1000) }}k&ndash;${{ (job.comp_max // 1000) }}k inferred</span>
+      {% else %}
+        <span class="badge comp comp-unknown">comp unverified</span>
+      {% endif %}
+      {% if job.geo_remote %}
+        <span class="badge geo">remote</span>
+      {% elif job.geo_city %}
+        <span class="badge geo">{{ job.geo_city }}{% if job.geo_distance_mi %} · {{ job.geo_distance_mi|round|int }}mi{% endif %}</span>
+      {% endif %}
+      <span class="badge src">{{ job.source }}</span>
+      {% if job.latest_event is defined and job.latest_event %}<span class="badge event" title="latest activity">{{ job.latest_event.label }} · {{ job.latest_event.date }}</span>{% endif %}
+      {% if job.apply is defined and job.apply %}<a class="apply-link" href="{{ job.apply.url }}" rel="noopener" target="_blank">apply on {{ job.apply.label }} &rarr;</a>{% endif %}
+      {% if job.posting_check is defined and job.posting_check == 'closed' %}
+        <span class="badge posting posting-closed" title="the posting is gone from the employer's board">posting closed</span>
+      {% elif job.posting_check is defined and job.posting_check == 'likely_closed' %}
+        <span class="badge posting posting-likely_closed" title="aged out of the aggregator's search; not proof">likely closed</span>
+      {% elif job.posting_check is defined and job.posting_check == 'verified_open' and job.posting_checked_at %}
+        <span class="badge posting posting-open" title="confirmed still posted by the employer's board or page">open · checked {{ job.posting_checked_at[:10] }}</span>
+      {% endif %}
+      {% if job.dupes is defined and job.dupes %}
+        <span class="badge src" title="same role seen on {{ job.dupes + 1 }} sources">+{{ job.dupes }} sources</span>
+      {% endif %}
+      {% if job.agency is defined and job.agency %}
+        <span class="badge comp-unknown" title="staffing / recruiting agency — not the employer">staffing agency</span>
+      {% endif %}
+      {% if job.same_role_chip is defined and job.same_role_chip %}
+        <span class="badge same-role-chip{% if job.same_role_red %} same-role-chip-red{% endif %}"
+              title="may be the same role as a posting you have; open the job to decide">{{ job.same_role_chip }}</span>
+      {% endif %}
+      {% if job.employer_hidden is defined and job.employer_hidden %}
+        <span class="badge comp-unknown" title="the posting does not name the employer">employer hidden</span>
+      {% endif %}
+      {% if job.warm_count is defined and job.warm_count %}
+        <span class="badge fit fit-hi" title="connections at this company">{{ job.warm_count }} in your network</span>
+      {% endif %}
+      {% if job.is_alumni is defined and job.is_alumni %}
+        <span class="badge fit fit-hi" title="a former employer">you worked here</span>
+      {% endif %}
+    </div>
+    {% if job.rationale %}<p class="job-rationale">{{ job.rationale }}</p>{% endif %}
+    {% if job.followup_reason is defined and job.followup_reason %}<p class="followup-flag">&#9200; {{ job.followup_reason }}</p>{% endif %}
+  </div>
+  {# Every action from a list row sends from_list, so the answer is empty and the
+     outerHTML swap removes the row: the job has moved to another stage. #}
+  {% macro row_target(id) %}hx-target="#job-{{ id }}" hx-swap="outerHTML" hx-vals='{"from_list": "1"}'{% endmacro %}
+  {% set stage = job.stage if job.stage is defined else stage_of(job) %}
+  <div class="job-actions">
+    {% if job.review_state in ('new', 'surfaced', 'queued') %}
+      <button class="btn-keep"
+              hx-post="/jobs/{{ job.id }}/keep" {{ row_target(job.id) }}>Keep</button>
+      <span class="archive-ctl">
+        <select name="reason" id="reason-{{ job.id }}" class="reason-select" title="Why? (teaches the scorer)">
+          <option value="">why?</option>
+          {% for code, label in archive_reasons.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}
+        </select>
+        <button class="btn-archive"
+                hx-post="/jobs/{{ job.id }}/archive" hx-include="#reason-{{ job.id }}"
+                {{ row_target(job.id) }}>Archive</button>
+      </span>
+    {% elif job.review_state == 'kept' and stage == 'applied' %}
+      <a class="btn-tailor" href="/jobs/{{ job.id }}?source_view=applied#detail-actions">Prep</a>
+      <a class="btn-tailor" href="/jobs/{{ job.id }}?source_view=applied#app-status">Follow up</a>
+      {% set nxt = next_stage(job.application_state or '') %}
+      {% if nxt %}
+      <button class="btn-keep" hx-post="/jobs/{{ job.id }}/stage/advance" {{ row_target(job.id) }}
+              {% if job.apply_confirm is defined and job.apply_confirm %}hx-confirm="{{ job.apply_confirm }}"{% endif %}
+              title="Move to {{ nxt }}">To {{ nxt }}</button>
+      {% endif %}
+      <button class="btn-archive" hx-post="/jobs/{{ job.id }}/stage/withdraw" {{ row_target(job.id) }}
+              hx-confirm="Withdraw from this role? It moves to Closed.">Withdraw</button>
+    {% elif job.review_state == 'kept' and stage == 'closed' %}
+      <button hx-post="/jobs/{{ job.id }}/stage/reopen" {{ row_target(job.id) }}
+              title="{{ 'Back to Applied' if job.applied_at else 'Back to the Shortlist' }}">Reopen</button>
+    {% elif job.review_state == 'kept' %}
+      <a class="btn-tailor" href="/jobs/{{ job.id }}?source_view=shortlist">Tailor &rarr;</a>
+      <button class="btn-keep" hx-post="/jobs/{{ job.id }}/stage/apply" {{ row_target(job.id) }}
+              {% if job.apply_confirm is defined and job.apply_confirm %}hx-confirm="{{ job.apply_confirm }}"{% endif %}>Mark applied</button>
+      <button class="btn-archive" hx-post="/jobs/{{ job.id }}/unkeep" {{ row_target(job.id) }}
+              hx-confirm="Remove from the shortlist? It goes back to Surfaced or the Queue by its fit score (or out of view if the fit is low or the posting is gone). Your notes are kept.">Remove</button>
+    {% elif job.review_state == 'archived' %}
+      <span class="archived-badge">archived{% if job.archive_reason %} · {{ archive_reasons.get(job.archive_reason, job.archive_reason) }}{% endif %}</span>
+      <button hx-post="/jobs/{{ job.id }}/unarchive" {{ row_target(job.id) }}>Unarchive</button>
+    {% endif %}
+  </div>
+</article>

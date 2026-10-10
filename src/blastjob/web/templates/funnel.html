@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Funnel &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Funnel</h1>
+<p class="dim">Every job in the database, placed in the stage it is actually sitting in.
+Recomputed from the same functions the pipeline uses, so it cannot drift from reality.
+This page exists because a 54% pre-scoring rejection rate went unnoticed for a week &mdash;
+the daily log said "fetched 731, scored 28, new 6", which looks healthy.</p>
+
+<table class="funnel-table">
+  <tr><th>Stage</th><th class="num">Jobs</th><th class="num">Share</th><th></th></tr>
+  {% for key, label in stages %}
+    {% set n = funnel.counts.get(key, 0) %}
+    {% if n %}
+    <tr class="funnel-row {{ 'funnel-drop' if key in drops else '' }}">
+      <td>{{ label }}</td>
+      <td class="num">{{ n }}</td>
+      <td class="num">{{ '%.1f' % funnel.pct(key) }}%</td>
+      <td class="funnel-bar-cell">
+        <span class="funnel-bar" style="width: {{ funnel.pct(key) }}%"></span>
+      </td>
+    </tr>
+    {% if key in drops and funnel.examples.get(key) %}
+    <tr class="funnel-examples">
+      <td colspan="4">
+        <details>
+          <summary class="dim">highest-scoring roles in this stage &mdash; the ones worth a second look</summary>
+          <ul class="facts">
+            {% for e in funnel.examples[key][:8] %}
+              <li>
+                {% if e.score is not none %}<span class="badge fit fit-mid">{{ e.score }}%</span>{% endif %}
+                <a href="/jobs/{{ e.id }}">{{ e.title }}</a>
+                <span class="job-company">{{ e.company }}</span>
+                {% if e.where %}<span class="dim">{{ e.where }}</span>{% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        </details>
+      </td>
+    </tr>
+    {% endif %}
+    {% endif %}
+  {% endfor %}
+</table>
+
+<h2>Boards producing nothing</h2>
+<p class="dim">Ten or more postings and not one has ever scored at or above your threshold.
+A board can be live, fetch cleanly every morning, and still be the wrong company &mdash;
+this is the check that catches that.</p>
+{% if not dead %}
+  <p class="dim">Nothing to flag.</p>
+{% else %}
+<table class="funnel-table">
+  <tr><th>Source</th><th class="num">Postings</th><th class="num">Best score ever</th></tr>
+  {% for b in dead %}
+  <tr><td>{{ b.source }}</td><td class="num">{{ b.postings }}</td><td class="num">{{ b.best }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Channels that have gone quiet</h2>
+<p class="dim">Retained search is a channel where a senior-level role most plausibly lives, so silence
+here costs more than the counts suggest. Two shapes: a firm that has never produced
+anything, and one that produced something and then went dark &mdash; the second is invisible
+to a "never produced" check.</p>
+{% if not silent %}
+  <p class="dim">All configured firms have produced something recently.</p>
+{% else %}
+<table class="funnel-table">
+  <tr><th>Firm</th><th class="num">Postings</th><th>Last seen</th><th>State</th></tr>
+  {% for c in silent %}
+  <tr><td>{{ c.firm }}</td><td class="num">{{ c.postings }}</td>
+      <td class="num">{{ c.last or '&mdash;' | safe }}</td>
+      <td class="dim">{{ c.state }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Recent runs</h2>
+<table class="funnel-table">
+  <tr><th>When</th><th class="num">Fetched</th><th class="num">Scored</th><th class="num">New</th><th>Errors</th></tr>
+  {% for r in funnel.runs %}
+  <tr>
+    <td>{{ r.when }}</td>
+    <td class="num">{{ r.fetched }}</td>
+    <td class="num">{{ r.scored }}</td>
+    <td class="num">{{ r.new }}</td>
+    <td class="dim">{{ r.errors or '—' }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="dim">No recorded runs yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

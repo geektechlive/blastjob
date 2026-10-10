@@ -1,0 +1,134 @@
+# blastjob settings — an annotated template.
+#
+# Settings live in your database (<data dir>/blastjob.db, data dir =
+# BLASTJOB_DATA_DIR or ~/.blastjob), not in a file. Copy this somewhere outside
+# the repo, fill it in, then load it with:
+#   blastjob setup import my-settings.toml
+# or set keys one at a time with `blastjob setup set <dotted.key> <value>`.
+# SETUP.md has a setup interview that fills these in for you. Anything you
+# leave out keeps its default (src/blastjob/models/config.py). Most of it is
+# also editable in the cockpit at /settings.
+#
+# Every <ANGLE_BRACKET> value is a placeholder. Nothing here reflects a real search.
+#
+# TOML rule that bites: after a [table.sub] or [[array]] header, every following
+# key belongs to THAT table until the next header. Keep the order below.
+
+[paths]
+# The data dir (work_history.md, templates, the database, logs) is not a setting:
+# it is BLASTJOB_DATA_DIR, else ~/.blastjob.
+output_dir = "~/Documents/blastjob"      # generated resumes / cover letters / prep packs
+# secrets_file = "~/somewhere/secrets.env"   # default <data dir>/secrets.env; never inside the repo
+
+[llm]
+provider = "auto"   # auto | anthropic | openai | claude-cli  (auto: API key if set, else the claude CLI)
+# anthropic_model = "..."                # check current model names before setting
+# openai_model = "..."
+
+# --- Who the search is for -------------------------------------------------------
+# Matching makes NO LLM calls until target_titles is filled in.
+[candidate]
+target_titles = ["<TARGET TITLE>", "<TITLE VARIANT>"]
+seniority = "<individual contributor | manager | director | executive>"   # drives how fit is weighed
+field = "<YOUR FIELD, e.g. data engineering, nursing, corporate finance>"
+former_employers = ["<FORMER EMPLOYER AS WRITTEN IN work_history.md>"]   # warm-intro signal
+
+[discovery]
+# --- Matching ---------------------------------------------------------------
+alignment_threshold = 78    # 0-100; UNCALIBRATED for a new profile. (threshold-5)..threshold goes to the review queue
+comp_floor_usd = 0          # 0 = off. Only an employer-POSTED figure below this rejects a job.
+exclude_companies = ["<YOUR CURRENT EMPLOYER>"]   # never surface or draft anything for these
+
+# Title prefilter, before any LLM call. Both empty = keep everything.
+title_keep_terms = []       # e.g. ["engineer", "engineering manager"]: always scored
+title_drop_terms = []       # job FAMILIES you never want, e.g. ["sales representative"]
+
+# --- Where you live (US only) ----------------------------------------------------
+# home_state "" = location filter off: every non-remote job goes to the review
+# queue, none is rejected. List the towns you'd consider under [discovery.towns]
+# at the bottom of this file.
+home_location = "<Your Town, ST>"    # display only
+home_state = "<ST>"                  # two-letter state code
+home_lat = 0.0                       # <your home latitude>
+home_lon = 0.0                       # <your home longitude>
+commute_radius_miles = 35.0          # normal commute
+extended_radius_miles = 55.0         # reachable if hybrid; goes to the review queue
+remote_ok = true
+
+# --- Adzuna aggregator (optional, free key: ADZUNA_APP_ID / ADZUNA_APP_KEY) ----
+enable_aggregators = false
+adzuna_queries = ["<TARGET TITLE>"]  # search seeds, not filters
+adzuna_where = "<Your Town, ST>"
+
+# --- LinkedIn / Indeed job-alert emails over IMAP (optional) -------------------
+# 1. Save searches on LinkedIn/Indeed with email alerts on.
+# 2. Make an app-specific password for the mailbox they arrive in.
+# 3. Put the user + password in your secrets file under the names below.
+mail_alerts_enabled = false
+mail_imap_host = "imap.mail.me.com"        # iCloud; Gmail is "imap.gmail.com"
+mail_user_env = "ICLOUD_IMAP_USER"         # env var NAMES, never the values
+mail_password_env = "ICLOUD_IMAP_APP_PASSWORD"
+mail_lookback_days = 14
+
+# Recruiter replies: the mailbox recruiters write to, if different from the
+# alert mailbox. Blank = reuse the alert mailbox. Surface only; never sends.
+personal_mail_imap_host = ""
+personal_mail_user_env = ""
+personal_mail_password_env = ""
+
+# --- Retained search firms (optional, senior roles only, needs JINA_API_KEY) ----
+search_firms_enabled = false
+search_firm_queries = ["<TARGET TITLE>"]
+search_firm_regions = ["<Your State>", "remote"]
+
+# --- Apple careers (jobs.apple.com via the Jina reader) -------------------------
+apple_enabled = false
+apple_queries = ["<TARGET TITLE>"]
+
+# --- Posting closure ------------------------------------------------------------
+closure_auto = false    # shadow mode: record verdicts, never move a job's stage automatically
+
+# --- Towns you'd consider (lowercase name -> [latitude, longitude]) ---------------
+# Include your home town. A posting in a listed town is measured from home;
+# a posting elsewhere in your state goes to the review queue.
+[discovery.towns]
+# "<your town>" = [0.0, 0.0]
+# "<nearby town>" = [0.0, 0.0]
+
+# --- Company job boards (no key needed) ---------------------------------------
+# One block per employer. Find a company's board with:
+#   uv run python -m blastjob.discovery.resolve "Company Name"
+#
+# Workday: token = "tenant/wdN/site", read off the careers URL
+#   https://{tenant}.{wdN}.myworkdayjobs.com/{site}
+# This one is real (Workday's own careers site) so you can watch the adapter work:
+[[discovery.target_boards]]
+company = "Workday"
+ats = "workday"
+token = "workday/wd5/Workday"
+
+# The other adapters take the board slug from the careers URL (placeholders):
+# [[discovery.target_boards]]
+# company = "<Example Co>"
+# ats = "greenhouse"      # boards.greenhouse.io/{token}
+# token = "<exampleco>"
+#
+# ats = "lever"           # jobs.lever.co/{token}
+# ats = "ashby"           # jobs.ashbyhq.com/{token}
+# ats = "dayforce"        # token = "clientNamespace/jobBoardCode", e.g. "<exampleco>/CANDIDATEPORTAL"
+
+# --- Search firms to poll (needs search_firms_enabled = true above) ---
+# [[discovery.search_firms]]
+# name = "<Example Search Partners>"
+# slug = "<examplesearch>"
+# domain = "<examplesearch.com>"
+
+# --- Daily digest + cockpit ------------------------------------------------------
+[notify]
+mode = "stdout"   # stdout | discord | off   (discord needs the two env vars below)
+# discord_token_env = "DISCORD_BOT_TOKEN"
+# discord_channel_env = "DISCORD_CHANNEL_ID"
+
+[web]
+host = "127.0.0.1"   # read at startup; anything else exposes a tool with no login
+port = 8765

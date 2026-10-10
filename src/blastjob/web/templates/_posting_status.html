@@ -1,0 +1,38 @@
+{% set labels = {'closed': 'posting closed', 'likely_closed': 'likely closed', 'unverifiable': "can't verify", 'verified_open': 'open'} %}
+<div id="posting-status" class="posting-status">
+  <h3>Posting</h3>
+  <div class="posting-status-current">
+    {% if job.posting_check %}
+      <span class="badge posting posting-{{ job.posting_check }}">
+        {{ labels.get(job.posting_check, job.posting_check) }}{% if job.posting_check == 'verified_open' and job.posting_checked_at %} · checked {{ job.posting_checked_at[:10] }}{% endif %}
+      </span>
+    {% else %}
+      <span class="badge posting">not checked yet</span>
+    {% endif %}
+    {% if job.posting_check_manual %}<span class="posting-note">set by you</span>{% endif %}
+    {% if job.posting_closed_at %}<span class="posting-note">closed {{ job.posting_closed_at[:10] }}</span>{% endif %}
+  </div>
+  {% if job.posting_check == 'likely_closed' %}
+    <p class="posting-note">Gone from the aggregator's search window. That is not proof, so nothing was moved.</p>
+  {% elif job.posting_check == 'unverifiable' %}
+    <p class="posting-note">Listed by an intermediary, not the employer, so there is no board to check.</p>
+  {% endif %}
+  {% if job.employer_link_source %}
+    <div class="posting-link">
+      checked on {{ job.employer_link_source }}
+      {% set href = job.employer_link_url | safe_url %}
+      {% if href %}<a href="{{ href }}" target="_blank" rel="noopener noreferrer">employer posting</a>{% endif %}
+    </div>
+  {% endif %}
+  <div class="posting-actions">
+    <button class="btn-status{% if job.posting_check_manual and job.posting_check == 'closed' %} active{% endif %}"
+            hx-post="/jobs/{{ job.id }}/posting/closed"
+            hx-target="#posting-status" hx-swap="outerHTML">Posting closed</button>
+    <button class="btn-status{% if job.posting_check_manual and job.posting_check == 'verified_open' %} active{% endif %}"
+            hx-post="/jobs/{{ job.id }}/posting/open"
+            hx-target="#posting-status" hx-swap="outerHTML">Still open</button>
+  </div>
+</div>
+{% if oob and job.review_state == 'kept' %}
+  {% include "_app_status.html" %}
+{% endif %}

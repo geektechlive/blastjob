@@ -1,0 +1,30 @@
+{# Senior people the user has actually exchanged messages with. The strongest asks in the
+   network and previously invisible -- a real prior relationship beats a cold
+   application at this level. Ranked so ties at companies that are hiring come first. #}
+<div id="dormant" class="detail-block">
+  <h3>Dormant senior ties <span class="col-count">{{ ties|length }}</span></h3>
+  <p class="dim">Exec and director contacts you have spoken to before. Reconnecting is a
+  warmer ask than anything cold, and warmer still where they are hiring.</p>
+  {% if not ties %}
+    <p class="dim">Nothing yet &mdash; import the full LinkedIn archive to include message history.</p>
+  {% else %}
+  <table class="net-table">
+    <tr><th>Who</th><th>Where</th><th>Level</th><th>Last spoke</th></tr>
+    {% for t in ties %}
+    <tr>
+      <td>
+        {% set u = t.url | safe_url %}
+        {% if u %}<a class="ext" href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ t.name }}</a>
+        {% else %}{{ t.name }}{% endif %}
+        <div class="dim">{{ t.position }}</div>
+      </td>
+      <td>{{ t.company }}
+        {% if t.has_live_jobs %}<span class="badge comp">hiring now</span>{% endif %}
+      </td>
+      <td><span class="badge">{{ t.seniority }}</span></td>
+      <td class="num">{{ t.last_message_at or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>

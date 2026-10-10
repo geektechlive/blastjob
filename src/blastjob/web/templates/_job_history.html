@@ -1,0 +1,40 @@
+{# Self-contained fragment -- no `extends base.html` on purpose, see
+   web/routes_outcomes.py's docstring. Depends only on `job`, `events` and
+   `durations`, so it is safe to `{% include %}` from detail.html later
+   without pulling in nav chrome it does not need. Descriptive only, same as
+   `outcomes.html`: a timeline of one job's own send/outcome history, never a
+   comparison to another job's. #}
+<section class="job-history">
+  <h2 class="view-title">
+    History{% if job %} &mdash; {{ job.company }}{% if job.title %} ({{ job.title }}){% endif %}{% endif %}
+  </h2>
+  {% if not events %}
+    <p class="empty">No packet has been recorded as sent for this job yet.</p>
+  {% else %}
+  <ol class="job-history-timeline">
+    {% for e in events %}
+    <li class="job-history-event job-history-{{ e.stage }}">
+      <span class="job-history-stage">{{ e.stage }}</span>
+      <span class="dim">{{ e.at[:10] }} {{ e.at[11:16] }}</span>
+      {% if e.note %}<span class="job-history-note">{{ e.note }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+
+  <h3>Time at each stage</h3>
+  <p class="dim">
+    One job's own timeline, never a comparison to another's. The last stage's clock
+    is still running, so its total is measured to now.
+  </p>
+  <table class="job-history-durations">
+    <tr><th>Stage</th><th>Entered</th><th>Days</th></tr>
+    {% for d in durations %}
+    <tr>
+      <td>{{ d.stage }}</td>
+      <td class="dim">{{ d.entered_at[:10] }}</td>
+      <td class="num">{{ d.days }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</section>
