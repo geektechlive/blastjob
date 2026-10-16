@@ -191,18 +191,41 @@ def gate(report: PacketReport, cfg: BlastJobConfig | None = None) -> GateVerdict
     none yet, so the floor is always `GROUNDEDNESS_FLOOR_DEFAULT`.
     """
     fatals = report.fatal()
+    # A scorer that never ran is told to the user, never assumed clean. It adds a
+    # visible reason only: it changes neither the state nor `sendable`, because a
+    # missing model call is not evidence of a defect (and groundedness is
+    # uncalibrated), but "not checked" must not read as "checked and fine".
+    not_checked = _skipped_reasons(report)
     if fatals:
         reasons = tuple(dict.fromkeys(f"{f.code}: {f.message}" for f in fatals))
         return GateVerdict(
             state=PacketState.QUARANTINED,
-            reasons=reasons,
+            reasons=reasons + not_checked,
             quarantined_artifacts=artifacts_to_quarantine(fatals),
         )
 
     if report.groundedness is not None and report.groundedness < GROUNDEDNESS_FLOOR_DEFAULT:
-        return GateVerdict(state=PacketState.READY, reasons=(_groundedness_reason(report),))
+        return GateVerdict(
+            state=PacketState.READY, reasons=(_groundedness_reason(report), *not_checked)
+        )
 
-    return GateVerdict(state=PacketState.READY)
+    return GateVerdict(state=PacketState.READY, reasons=not_checked)
+
+
+_SKIPPED_LABELS = {
+    "cover_letter_generation": "The cover letter was requested but could not be generated, so "
+    "this packet has no letter.",
+    "resume_groundedness": "Resume groundedness was not checked (the scoring call did not run), "
+    "so claims in the resume were not verified against your work history.",
+    "cover_letter_claims": "The cover letter's claims were not checked (the scoring call did not "
+    "run), so its statements about you and the employer are unverified.",
+}
+
+
+def _skipped_reasons(report: PacketReport) -> tuple[str, ...]:
+    return tuple(
+        _SKIPPED_LABELS.get(name, f"{name} was not checked.") for name in report.checks_skipped
+    )
 
 
 def _groundedness_reason(report: PacketReport) -> str:

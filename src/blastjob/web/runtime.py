@@ -29,6 +29,11 @@ from blastjob.web import progress as progress_mod
 # it is exactly the kind of overlap this list exists to prevent.
 SINGLE_FLIGHT = ("discovery", "matching", "ingest")
 
+# Names that share one slot. Discovery and matching both score jobs and write
+# the same rows, so a "Find + Score" click during a Match run (or the reverse)
+# used to run two scoring passes at once. Names absent here are their own group.
+FLIGHT_GROUPS: dict[str, str] = {"discovery": "scoring", "matching": "scoring"}
+
 # How long a finished run is kept. Must stay comfortably above `active()`'s
 # `recent_seconds` default (300s) or the "done -- refresh" banner silently stops
 # appearing. Eviction matters because a tailor/prep/outreach event log holds the
@@ -137,8 +142,9 @@ class Runtime:
         return None
 
     def _running(self, name: str) -> Run | None:
+        group = FLIGHT_GROUPS.get(name, name)
         for run in reversed(list(self._runs.values())):
-            if run.name == name and run.status == "running":
+            if FLIGHT_GROUPS.get(run.name, run.name) == group and run.status == "running":
                 return run
         return None
 
@@ -203,7 +209,7 @@ class Runtime:
                 applog.log_exception(f"run {run.name}", e)
                 run.status = "failed"
                 run.finished_at = time.monotonic()
-                run.emit("error", f"{type(e).__name__}: {e}")
+                run.emit("error", applog.redact(f"{type(e).__name__}: {e}"))
 
         task = asyncio.create_task(_driver())
         self._tasks.add(task)

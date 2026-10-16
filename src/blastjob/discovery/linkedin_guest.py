@@ -43,7 +43,10 @@ _GENERIC_PAY_HEADING = re.compile(r"\n[ \t]*(?:Salary Range|Base Salary)[ \t]*\n
 # itself — must never be read as POSTED, even when it sits in the JD body.
 _AGGREGATOR_MARK = re.compile(r"provided by|provided pay range|estimated by|\bestimate\b", re.I)
 _HOURLY_MARK = re.compile(r"/\s*hr\b|per\s+hour|hourly", re.I)
-_MONEY_SPAN = re.compile(r"\$[\d,]+(?:\.\d+)?\*?\s*(?:-|to)\s*\$[\d,]+(?:\.\d+)?\*?", re.I)
+_DOLLAR = r"(?:CA|AU|C|A)?\$"  # C$ / A$ ... are not US dollars; parse_salary_range tells them apart
+_MONEY_SPAN = re.compile(
+    rf"{_DOLLAR}[\d,]+(?:\.\d+)?\*?\s*(?:-|to)\s*{_DOLLAR}[\d,]+(?:\.\d+)?\*?", re.I
+)
 # Zero-width / bidi formatting marks some ATS pages sprinkle around headings.
 _INVISIBLE_MARKS = re.compile(r"[\u200b-\u200f\u202a-\u202e\ufeff]")
 
@@ -105,10 +108,20 @@ def _employer_body_pay(body: str, company: str) -> tuple[str, str]:
     if len(candidates) != 1:
         return "", ""
     span = candidates[0]
-    lo, hi, _cur = parse_salary_range(span)
-    if not (lo and hi):
+    lo, hi, cur = parse_salary_range(span)
+    if not lo:
         return "", ""
-    return f"${lo:,}-${hi:,}", span
+    return _pay_text(lo, hi, cur), span
+
+
+def _pay_text(lo: int, hi: int, currency: str) -> str:
+    """Normalized pay text that parse_salary_range reads back to (lo, hi,
+    currency). USD stays "$lo-$hi"; another currency is named by code, because
+    the text is re-parsed downstream and a bare "$" would relabel it USD. A
+    minimum with no maximum (hi == 0) is "lo+", never a made-up ceiling."""
+    mark = "$" if currency == "USD" else f"{currency} "
+    top = f"-{mark}{hi:,}" if hi else "+"
+    return f"{mark}{lo:,}{top}"
 
 
 def parse_linkedin_guest_page(text: str, company: str = "") -> tuple[str, str, str]:

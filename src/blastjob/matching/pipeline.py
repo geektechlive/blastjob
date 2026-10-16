@@ -92,14 +92,18 @@ def auto_archive_rejected_companies(conn: sqlite3.Connection) -> int:
         f"SELECT id, company FROM jobs WHERE review_state IN ({MACHINE_STATES}) AND company <> ''"
     ).fetchall()
     hits = [r["id"] for r in rows if company_key(r["company"] or "") in excluded]
+    archived = 0
     for jid in hits:
-        conn.execute(
+        # CAS on the machine states: a Keep clicked since the SELECT above wins.
+        cur = conn.execute(
             "UPDATE jobs SET review_state='archived', archive_reason='company', "
-            "archive_note='auto: company excluded' WHERE id=?",
+            "archive_note='auto: company excluded' "
+            f"WHERE id=? AND review_state IN ({MACHINE_STATES})",
             (jid,),
         )
+        archived += cur.rowcount
     conn.commit()
-    return len(hits)
+    return archived
 
 
 def load_prior_scores(conn: sqlite3.Connection) -> dict[str, dict]:
@@ -181,7 +185,7 @@ def _load_candidates(
         id_clause = f" AND id IN ({placeholders})"
         params = tuple(job_ids)
     return conn.execute(
-        "SELECT id, title, company, raw_jd, comp_provenance, comp_max, "
+        "SELECT id, title, company, raw_jd, comp_provenance, comp_max, comp_currency, "
         "geo_remote, geo_city, geo_region, geo_location_raw "
         "FROM jobs WHERE source_state='active' "
         f"AND review_state IN ({MACHINE_STATES}){extra}{id_clause}",
@@ -207,6 +211,55 @@ def _set_geo(conn: sqlite3.Connection, job_id: int, status: GeoStatus, dist: flo
         "UPDATE jobs SET geo_status=?, geo_distance_mi=? WHERE id=?",
         (status.value, dist, job_id),
     )
+
+
+def _write_score(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    sc: dict,
+    state: ReviewState,
+    inferred: bool,
+) -> bool:
+    """Score, inferred comp and review state in ONE conditional UPDATE; True only
+    when it changed the row.
+
+    CAS on review_state: the cockpit may have been open while the LLM ran (daily
+    job + a human clicking Keep), and a user decision made mid-run must win over
+    the score that arrives after it. CAS on raw_jd: a JD pasted while this batch
+    was in flight must not get the old text's score (it is re-scored on its own;
+    issue #4). Inferred comp rides in the same statement, additionally guarded on
+    the provenance read at load, so a lost race leaves no half-written row and a
+    source's newly posted figure is never overwritten by our reading.
+    """
+    sets = [
+        "alignment_score=?",
+        "rationale=?",
+        "match_strengths=?",
+        "match_gaps=?",
+        "review_state=?",
+    ]
+    params: list[object] = [
+        sc["alignment"],
+        sc["rationale"],
+        "\n".join(sc.get("strengths", [])),
+        "\n".join(sc.get("gaps", [])),
+        state.value,
+    ]
+    where = f"WHERE id=? AND review_state IN ({MACHINE_STATES}) AND raw_jd IS ?"
+    where_params: list[object] = [int(row["id"]), row["raw_jd"]]
+    if inferred:
+        sets += [
+            "comp_min=?",
+            "comp_max=?",
+            "comp_total_est=?",
+            "comp_currency='USD'",
+            "comp_provenance=?",
+        ]
+        params += [sc["comp_min"], sc["comp_max"], sc["comp_max"], CompProvenance.INFERRED.value]
+        where += " AND comp_provenance IS ?"
+        where_params.append(row["comp_provenance"])
+    cur = conn.execute(f"UPDATE jobs SET {', '.join(sets)} {where}", (*params, *where_params))
+    return cur.rowcount == 1
 
 
 async def run_matching(
@@ -296,7 +349,6 @@ async def run_matching(
         prior_scores=load_prior_scores(conn),
     )
     scores = scoring.scores
-    res.scored = len(scores)
     res.scoring_failures = scoring.failed_batches
 
     row_by_id = {int(r["id"]): r for r in rows}
@@ -310,44 +362,27 @@ async def run_matching(
         # as "posted", because a guess must not be quotable in a negotiation.
         provenance = r["comp_provenance"]
         comp_max = int(r["comp_max"] or 0)
-        if provenance != CompProvenance.POSTED.value and sc["comp_max"] > 0:
+        currency = r["comp_currency"] or "USD"
+        inferred = provenance != CompProvenance.POSTED.value and sc["comp_max"] > 0
+        if inferred:
             provenance = CompProvenance.INFERRED.value
             comp_max = sc["comp_max"]
-            conn.execute(
-                "UPDATE jobs SET comp_min=?, comp_max=?, comp_total_est=?, comp_provenance=? "
-                "WHERE id=?",
-                (sc["comp_min"], sc["comp_max"], sc["comp_max"], provenance, jid),
-            )
+            currency = "USD"  # the scorer prompt only extracts US-dollar annual figures
 
         status, passes, conditional = geo_by_id[jid]
         outcome = decide(
             alignment=alignment,
             comp_provenance=provenance,
             comp_max=comp_max,
+            comp_currency=currency,
             geo_status=status,
             geo_passes=passes,
             cfg=cfg.discovery,
             geo_conditional=conditional,
         )
-        # CAS on review_state: the cockpit may have been open while the LLM ran
-        # (daily job + a human clicking Keep). A user decision made mid-run must
-        # win over the score that arrives after it. Also CAS on raw_jd: a JD
-        # pasted while this batch was in flight must not get the old text's
-        # score (it is re-scored on its own; issue #4).
-        conn.execute(
-            "UPDATE jobs SET alignment_score=?, rationale=?, match_strengths=?, "
-            f"match_gaps=?, review_state=? WHERE id=? AND review_state IN ({MACHINE_STATES}) "
-            "AND raw_jd IS ?",
-            (
-                alignment,
-                sc["rationale"],
-                "\n".join(sc.get("strengths", [])),
-                "\n".join(sc.get("gaps", [])),
-                outcome.review_state.value,
-                jid,
-                r["raw_jd"],
-            ),
-        )
+        if not _write_score(conn, r, sc, outcome.review_state, inferred):
+            continue  # the user (or a pasted JD) got there first: nothing changed
+        res.scored += 1
         if outcome.review_state == ReviewState.SURFACED:
             res.surfaced += 1
         elif outcome.review_state == ReviewState.QUEUED:

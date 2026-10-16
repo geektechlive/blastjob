@@ -63,9 +63,11 @@ def packet_for_job(
     the packet on screen is not from the most recent try.
     """
     rows = conn.execute(
+        # A `refine:` row is the refine's claim on the folder (a lock), not a
+        # build attempt, so it never makes the current packet look "previous".
         "SELECT run_id, status, artifact_dir, created_at "
-        "FROM build_runs WHERE job_id=? ORDER BY id DESC",
-        (job_id,),
+        "FROM build_runs WHERE job_id=? AND run_id NOT LIKE ? ORDER BY id DESC",
+        (job_id, f"{dbc.REFINE_RUN_PREFIX}%"),
     ).fetchall()
     if not rows:
         return None
@@ -206,6 +208,13 @@ def packet_file_path(cfg: BlastJobConfig, packet_dir: str, name: str) -> Path | 
         return None
     allowed = {f["name"] for f in packet_files(folder) if not f["quarantined"]}
     if name not in allowed:
+        return None
+    # `folder` is resolved, `name` may be a symlink: serve the file only if it
+    # still resolves to somewhere inside that folder.
+    target = (folder / name).resolve()
+    try:
+        target.relative_to(folder)
+    except ValueError:
         return None
     return folder / name
 

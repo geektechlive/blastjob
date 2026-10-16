@@ -13,11 +13,12 @@
     {% endfor %}
   </table>
   {% else %}<p class="dim">No comp signals recorded yet.</p>{% endif %}
+  {% if signal_error %}<p class="dim">{{ signal_error }}</p>{% endif %}
   {% if job %}
   <form class="signal-form" hx-post="/jobs/{{ job.id }}/comp-signal" hx-target="#comp-signals" hx-swap="outerHTML">
     <select name="kind">{% for k in comp_kinds %}<option value="{{ k }}">{{ k.replace('_',' ') }}</option>{% endfor %}</select>
-    <input type="number" name="low_usd" placeholder="low $" min="0" step="1000">
-    <input type="number" name="high_usd" placeholder="high $" min="0" step="1000">
+    <input type="text" inputmode="numeric" name="low_usd" placeholder="low $">
+    <input type="text" inputmode="numeric" name="high_usd" placeholder="high $">
     <input type="text" name="source" placeholder="source (recruiter call, Glassdoor…)" maxlength="120">
     <input type="text" name="note" placeholder="note" maxlength="500">
     <input type="date" name="observed_at">

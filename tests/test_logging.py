@@ -55,7 +55,7 @@ def test_redact_leaves_ordinary_text_alone():
     assert applog.redact(text) == text
 
 
-def test_the_filter_redacts_the_message_template(caplog):
+def test_the_formatter_redacts_the_message_template():
     record = logging.LogRecord(
         name="httpx",
         level=logging.INFO,
@@ -65,12 +65,12 @@ def test_the_filter_redacts_the_message_template(caplog):
         args=(),
         exc_info=None,
     )
-    assert applog._RedactingFilter().filter(record) is True
-    assert "leakedkey" not in record.getMessage()
-    assert "[REDACTED]" in record.getMessage()
+    out = applog._RedactingFormatter("%(message)s").format(record)
+    assert "leakedkey" not in out
+    assert "[REDACTED]" in out
 
 
-def test_the_filter_redacts_lazy_args_not_just_the_template():
+def test_the_formatter_redacts_lazy_args_not_just_the_template():
     """A secret usually arrives as an ARG, not in the template: httpx logs
     "HTTP Request: %s %s". Redacting the template alone would leave it in
     `record.args` for the handler to format back in."""
@@ -83,8 +83,8 @@ def test_the_filter_redacts_lazy_args_not_just_the_template():
         args=("GET", "https://api.adzuna.com/search?app_key=leakedkey"),
         exc_info=None,
     )
-    applog._RedactingFilter().filter(record)
-    assert "leakedkey" not in record.getMessage()
+    out = applog._RedactingFormatter("%(message)s").format(record)
+    assert "leakedkey" not in out
 
 
 @pytest.fixture

@@ -77,7 +77,7 @@ def register(app: FastAPI, deps: Deps) -> None:
             reveal_row = service.job_detail(c, job_id)
             reveal_title = reveal_row["title"] if reveal_row is not None else ""
             target = packets.safe_output_path(cfg, packet["dir"])
-            if target is None or not target.exists():
+            if target is None or not target.is_dir():
                 return HTMLResponse("No packet folder to open", status_code=404)
             subprocess.run(["open", str(target)], check=False)  # noqa: S603,S607
             return deps.render(
@@ -138,7 +138,12 @@ def register(app: FastAPI, deps: Deps) -> None:
             if saved and changed:
                 start_rescore(deps.load_config, job_id)
             error = "" if saved else "Nothing to save: the pasted description was empty."
-            return deps.render(request, "_jd_block.html", job=job, jd_error=error)
+            resp = deps.render(request, "_jd_block.html", job=job, jd_error=error)
+            if saved and changed:
+                # base.html's #run-status listens for this and re-reads
+                # /runs/active, so the score-job run shows in the banner.
+                resp.headers["HX-Trigger"] = "refresh-run-status"
+            return resp
         finally:
             c.close()
 

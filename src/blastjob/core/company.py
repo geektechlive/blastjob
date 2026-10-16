@@ -294,6 +294,71 @@ def upsert_profile(conn: sqlite3.Connection, profile: CompanyProfile) -> int:
     return int(existing["id"])
 
 
+# Who owns each profile column when automated research re-runs over an existing
+# row. Facts the web can re-prove refresh; anything the owner curates is never
+# touched (owner decision 2026-10-16: facts refresh, curated fields never touched).
+RESEARCH_OWNED = (
+    "legal_name", "website", "hq", "founded", "industry", "ownership", "size_band",
+    "employees", "revenue_usd", "revenue_growth_pct", "total_assets_usd", "net_income_usd",
+    "customers", "locations", "fiscal_period", "ceo", "ceo_since", "it_leadership",
+    "tech_stack", "recent_events", "sources",
+)  # fmt: skip
+# Prose the owner may have rewritten: research fills it only while it is empty.
+FILL_IF_EMPTY = ("strategy", "summary")
+# Curated by the owner (ratings, notes, risks, questions, the workup pointer, extra).
+USER_OWNED = (
+    "workup_path", "culture_rating", "culture_notes", "risks", "questions", "extra",
+)  # fmt: skip
+
+
+def refresh_research_facts(
+    conn: sqlite3.Connection, profile: CompanyProfile, *, expected_updated_at: str | None
+) -> int | None:
+    """Save a research result without overwriting curated data. Returns the row
+    id, or None (nothing written) when the profile changed since `expected_updated_at`
+    was read at the start of the research run (None = "there was no profile").
+
+    A new company is inserted whole; an existing one gets only the
+    RESEARCH_OWNED columns, plus FILL_IF_EMPTY prose that is still empty.
+    Compare-and-set on `updated_at` under one write lock."""
+    key = company_key(profile.company)
+    data = profile.model_dump()
+    for col in JSON_COLUMNS:
+        data[col] = json.dumps(data[col], ensure_ascii=False)
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute(
+        "SELECT id, updated_at, strategy, summary FROM company_profiles WHERE company_key=?",
+        (key,),
+    ).fetchone()
+    now = _now()
+    if row is None and expected_updated_at is None:
+        cols = ["company_key", *PROFILE_COLUMNS, "created_at", "updated_at"]
+        cur = conn.execute(
+            f"INSERT INTO company_profiles ({', '.join(cols)}) "
+            f"VALUES ({', '.join('?' for _ in cols)})",
+            [key, *(data[c] for c in PROFILE_COLUMNS), now, now],
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+    if row is None or row["updated_at"] != expected_updated_at:
+        conn.rollback()
+        return None
+    # A thinner re-run (the model returned null/""/[]) must not erase stored facts.
+    fresh = [c for c in RESEARCH_OWNED if getattr(profile, c) not in (None, "", [])]
+    columns = [*fresh, *(c for c in FILL_IF_EMPTY if not (row[c] or "").strip())]
+    if not columns:
+        conn.rollback()
+        return int(row["id"])
+    assignments = ", ".join(f"{c}=?" for c in columns)
+    conn.execute(
+        f"UPDATE company_profiles SET {assignments}, updated_at=? WHERE id=?",
+        [*(data[c] for c in columns), now, row["id"]],
+    )
+    conn.commit()
+    return int(row["id"])
+
+
 def get_profile(conn: sqlite3.Connection, company: str) -> dict | None:
     """Profile as a dict with JSON columns decoded, or None."""
     row = conn.execute(

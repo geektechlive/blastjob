@@ -23,7 +23,7 @@ import asyncio
 import os
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
 from blastjob import config as cfg_mod
@@ -56,6 +56,9 @@ MILES_TO_KM = 1.60934
 # probed this run simply stays active and is reconsidered next run — the
 # conservative direction.
 MAX_CLOSURE_PROBES_PER_SOURCE = 25
+# Short-snapshot guard (see _short_snapshot_reason).
+MIN_ACTIVE_EMPTY_GUARD = 3
+MIN_ACTIVE_HALF_GUARD = 3  # same floor as the empty guard: a 6-posting board is not exempt
 
 
 @dataclass
@@ -308,6 +311,114 @@ async def _fetch_all(
     return await asyncio.gather(*(one(a) for a in adapters))
 
 
+@dataclass
+class _SaveCtx:
+    """What saving one source's postings needs, bundled so the per-posting and
+    per-message paths share `save`."""
+
+    conn: sqlite3.Connection
+    source: str
+    excludes: list[str]
+    seen: set[str]
+    result: DiscoveryResult
+
+    def save(self, p: RawPosting, *, commit: bool) -> bool:
+        """Upsert one posting; True when it was written."""
+        from blastjob.db import client as dbc
+
+        if not p.external_id:
+            return False
+        if _is_excluded(p.company, self.excludes):
+            self.result.skipped_excluded += 1
+            return False
+        self.seen.add(p.external_id)
+        # A multi-vendor adapter (alert emails) tags each posting with its
+        # real origin ("linkedin"/"indeed"); store under that so the cockpit
+        # shows where a job came from and cross-source clustering works.
+        job_source = p.source or self.source
+        cols = to_job_columns(p)
+        cluster_id = _cluster_for(self.conn, p, job_source)
+        if cluster_id:
+            cols["cluster_id"] = cluster_id
+        # A whole-card alert's "title" is the entire card text: it must not
+        # overwrite a title that was parsed or repaired properly.
+        dbc.upsert_job(
+            self.conn,
+            source=job_source,
+            external_id=p.external_id,
+            commit=commit,
+            refresh_title=not p.extra.get("whole_card"),
+            **cols,
+        )
+        self.result.inserted_or_updated += 1
+        return True
+
+
+def _persist_batches(
+    ctx: _SaveCtx,
+    batches: list[tuple[LedgerEntry, list[RawPosting]]],
+    errs: list[str],
+    saved_keys: set[tuple[str, str]],
+) -> None:
+    """Save each alert message's postings and its ledger row in ONE transaction.
+
+    The ledger row is what makes a message "done" (status ok/ignored is never
+    fetched again), so it must never land without its postings. Each posting
+    saves inside its own SAVEPOINT: one that always fails (recorded as a source
+    error) rolls back alone, so it cannot sink its siblings every day. The
+    message is 'ok' if any posting saved and 'error' (retried next run) only if
+    none did. A failure of the ledger write itself rolls the whole message back
+    and records it as 'error'; the other messages are unaffected."""
+    for entry, postings in batches:
+        ctx.conn.commit()  # nothing pending leaks into or out of this message
+        before = ctx.result.inserted_or_updated
+        try:
+            fresh = [p for p in postings if (p.source, p.external_id) not in saved_keys]
+            saved, failed = _save_postings(ctx, fresh, errs, entry)
+            final = entry if saved or not failed else _failed_entry(entry, failed[0])
+            record_ledger(ctx.conn, [final])
+            ctx.conn.commit()
+            saved_keys.update((p.source, p.external_id) for p in saved)
+        except Exception as e:  # noqa: BLE001 — see docstring
+            ctx.conn.rollback()
+            ctx.result.inserted_or_updated = before
+            errs.append(f"{entry.message_id}: {type(e).__name__}: {e}")
+            _record_failed_message(ctx.conn, entry, e)
+
+
+def _save_postings(
+    ctx: _SaveCtx, postings: list[RawPosting], errs: list[str], entry: LedgerEntry
+) -> tuple[list[RawPosting], list[Exception]]:
+    """Save each posting under its own SAVEPOINT; (saved, failures)."""
+    saved: list[RawPosting] = []
+    failed: list[Exception] = []
+    for p in postings:
+        ctx.conn.execute("SAVEPOINT posting")
+        try:
+            ctx.save(p, commit=False)
+        except Exception as e:  # noqa: BLE001 — one bad posting never sinks the message
+            ctx.conn.execute("ROLLBACK TO posting")
+            failed.append(e)
+            errs.append(f"{entry.message_id}/{p.external_id}: {type(e).__name__}: {e}")
+        else:
+            saved.append(p)
+        finally:
+            ctx.conn.execute("RELEASE posting")
+    return saved, failed
+
+
+def _failed_entry(entry: LedgerEntry, exc: Exception) -> LedgerEntry:
+    return replace(entry, status="error", postings=0, error=repr(exc)[:200])
+
+
+def _record_failed_message(conn: sqlite3.Connection, entry: LedgerEntry, exc: Exception) -> None:
+    try:
+        record_ledger(conn, [_failed_entry(entry, exc)])
+        conn.commit()
+    except Exception:  # noqa: BLE001 — no row at all is also retryable
+        conn.rollback()
+
+
 async def run_discovery(
     cfg: BlastJobConfig,
     conn: sqlite3.Connection,
@@ -327,14 +438,18 @@ async def run_discovery(
     ok_sources: list[str] = []
     seen_ids: dict[str, set[str]] = {}
 
-    # Alert-email bookkeeping: the adapter parsed messages; we own persistence.
+    # An adapter that exposes a ledger but not per-message batches has no
+    # transactional pairing to offer; record its ledger up front as before.
     for a in adapters:
         ledger = getattr(a, "ledger", None)
-        if ledger:
+        if ledger and not hasattr(a, "batches"):
             record_ledger(conn, ledger)
+            conn.commit()
 
     failed_sources: set[str] = set()
-    for source, snapshot, payload in results:
+    save_errors: dict[str, list[str]] = {}
+    saved_keys: set[tuple[str, str]] = set()
+    for adapter, (source, snapshot, payload) in zip(adapters, results, strict=True):
         if isinstance(payload, Exception):
             # Redacted, because this string does not stay here: it is persisted
             # into `daily_runs.errors`, rendered on the funnel page to any LAN
@@ -351,24 +466,24 @@ async def run_discovery(
         # Sum, never assign: several boards can share one adapter source name,
         # and the last one's count is not the run's count.
         result.per_source[source] = result.per_source.get(source, 0) + len(payload)
+        result.fetched += len(payload)
+        errs = save_errors.setdefault(source, [])
+        ctx = _SaveCtx(conn, source, excludes, seen_ids[source], result)
+        batches = getattr(adapter, "batches", None)
+        if batches is not None:
+            _persist_batches(ctx, batches, errs, saved_keys)
+            continue
         for p in payload:
-            result.fetched += 1
-            if not p.external_id:
-                continue
-            if _is_excluded(p.company, excludes):
-                result.skipped_excluded += 1
-                continue
-            seen_ids[source].add(p.external_id)
-            # A multi-vendor adapter (alert emails) tags each posting with its
-            # real origin ("linkedin"/"indeed"); store under that so the cockpit
-            # shows where a job came from and cross-source clustering works.
-            job_source = p.source or source
-            cols = to_job_columns(p)
-            cluster_id = _cluster_for(conn, p, job_source)
-            if cluster_id:
-                cols["cluster_id"] = cluster_id
-            dbc.upsert_job(conn, source=job_source, external_id=p.external_id, **cols)
-            result.inserted_or_updated += 1
+            try:
+                ctx.save(p, commit=True)
+            except Exception as e:  # noqa: BLE001 — one bad posting never sinks the rest
+                conn.rollback()
+                errs.append(f"{p.external_id}: {type(e).__name__}: {e}")
+    for source, errs in save_errors.items():
+        if errs:
+            result.errors[source] = applog.redact(
+                f"{len(errs)} posting(s)/message(s) not saved this run; first: {errs[0]}"
+            )
 
     result.reclustered = _recluster_new(conn, cfg, run_started)
     _report_silent_channels(conn, adapters, result)
@@ -487,7 +602,17 @@ async def _mark_stale(
         if not missing:
             continue
         adapter = by_source.get(source)
+        partial = getattr(adapter, "partial_listing_note", "")
+        if partial:
+            # The adapter returned items but knows it did not read the whole board.
+            result.notes[source] = f"{partial}; stale-marking skipped this run"
+            continue
         ttl = stale_after_days(adapter)
+        returned = result.per_source.get(source, 0)
+        why = _short_snapshot_reason(len(rows), len(rows) - len(missing), returned, ttl)
+        if why:
+            result.notes[source] = f"{why}; stale-marking skipped this run"
+            continue
         if ttl <= 0:
             for r in missing:
                 _mark_one_stale(conn, r["id"], result)
@@ -517,6 +642,22 @@ async def _mark_stale(
                 conn.execute("UPDATE jobs SET last_seen=? WHERE id=?", (now, r["id"]))
             else:
                 _mark_one_stale(conn, r["id"], result)
+
+
+def _short_snapshot_reason(active: int, still_listed: int, returned: int, ttl: int) -> str:
+    """Why a snapshot that "succeeded" is too thin to retire postings, or "".
+
+    A 200 with an empty or truncated body (maintenance page, broken filter, a
+    half-served listing) is indistinguishable from "everything closed", and for
+    an authoritative source stale means closed. So: zero rows back while the
+    board held several is never believed, and a FULL snapshot (ttl 0) that lost
+    more than half of a big board is not either. The half rule skips WINDOWED
+    sources, which see a slice of their board every run by design."""
+    if returned == 0 and active >= MIN_ACTIVE_EMPTY_GUARD:
+        return f"snapshot returned 0 postings while {active} are active"
+    if ttl <= 0 and active >= MIN_ACTIVE_HALF_GUARD and still_listed * 2 < active:
+        return f"snapshot listed only {still_listed} of {active} active postings"
+    return ""
 
 
 def _mark_one_stale(conn: sqlite3.Connection, job_id: int, result: DiscoveryResult) -> None:

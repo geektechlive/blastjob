@@ -117,3 +117,32 @@ async def test_outreach_draft_streams_unaddressed(cfg_with_kept_job, monkeypatch
     run = Run(id="outreach-1", name="outreach")
     result = await wbuild.make_outreach_work(jid, load_config=lambda: cfg)(run)
     assert "Dear Hiring Manager" in result["email"]
+
+
+async def test_a_hold_that_could_not_complete_fails_the_build_but_keeps_its_folder(
+    cfg_with_kept_job, monkeypatch, tmp_path
+):
+    """run_build raises PacketNotQuarantinedError when a held document stayed
+    public. The build is failed (never 'tailored'), but its folder is still
+    recorded so the job page can point at the packet instead of orphaning it."""
+    from blastjob.core.packet_verify import PacketNotQuarantinedError
+
+    cfg, jid = cfg_with_kept_job
+
+    async def fake_run_build(**kwargs):
+        raise PacketNotQuarantinedError("resume.docx stayed public", tmp_path)
+
+    monkeypatch.setattr("blastjob.core.build.run_build", fake_run_build)
+    run = Run(id="tailor-hold", name="tailor")
+    result = await wbuild.make_tailor_work(jid, load_config=lambda: cfg)(run)
+
+    assert result["ok"] is False
+    conn = dbc.init_db(cfg)
+    row = conn.execute(
+        "SELECT status, artifact_dir FROM build_runs WHERE run_id='tailor-hold'"
+    ).fetchone()
+    bs = conn.execute("SELECT build_state FROM jobs WHERE id=?", (jid,)).fetchone()["build_state"]
+    conn.close()
+    assert row["artifact_dir"] == str(tmp_path)
+    assert bs != "tailored"
+    assert any(e.kind == "error" and "stayed public" in e.data for e in run.events)

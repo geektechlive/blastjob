@@ -371,8 +371,11 @@ def _transport(routes: dict[str, httpx.Response]):
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
-        return routes.get(str(request.url), httpx.Response(404))
+        # safe_get connects to the validated IP and keeps the name in the Host
+        # header (SSRF pin), so key routes by the URL the caller asked for.
+        asked = str(request.url.copy_with(host=request.headers["host"].split(":")[0]))
+        seen.append(asked)
+        return routes.get(asked, httpx.Response(404))
 
     return httpx.MockTransport(handler), seen
 

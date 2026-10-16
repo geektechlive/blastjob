@@ -22,6 +22,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from blastjob.matching.gate import below_floor
 from blastjob.matching.geo import assess_geo
 from blastjob.matching.prefilter import classify_scope
 from blastjob.models.config import BlastJobConfig
@@ -57,7 +58,7 @@ class Funnel:
 _COLS = (
     "id, company, title, alignment_score, review_state, source_state, "
     "geo_remote, geo_city, geo_region, geo_location_raw, geo_status, "
-    "comp_provenance, comp_max"
+    "comp_provenance, comp_max, comp_currency"
 )
 _MAX_EXAMPLES = 12
 
@@ -106,8 +107,9 @@ def _post_scope_stage(row: sqlite3.Row, cfg: BlastJobConfig, raw_jd: str) -> str
         return "unscored"
 
     floor = cfg.discovery.comp_floor_usd
-    comp_max = int(row["comp_max"] or 0)
-    if row["comp_provenance"] == "posted" and comp_max and comp_max < floor:
+    if row["comp_provenance"] == "posted" and below_floor(
+        row["comp_max"], row["comp_currency"], floor
+    ):
         return "comp_rejected"
     return "below_band"
 

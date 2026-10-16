@@ -67,7 +67,7 @@
   {% endif %}
 
   <div class="detail-actions" id="detail-actions">
-    {% if job.review_state in ('surfaced', 'queued') %}
+    {% if job.review_state in ('new', 'surfaced', 'queued') %}
       <button class="btn-keep" hx-post="/jobs/{{ job.id }}/keep" hx-target="body" hx-swap="none"
               hx-on::after-request="window.location.reload()">Keep &amp; tailor</button>
       <span class="archive-ctl">

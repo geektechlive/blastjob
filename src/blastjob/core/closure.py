@@ -203,6 +203,7 @@ def sweep_filled(conn: sqlite3.Connection, *, now: datetime, auto: bool) -> int:
         )
         if cur.rowcount == 1:
             app_events.insert_event(conn, job_id, FILLED, _stamp(now), source=_EVENT_SOURCE)
+            _record_outcome(conn, job_id, FILLED)
             moved += 1
     conn.commit()
     return moved
@@ -295,11 +296,18 @@ def _apply(ctx: _Pass, row: sqlite3.Row, verdict: str, *, checked: bool = False)
     moved = False
     if verdict == "closed":
         moved = close_transition(ctx.conn, row["id"], now=ctx.now, auto=ctx.auto)
-        if changed and row["review_state"] == "kept":
+        # `moved` too: a shadow/dry run already stamped the verdict, so the real
+        # run that finally moves the job sees changed=False but must announce it.
+        if (changed or moved) and row["review_state"] == "kept":
             ctx.result.closed_kept.append(
                 {"id": row["id"], "company": row["company"], "title": row["title"]}
             )
     elif verdict == "verified_open":
+        moved = reopen_transition(ctx.conn, row["id"], auto=ctx.auto)
+    elif prev == "closed":
+        # The proof that closed it is gone (a dropped link): undo what that close
+        # did. reopen_transition only restores a state automation set, and never
+        # a manual verdict or a user move.
         moved = reopen_transition(ctx.conn, row["id"], auto=ctx.auto)
     ctx.result.moved += int(moved)
 
@@ -345,9 +353,12 @@ async def _check_existing_link(ctx: _Pass, row: sqlite3.Row) -> None:
         row["employer_link_source"], row["employer_link_external_id"], row["employer_link_url"]
     )
     held = ctx.conn.execute(
-        "SELECT source_state FROM jobs WHERE source=? AND external_id=?",
+        "SELECT id, cluster_id, source_state FROM jobs WHERE source=? AND external_id=?",
         (link.source, link.external_id),
     ).fetchone()
+    if held is not None and not _still_proof(ctx, row, held):
+        _drop_link(ctx, row)
+        return
     if held is not None:
         _apply(ctx, row, own_source_verdict(held["source_state"]))
         return
@@ -361,6 +372,51 @@ async def _check_existing_link(ctx: _Pass, row: sqlite3.Row) -> None:
         return
     if is_open is not None:
         _apply(ctx, row, "verified_open" if is_open else "closed", checked=True)
+
+
+def _still_proof(ctx: _Pass, row: sqlite3.Row, held: sqlite3.Row) -> bool:
+    """A stored link to a posting we hold must still be justified. A link made
+    through a cluster sibling stands only while `sibling_is_proof` does: the user
+    may have said 'not the same role' since (or the cluster moved). A link to a
+    posting outside the cluster with no decision between them was not a sibling
+    link (it came from a board match) and is judged by the network path alone."""
+    from blastjob.core import role_clusters as rc
+
+    a, b = rc.pair_of(row["id"], held["id"])
+    decided = ctx.conn.execute(
+        "SELECT 1 FROM same_role_decisions WHERE job_a=? AND job_b=?", (a, b)
+    ).fetchone()
+    sibling = row["cluster_id"] is not None and row["cluster_id"] == held["cluster_id"]
+    if decided is None and not sibling:
+        return True
+    return rc.sibling_is_proof(ctx.conn, row["id"], held["id"], ctx.radius_miles, ctx.geo)
+
+
+def _rejected(ctx: _Pass, job_id: int, link: Link) -> bool:
+    """Is `link` a posting the user marked 'not the same role' for this job?"""
+    from blastjob.core import role_clusters as rc
+
+    other = ctx.conn.execute(
+        "SELECT id FROM jobs WHERE source=? AND external_id=?", (link.source, link.external_id)
+    ).fetchone()
+    if other is None:
+        return False
+    a, b = rc.pair_of(job_id, other["id"])
+    decided = ctx.conn.execute(
+        "SELECT decision FROM same_role_decisions WHERE job_a=? AND job_b=?", (a, b)
+    ).fetchone()
+    return decided is not None and decided["decision"] == rc.DIFFERENT
+
+
+def _drop_link(ctx: _Pass, row: sqlite3.Row) -> None:
+    """The proof behind the link is gone: forget the link and fall back to
+    unverifiable. Never a state move; a manual verdict still wins."""
+    ctx.conn.execute(
+        "UPDATE jobs SET employer_link_source='', employer_link_external_id='', "
+        f"employer_link_url='' WHERE id=?{_NOT_MANUAL}",
+        (row["id"],),
+    )
+    _apply(ctx, row, "unverifiable", checked=True)
 
 
 async def _probe(ctx: _Pass, row: sqlite3.Row, link: Link) -> bool | None:
@@ -393,6 +449,11 @@ async def _link_and_check(ctx: _Pass, row: sqlite3.Row) -> None:
         )
     except Exception as e:  # noqa: BLE001 -- a failed search proves nothing either way
         log.warning("closure: link search failed for job %s (%s)", row["id"], type(e).__name__)
+        return
+    if link is not None and _rejected(ctx, row["id"], link):
+        # The user said this posting is not this role; a search that keeps
+        # finding it must not re-link it every run.
+        _apply(ctx, row, _fallback_verdict(row) or "unverifiable", checked=True)
         return
     if link is None:
         _apply(ctx, row, _fallback_verdict(row), checked=True)

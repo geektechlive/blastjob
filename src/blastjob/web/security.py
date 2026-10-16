@@ -17,7 +17,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # One token per process launch. Embedded in pages, required back on writes.
 LAUNCH_TOKEN = secrets.token_urlsafe(24)
@@ -114,7 +114,28 @@ class LocalRequestGuard:
             if origin and not _host_ok(origin):
                 await _refuse(send, 403, b"bad origin")
                 return
-        await self.app(scope, receive, send)
+        await self.app(scope, receive, _with_security_headers(send))
+
+
+# Sent on every response. frame-ancestors only: a full script policy needs
+# nonces on the templates' inline scripts, which is a separate change.
+SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
+    (b"x-frame-options", b"DENY"),
+    (b"content-security-policy", b"frame-ancestors 'none'"),
+    (b"x-content-type-options", b"nosniff"),
+    (b"referrer-policy", b"same-origin"),
+)
+
+
+def _with_security_headers(send: Send) -> Send:
+    async def wrapped(message: Message) -> None:
+        if message["type"] == "http.response.start":
+            present = {k.lower() for k, _ in message.get("headers", [])}
+            extra = [(k, v) for k, v in SECURITY_HEADERS if k not in present]
+            message = {**message, "headers": [*message.get("headers", []), *extra]}
+        await send(message)
+
+    return wrapped
 
 
 async def _refuse(send: Send, status: int, body: bytes) -> None:
@@ -122,7 +143,7 @@ async def _refuse(send: Send, status: int, body: bytes) -> None:
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+            "headers": [(b"content-type", b"text/plain; charset=utf-8"), *SECURITY_HEADERS],
         }
     )
     await send({"type": "http.response.body", "body": body})

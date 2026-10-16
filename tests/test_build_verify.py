@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from blastjob.core import build as core_build
+from blastjob.core import packet_verify
 from blastjob.core.packet_report import Artifact, Severity
 
 WORK_HISTORY = """---
@@ -117,7 +118,7 @@ def test_no_document_is_its_own_prose_baseline_in_the_real_call_shape(tmp_path, 
         seen.append({"text": text, **kwargs})
         return []
 
-    monkeypatch.setattr(core_build.prose_check, "check_prose", _spy)
+    monkeypatch.setattr(packet_verify.prose_check, "check_prose", _spy)
     _verify(tmp_path)
 
     assert seen, "check_prose must actually be called"
@@ -135,7 +136,7 @@ def test_a_crashing_checker_is_named_in_the_report(tmp_path, monkeypatch):
     def _boom(*_a, **_kw):
         raise RuntimeError("checker exploded")
 
-    monkeypatch.setattr(core_build.prose_check, "check_prose", _boom)
+    monkeypatch.setattr(packet_verify.prose_check, "check_prose", _boom)
     report = _verify(tmp_path)
 
     assert report.checks_failed, "a crashed check must be recorded"
@@ -148,9 +149,9 @@ def test_every_checker_crashing_never_looks_like_a_clean_packet(tmp_path, monkey
         raise RuntimeError("checker exploded")
 
     for mod, attr in (
-        (core_build.resume_format, "check_structure"),
-        (core_build.packet_gate, "check_arithmetic"),
-        (core_build.prose_check, "check_prose"),
+        (packet_verify.resume_format, "check_structure"),
+        (packet_verify.packet_gate, "check_arithmetic"),
+        (packet_verify.prose_check, "check_prose"),
     ):
         monkeypatch.setattr(mod, attr, _boom)
     report = _verify(tmp_path)
@@ -176,7 +177,9 @@ def test_a_gate_crash_still_leaves_the_packet_reachable(tmp_path, monkeypatch):
     raises after writing the documents, that records "" and the packet exists on
     disk but is unreachable from the job page forever."""
     monkeypatch.setattr(
-        core_build.packet_gate, "gate", lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("x"))
+        packet_verify.packet_gate,
+        "gate",
+        lambda *_a, **_kw: (_ for _ in ()).throw(RuntimeError("x")),
     )
     report = _verify(tmp_path)
     verdict = core_build._gate_and_report(report, tmp_path, "role", app_config=None)

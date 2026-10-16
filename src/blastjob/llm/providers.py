@@ -10,12 +10,17 @@ Auto-detection order when provider = "auto":
 
 from __future__ import annotations
 
+import asyncio
+import atexit
+import codecs
+import contextlib
 import json
+import logging
 import os
 import shutil
 import tempfile
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, cast
+from collections.abc import AsyncIterator, Awaitable
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from blastjob.llm.cost import CostTracker, cost_from_usage
 from blastjob.models.config import BlastJobConfig, LLMConfig
@@ -25,8 +30,15 @@ if TYPE_CHECKING:
     from anthropic.types import MessageParam, TextBlockParam
 
 
+log = logging.getLogger(__name__)
+
+
 class ProviderNotConfiguredError(Exception):
     pass
+
+
+class CLIError(RuntimeError):
+    """`claude -p` failed: non-zero exit, an `is_error` result, or a timeout."""
 
 
 # `claude -p` is the full Claude Code AGENT, not a bare completion. Without these
@@ -34,8 +46,29 @@ class ProviderNotConfiguredError(Exception):
 # which corrupts structured output (e.g. batch JSON scoring). Running it with the
 # caller's system prompt as an override, dynamic sections excluded, tools denied,
 # and from an empty neutral dir makes it behave as a plain model.
-_CLI_NEUTRAL_CWD = os.path.join(tempfile.gettempdir(), "blastjob-cli-cwd")
 _CLI_DISALLOWED_TOOLS = "Bash Read Edit Write Glob Grep WebFetch WebSearch Task NotebookEdit"
+
+# Wall-clock ceiling for one `claude -p` call. The longest legitimate call is a
+# full resume/cover-letter generation, a few minutes; a hung CLI must not hold a
+# scoring batch or a build forever.
+CLI_TIMEOUT_SECONDS = 900.0
+_CLI_REAP_SECONDS = 5.0
+_CLI_ERROR_CHARS = 200
+
+_cli_cwd: str | None = None
+
+
+def _neutral_cwd() -> str:
+    """An empty working directory only this user can enter, made once per process.
+
+    `mkdtemp` creates it 0700 with an unpredictable name, so another local user
+    cannot pre-create or write into the directory the CLI runs from (the old
+    fixed `/tmp/blastjob-cli-cwd` allowed both)."""
+    global _cli_cwd
+    if _cli_cwd is None or not os.path.isdir(_cli_cwd):
+        _cli_cwd = tempfile.mkdtemp(prefix="blastjob-cli-")
+        atexit.register(shutil.rmtree, _cli_cwd, True)
+    return _cli_cwd
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +266,9 @@ class _CLIUsageBox:
 
     def __init__(self) -> None:
         self.usage: _OpenAIFakeUsage | None = None
+        # Set when the terminal `result` line says the call failed (`is_error`):
+        # the text so far is an error message, not an answer.
+        self.error: str | None = None
 
 
 def _extract_text_delta(event: dict) -> str | None:
@@ -290,6 +326,9 @@ def _handle_cli_line(line: str, usage_box: _CLIUsageBox) -> str | None:
     ptype = payload.get("type")
     if ptype == "result":
         usage_box.usage = _usage_from_result(payload)
+        if payload.get("is_error"):
+            detail = payload.get("result") or payload.get("subtype") or "unknown error"
+            usage_box.error = str(detail)[:_CLI_ERROR_CHARS]
         return None
     if ptype == "stream_event":
         return _extract_text_delta(payload.get("event") or {})
@@ -314,9 +353,6 @@ async def claudecli_stream(system: str, prompt: str, usage_box: _CLIUsageBox) ->
       is parsed and stays None if it never arrives; callers must treat that
       as "unknown", never as "free".
     """
-    import asyncio
-
-    os.makedirs(_CLI_NEUTRAL_CWD, exist_ok=True)
     args = [
         "claude",
         "-p",
@@ -341,25 +377,69 @@ async def claudecli_stream(system: str, prompt: str, usage_box: _CLIUsageBox) ->
     args += ["--tools", "", "--strict-mcp-config", "--setting-sources", ""]
     args += ["--disallowedTools", _CLI_DISALLOWED_TOOLS]
 
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        cwd=_CLI_NEUTRAL_CWD,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    assert proc.stdin is not None and proc.stdout is not None
-    proc.stdin.write(prompt.encode("utf-8"))
-    await proc.stdin.drain()
-    proc.stdin.close()
+    return _run_cli(args, prompt, usage_box)
 
-    async def _iter():
+
+_T = TypeVar("_T")
+
+
+async def _within(deadline: float, awaitable: Awaitable[_T]) -> _T:
+    """Await `awaitable`, but never past the shared `deadline` (loop time)."""
+    remaining = max(deadline - asyncio.get_running_loop().time(), 0.001)
+    try:
+        return await asyncio.wait_for(awaitable, remaining)
+    except TimeoutError:
+        raise CLIError(f"claude -p timed out after {CLI_TIMEOUT_SECONDS:g}s") from None
+
+
+async def _reap(proc: asyncio.subprocess.Process) -> None:
+    """Make sure the child is gone: runs on success, error, timeout, cancel and
+    an early `aclose()` alike. A finished process has a returncode already."""
+    if getattr(proc, "returncode", 0) is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(proc.wait(), _CLI_REAP_SECONDS)
+
+
+async def _run_cli(args: list[str], prompt: str, usage_box: _CLIUsageBox) -> AsyncIterator[str]:
+    """Spawn `claude -p`, feed it the prompt and yield text deltas.
+
+    Everything that can wedge or leak lives inside this generator so one
+    `finally` owns the child: UTF-8 is decoded incrementally (a multi-byte
+    character split across two reads must not become two replacement chars), the
+    whole call has a deadline, a non-zero exit or an `is_error` result raises
+    instead of passing an error message off as the answer, and the process is
+    killed if the caller stops reading or is cancelled."""
+    # OS-level failures are CLIError too: fail-soft callers catch exactly that.
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=_neutral_cwd(),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as e:
+        raise CLIError(f"could not start claude -p: {e}") from e
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        deadline = asyncio.get_running_loop().time() + CLI_TIMEOUT_SECONDS
+        try:
+            proc.stdin.write(prompt.encode("utf-8"))
+            await _within(deadline, proc.stdin.drain())
+            proc.stdin.close()
+        except OSError as e:
+            raise CLIError(f"could not send the prompt to claude -p: {e}") from e
+
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         buf = ""
         while True:
-            chunk = await proc.stdout.read(1024)
+            chunk = await _within(deadline, proc.stdout.read(1024))
+            buf += decoder.decode(chunk, final=not chunk)
             if not chunk:
                 break
-            buf += chunk.decode("utf-8", errors="replace")
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
                 text = _handle_cli_line(line, usage_box)
@@ -369,9 +449,13 @@ async def claudecli_stream(system: str, prompt: str, usage_box: _CLIUsageBox) ->
             text = _handle_cli_line(buf, usage_box)
             if text:
                 yield text
-        await proc.wait()
-
-    return _iter()
+        code = await _within(deadline, proc.wait())
+        if usage_box.error:
+            raise CLIError(f"claude -p reported an error: {usage_box.error}")
+        if code:
+            raise CLIError(f"claude -p exit status {code}")
+    finally:
+        await _reap(proc)
 
 
 class _CLIFinalMessage:
@@ -389,21 +473,32 @@ class _CLIStream:
         self._prompt = prompt
         self._full_text = ""
         self._usage_box = _CLIUsageBox()
+        self._open: list[AsyncIterator[str]] = []
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *args):
-        pass
+        # Leaving the block early (error, break, cancel) must stop the child.
+        for gen in self._open:
+            await gen.aclose()
 
     @property
     def text_stream(self):
-        return self._iter()
+        gen = self._iter()
+        self._open.append(gen)
+        return gen
 
     async def _iter(self):
-        async for chunk in await claudecli_stream(self._system, self._prompt, self._usage_box):
-            self._full_text += chunk
-            yield chunk
+        inner = await claudecli_stream(self._system, self._prompt, self._usage_box)
+        try:
+            async for chunk in inner:
+                self._full_text += chunk
+                yield chunk
+        finally:
+            aclose = getattr(inner, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     async def get_final_message(self):
         return _CLIFinalMessage(self._full_text, self._usage_box.usage)
@@ -477,10 +572,16 @@ async def make_research_call(
     messages = [{"role": "user", "content": [caching.plain_text(knowledge_prompt)]}]
     full_text = ""
     stream = await make_stream(cfg, system, messages, max_tokens=1024)
-    async with stream:
-        async for chunk in stream.text_stream:
-            full_text += chunk
-        final = await stream.get_final_message()
+    try:
+        async with stream:
+            async for chunk in stream.text_stream:
+                full_text += chunk
+            final = await stream.get_final_message()
+    except CLIError as e:
+        # Research is advisory and the build calls this unguarded: a failed CLI
+        # call (which now raises) must degrade to "no research", as it always did.
+        log.warning("company research via claude-cli failed for %s: %s", company, e)
+        return ""
     cost_tracker.record(cost_from_usage(final.usage, cfg.pricing))
     footer = "\n\n*Research based on training data — live web search requires Anthropic API.*"
     return full_text + footer

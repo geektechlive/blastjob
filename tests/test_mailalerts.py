@@ -151,7 +151,7 @@ def test_indeed_alert_recognizes_hybrid_remote_and_bare_remote_lines():
 
     vp = jobs["eeee55556666ffff"]
     assert vp.remote is True and vp.location_raw == "Remote"
-    assert (vp.comp_min, vp.comp_max) == (150000, 150000)
+    assert (vp.comp_min, vp.comp_max) == (150000, 0)  # "From": a minimum, max unknown
     assert "Responsive employer" not in vp.description
 
 
@@ -159,7 +159,7 @@ def test_indeed_alert_recognizes_hybrid_remote_and_bare_remote_lines():
     "salary_line,expected",
     [
         ("$95 an hour", (0, 0, "$95 an hour")),
-        ("From $150,000 a year", (150000, 150000, "From $150,000 a year")),
+        ("From $150,000 a year", (150000, 0, "From $150,000 a year")),
         ("Up to $200K a year", (200000, 200000, "Up to $200K a year")),
         ("$150K - $200K", (150000, 200000, "$150K - $200K")),
     ],
@@ -593,6 +593,43 @@ def test_employer_body_pay_ignores_prose_range_with_no_employer_label():
     read as an employer-posted figure."""
     pay, span = ma._employer_body_pay(QUICKHIRE_BODY_TEXT, "Northwind Dynamics")
     assert (pay, span) == ("", "")
+
+
+def test_employer_body_pay_carries_a_non_usd_currency():
+    """The pay text is re-parsed downstream; rebuilding it as '$lo-$hi' would
+    relabel a Canadian-dollar range as USD."""
+    body = "\n\nAcme Pay Range\n\nC$165,000 - C$190,000 per year.\n\n"
+    pay, _span = ma._employer_body_pay(body, "Acme Corp")
+    assert ma.parse_salary_range(pay) == (165000, 190000, "CAD")
+
+
+def test_employer_body_pay_usd_text_is_unchanged():
+    pay, _span = ma._employer_body_pay(NORTHWIND_PAY_BLOCK, "Northwind Dynamics")
+    assert ma.parse_salary_range(pay) == (165000, 190000, "USD")
+
+
+def test_indeed_comp_carries_currency_into_the_posting():
+    p = ma._indeed_posting(
+        "abc123",
+        ma._Anchor(
+            href="https://www.indeed.com/viewjob?jk=abc123",
+            text="VP IT",
+            after=["Acme", "Toronto, ON", "C$180,000 - C$220,000 a year"],
+        ),
+    )
+    assert (p.comp_min, p.comp_max, p.comp_currency) == (180000, 220000, "CAD")
+
+
+def test_indeed_comp_min_only_keeps_zero_max():
+    p = ma._indeed_posting(
+        "abc124",
+        ma._Anchor(
+            href="https://www.indeed.com/viewjob?jk=abc124",
+            text="VP IT",
+            after=["Acme", "Chicago, IL", "From $150,000 a year"],
+        ),
+    )
+    assert (p.comp_min, p.comp_max, p.comp_currency) == (150000, 0, "USD")
 
 
 def test_employer_body_pay_rejects_ambiguous_magnitude():

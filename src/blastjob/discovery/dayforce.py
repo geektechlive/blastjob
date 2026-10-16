@@ -256,6 +256,9 @@ class DayforceAdapter:
         self.keep_terms = list(keep_terms)
         self.drop_terms = list(drop_terms)
         self._transport = transport  # tests inject httpx.MockTransport
+        # Set when the page cap cut the listing short: the items are real but the
+        # pipeline must not stale-mark this source on a partial read.
+        self.partial_listing_note = ""
 
     async def _csrf_token(self, client: httpx.AsyncClient) -> str:
         """Anonymous double-submit token. Not a login: it authenticates nothing,
@@ -269,7 +272,9 @@ class DayforceAdapter:
     async def _list_all(self, client: httpx.AsyncClient, csrf: str) -> list[dict]:
         seen: dict[str, dict] = {}
         start = 0
-        for _ in range(self.max_pages):
+        expected = 0
+        ended_empty = capped = False
+        for page in range(self.max_pages):
             payload = await request_json(
                 client,
                 "POST",
@@ -279,13 +284,32 @@ class DayforceAdapter:
                 max_retries=self.max_retries,
             )
             items = parse_listing(payload)
+            expected = max(expected, total_count(payload))
             for it in items:
                 seen.setdefault(external_id_for(it), it)
             start += PAGE_SIZE
             # Stop on the server's own total, or on an empty page if that total
             # ever lies high. MAX_PAGES is the backstop either way.
-            if not items or start >= total_count(payload):
+            if not items:
+                ended_empty = True
                 break
+            if start >= total_count(payload):
+                break
+            capped = page == self.max_pages - 1
+        # An empty page short of the server's own total is a truncated snapshot,
+        # and the pipeline would stale-mark the unread tail as closed. Fail the
+        # source instead; nothing is marked. A board bigger than the page cap is
+        # not a failure: return what was read and flag it so nothing is marked.
+        if ended_empty and len(seen) < expected:
+            raise ValueError(
+                f"dayforce {self.ref.token}: listing is short ({len(seen)} of {expected} "
+                f"postings); not treating it as a snapshot"
+            )
+        self.partial_listing_note = (
+            f"dayforce {self.ref.token}: page cap hit ({len(seen)} of {expected} postings read)"
+            if capped and len(seen) < expected
+            else ""
+        )
         return list(seen.values())
 
     async def fetch(self) -> list[RawPosting]:

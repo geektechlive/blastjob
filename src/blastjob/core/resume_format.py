@@ -22,7 +22,13 @@ from datetime import date
 
 from blastjob.core.company import company_key
 from blastjob.core.packet_report import Finding, Severity
-from blastjob.core.resume_dates import DatePoint, DateRange, employer_names, parse_range
+from blastjob.core.resume_dates import (
+    DatePoint,
+    DateRange,
+    employer_names,
+    history_headings,
+    parse_range,
+)
 
 _EMPLOYER_LINE_RE = re.compile(r"^\*\*(?P<employer>.+?)\*\*\s*\|\s*(?P<rest>.+)$")
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
@@ -172,14 +178,11 @@ def _history_ranges(work_history_md: str) -> dict[str, list[DateRange]]:
     actual date parsing; only the aggregation differs.
     """
     ranges: dict[str, list[DateRange]] = {}
-    for line in work_history_md.splitlines():
-        if not line.startswith("### "):
-            continue
-        parts = [p.strip() for p in line[4:].split("|")]
+    for parts, date_text in history_headings(work_history_md):
         if len(parts) < 2 or not parts[1]:
             continue
         name = re.sub(r"\s*\([^)]*\)\s*$", "", parts[1]).strip()
-        rng = parse_range(line)
+        rng = parse_range(date_text)
         if name and rng:
             ranges.setdefault(company_key(name), []).append(rng)
     return ranges

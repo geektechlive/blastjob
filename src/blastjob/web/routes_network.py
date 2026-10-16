@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sqlite3
 import tempfile
 import zipfile
@@ -31,6 +32,23 @@ from blastjob.web.security import require_csrf
 from blastjob.web.upload_guard import MAX_NETWORK_UPLOAD_BYTES
 
 log = logging.getLogger(__name__)
+
+# "$180,000", "180000", "180k", "$1.5m": what a person types for a salary.
+_MONEY_RE = re.compile(r"^\$?\s*(\d[\d,]*(?:\.\d+)?)\s*([km]?)$", re.I)
+_MONEY_SCALE = {"": 1, "k": 1_000, "m": 1_000_000}
+
+
+def parse_usd(text: str) -> int | None:
+    """A typed dollar amount as whole dollars; None for blank; ValueError for
+    anything that is not a plain amount (a wrong salary is worse than none)."""
+    raw = text.strip()
+    if not raw:
+        return None
+    m = _MONEY_RE.match(raw)
+    if m is None:
+        raise ValueError(raw)
+    return round(float(m.group(1).replace(",", "")) * _MONEY_SCALE[m.group(2).lower()])
+
 
 # LinkedIn's FULL data archive routinely runs to tens of megabytes; streamed to
 # a temp file in chunks rather than buffered whole.
@@ -231,7 +249,7 @@ def register(app: FastAPI, deps: Deps) -> None:
         finally:
             c.close()
 
-    def _render_signals(request: Request, c: sqlite3.Connection, job_id: int):
+    def _render_signals(request: Request, c: sqlite3.Connection, job_id: int, error: str = ""):
         return deps.render(
             request,
             "_comp_signals.html",
@@ -239,6 +257,7 @@ def register(app: FastAPI, deps: Deps) -> None:
             signals=co.comp_signals(c, job_id=job_id),
             floor=co.negotiated_floor(c, job_id),
             comp_kinds=co.COMP_KINDS,
+            signal_error=error,
         )
 
     @app.post("/jobs/{job_id}/comp-signal", response_class=HTMLResponse)
@@ -260,13 +279,22 @@ def register(app: FastAPI, deps: Deps) -> None:
             job = service.job_detail(c, job_id)
             if job is None:
                 return HTMLResponse("Not found", status_code=404)
+            try:
+                low, high = parse_usd(low_usd), parse_usd(high_usd)
+            except ValueError:
+                return _render_signals(
+                    request,
+                    c,
+                    job_id,
+                    "Could not read that amount. Use digits, like 180000 or $180,000.",
+                )
             co.add_comp_signal(
                 c,
                 company=job["company"],
                 job_id=job_id,
                 kind=kind,
-                low_usd=int(low_usd) if low_usd.strip() else None,
-                high_usd=int(high_usd) if high_usd.strip() else None,
+                low_usd=low,
+                high_usd=high,
                 source=source[:120],
                 note=note,
                 observed_at=observed_at or None,

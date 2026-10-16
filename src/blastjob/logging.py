@@ -7,9 +7,9 @@ ROOT logger, plus httpx's habit of logging every request URL at INFO, plus
 Adzuna `app_key` into this log in plaintext 284 times across a 48 MB file.
 
 So: third-party HTTP loggers are pinned above INFO, and every record is passed
-through a redaction filter on its way to disk. The filter is the belt-and-braces
-half -- the next adapter that puts a credential in a URL must not be able to
-reopen this -- and the file is size-capped so it cannot grow unbounded again.
+through the handler's redacting formatter on its way to disk. The next adapter
+that puts a credential in a URL must not be able to reopen this, and the file is
+size-capped so it cannot grow unbounded again.
 """
 
 import logging
@@ -43,25 +43,18 @@ def redact(text: str) -> str:
     return text
 
 
-class _RedactingFilter(logging.Filter):
-    """Redact the formatted message and every string argument.
+class _RedactingFormatter(logging.Formatter):
+    """Redact the final text a handler writes.
 
-    Rewrites `record.msg`/`record.args` rather than the formatted output,
-    because a handler formats after filtering -- redacting the template alone
-    would leave a secret sitting in `args`.
+    The only redaction point, and it cannot miss: the line on disk carries
+    `str()` of non-string args (an `httpx.URL`), exception messages and whole
+    tracebacks, all of which are only rendered here. It rewrites the output,
+    never the record, so other handlers still see the original and a `%s`
+    template that looks like a credential still formats.
     """
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
-            record.msg = redact(record.msg)
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = {
-                    k: redact(v) if isinstance(v, str) else v for k, v in record.args.items()
-                }
-            elif isinstance(record.args, tuple):
-                record.args = tuple(redact(a) if isinstance(a, str) else a for a in record.args)
-        return True
+    def format(self, record: logging.LogRecord) -> str:
+        return redact(super().format(record))
 
 
 def _log_path() -> Path:
@@ -78,12 +71,11 @@ def setup() -> None:
         str(log_file), maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8"
     )
     handler.setFormatter(
-        logging.Formatter(
+        _RedactingFormatter(
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
     )
-    handler.addFilter(_RedactingFilter())
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
@@ -103,7 +95,9 @@ def setup() -> None:
             "Unhandled exception",
             exc_info=(exc_type, exc_value, exc_tb),
         )
-        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        # Not sys.__excepthook__: it prints the raw traceback to stderr, which
+        # launchd captures into daily.log / web.launchd.log -- past the formatter.
+        sys.stderr.write(redact("".join(traceback.format_exception(exc_type, exc_value, exc_tb))))
 
     sys.excepthook = _excepthook
     logging.info("blastjob started — log: %s", log_file)

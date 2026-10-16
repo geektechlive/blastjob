@@ -40,7 +40,7 @@
     </div>
   </header>
   <div id="stale-notice"></div>
-  <div id="run-status" hx-get="/runs/active" hx-trigger="load" hx-swap="innerHTML"></div>
+  <div id="run-status" hx-get="/runs/active" hx-trigger="load, refresh-run-status from:body" hx-swap="innerHTML"></div>
   <script>
     // The CSRF token is per server launch. A tab left open across a cockpit
     // restart (launchd, a deploy) carries a dead token, so every Keep/Archive

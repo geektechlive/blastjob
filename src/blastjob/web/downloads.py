@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from blastjob.core.quarantine import held_names
 from blastjob.models.config import BlastJobConfig
 from blastjob.web import packets
 
@@ -27,8 +28,14 @@ def resolve_download(
     directory qualify (`packets.packet_file_path`)."""
     for folder in packets.job_packet_dirs(conn, job_id):
         target = packets.packet_file_path(cfg, folder, name)
-        if target is not None:
-            return target
+        if target is None:
+            continue
+        # A QUARANTINED report is authoritative wherever the file sits: a
+        # document the gate held must not be served from the public folder
+        # even if a move missed it (a shared folder, a failed rename).
+        if name in held_names(target.parent):
+            continue
+        return target
     return None
 
 

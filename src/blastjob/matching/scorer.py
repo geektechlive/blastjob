@@ -38,6 +38,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from blastjob.comp import MAX_PLAUSIBLE_ANNUAL_USD, MIN_PLAUSIBLE_ANNUAL_USD
 from blastjob.llm import caching
 from blastjob.llm.cost import CostTracker, cost_from_usage
 from blastjob.llm.jsonio import extract_json_list
@@ -72,10 +73,8 @@ SCORING_TEMPERATURE = 0.0
 # Per-run ceiling on single-job fallback calls after a batch fails to parse.
 FALLBACK_JOB_BUDGET = 30
 
-# Plausible US annual compensation, in dollars. The lower bound matches
-# `comp.parse_salary_range`, which also refuses to read a salary below $10k.
-MIN_PLAUSIBLE_ANNUAL_USD = 10_000
-MAX_PLAUSIBLE_ANNUAL_USD = 5_000_000
+# Plausible US annual compensation bounds live in `comp` (shared with
+# `comp.parse_salary_range`, which applies the same $10k-$5M rule).
 # A 3-digit figure in this range is thousands-shorthand ("180" for $180K). This
 # assumes a salaried US role, not an hourly contractor rate -- a posting that
 # quotes "$100-$999/hour" would be misread as a $100K-$999K salary. Flag for
@@ -137,13 +136,18 @@ class ScoringResult:
     reused: int = 0
 
 
-def _clamp(v: object, lo: int, hi: int) -> int:
-    if not isinstance(v, (int, float, str)):
-        return 0
+def _clamp(v: object, lo: int, hi: int) -> int | None:
+    """Clamp a model-reported number into [lo, hi]; None when it is not a number.
+
+    None -- never 0 -- because a malformed score stored as 0 reads as "scored,
+    hopeless": it would stop the daily `only_unscored` retry and bury the role.
+    """
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return None
     try:
         n = int(v)
-    except (TypeError, ValueError):
-        return 0
+    except (TypeError, ValueError, OverflowError):  # "high", NaN, +-Infinity
+        return None
     return max(lo, min(hi, n))
 
 
@@ -153,7 +157,7 @@ def _as_int(v: object) -> int:
         return 0
     try:
         n = int(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
     return n if n > 0 else 0
 
@@ -299,7 +303,9 @@ def _extract_json(text: str) -> list:
 
 def normalize_score(item: dict) -> dict:
     """Whitelist + clamp one score record. Used for model output and for a prior
-    score replayed from the DB, so both go through the same validation."""
+    score replayed from the DB, so both go through the same validation.
+    `alignment` is None when the record carries no usable number; callers treat
+    that as "not scored"."""
     comp_min, comp_max = sanitize_comp(item.get("comp_min"), item.get("comp_max"))
     return {
         "alignment": _clamp(item.get("alignment"), 0, 100),
@@ -319,6 +325,7 @@ def parse_scores(text: str, valid_ids: set[int]) -> dict[int, dict]:
     """
     data = _extract_json(text)
     out: dict[int, dict] = {}
+    seen: set[int] = set()
     for item in data:
         if not isinstance(item, dict):
             continue
@@ -331,7 +338,13 @@ def parse_scores(text: str, valid_ids: set[int]) -> dict[int, dict]:
             continue
         if jid not in valid_ids:
             continue
-        out[jid] = normalize_score(item)
+        if jid in seen:
+            continue  # first record for an id wins; a later one could be injected
+        seen.add(jid)  # even if this one is malformed: then the id is missing, not replaced
+        score = normalize_score(item)
+        if score["alignment"] is None:
+            continue  # malformed -> missing, so the per-job fallback retries it
+        out[jid] = score
     return out
 
 
@@ -391,8 +404,10 @@ def _plan_reuse(candidates: list[dict], prior_scores: dict[str, dict]) -> _Reuse
             continue
         prior = prior_scores.get(fp)
         if prior is not None:
-            plan.reused[jid] = normalize_score(prior)
-            continue
+            replay = normalize_score(prior)
+            if replay["alignment"] is not None:
+                plan.reused[jid] = replay
+                continue
         rep = rep_by_fp.get(fp)
         if rep is not None:
             plan.followers.setdefault(rep, []).append(jid)

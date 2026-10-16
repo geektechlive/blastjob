@@ -144,3 +144,16 @@ def test_packets_page_row_without_a_job_is_still_listed(cfg, client):
     page = client.get("/history").text
     assert "Old Co" in page
     assert "not linked to a job" in page
+
+
+def test_a_running_refine_claim_is_not_shown_as_the_latest_build(cfg):
+    """A refine claims the job through a `refine:` build_runs row; that is a lock,
+    not a build, so the job page must keep showing the packet as current."""
+    jid, folder = _packet(cfg)
+    conn = dbc.init_db(cfg)
+    assert dbc.claim_for_refine(conn, jid, "r-1")
+    packet = packets.packet_for_job(conn, jid, load_config=lambda: cfg)
+    conn.close()
+    assert packet is not None
+    assert packet["dir"] == str(folder)
+    assert not packet.get("previous"), "a refine lock is not a newer build attempt"

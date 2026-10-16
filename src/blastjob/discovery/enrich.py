@@ -12,21 +12,17 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 
 import httpx
 
+from blastjob.core.page_fetch import safe_get
 from blastjob.discovery.base import RawPosting
-from blastjob.discovery.http import USER_AGENT
 from blastjob.discovery.textutil import html_to_text
 
 log = logging.getLogger(__name__)
 
 _LDJSON = re.compile(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', re.S | re.I)
-# A browser-like UA — some detail pages 403 a bot UA.
-_BROWSER_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120 Safari/537.36"
-)
 
 
 def extract_jobposting_jd(html: str) -> str | None:
@@ -49,11 +45,32 @@ def extract_jobposting_jd(html: str) -> str | None:
     return None
 
 
-async def _fetch_one(client: httpx.AsyncClient, posting: RawPosting) -> None:
+# Posting URLs come from feeds and alert emails, i.e. from outside, so every fetch
+# goes through core/page_fetch.safe_get: each hop is validated before it is
+# requested (http/https, public addresses only, never LinkedIn), redirects are
+# followed by hand, the connection is made to the address that was validated (no
+# DNS-rebinding window) and the body is capped. Adzuna and Indeed pages are the
+# whole point here, so aggregators are allowed (`allow_aggregators=True`).
+Resolve = Callable[[str], Awaitable[list[str]]]
+
+
+async def _fetch_one(
+    posting: RawPosting,
+    *,
+    timeout_s: float,
+    transport: httpx.AsyncBaseTransport | None,
+    resolve: Resolve | None,
+) -> None:
     try:
-        r = await client.get(posting.url)
-        if r.status_code == 200:
-            full = extract_jobposting_jd(r.text)
+        page = await safe_get(
+            posting.url,
+            transport=transport,
+            resolve=resolve,
+            allow_aggregators=True,
+            timeout_s=timeout_s,
+        )
+        if page is not None and page.status == 200:
+            full = extract_jobposting_jd(page.html)
             # Only replace if we got materially more than the snippet.
             if full and len(full) > len(posting.description):
                 posting.description = full
@@ -68,6 +85,8 @@ async def enrich_full_jds(
     *,
     timeout_s: int = 15,
     concurrency: int = 8,
+    transport: httpx.AsyncBaseTransport | None = None,
+    resolve: Resolve | None = None,
 ) -> int:
     """Enrich postings in place with their full JD. Returns how many were upgraded.
     Only postings with a URL are attempted; others are left untouched."""
@@ -76,16 +95,10 @@ async def enrich_full_jds(
         return 0
     before = {id(p): len(p.description) for p in targets}
     sem = asyncio.Semaphore(concurrency)
-    headers = {"User-Agent": _BROWSER_UA or USER_AGENT}
 
-    async with httpx.AsyncClient(
-        timeout=timeout_s, follow_redirects=True, headers=headers
-    ) as client:
+    async def guarded(p: RawPosting) -> None:
+        async with sem:
+            await _fetch_one(p, timeout_s=timeout_s, transport=transport, resolve=resolve)
 
-        async def guarded(p: RawPosting) -> None:
-            async with sem:
-                await _fetch_one(client, p)
-
-        await asyncio.gather(*(guarded(p) for p in targets))
-
+    await asyncio.gather(*(guarded(p) for p in targets))
     return sum(1 for p in targets if len(p.description) > before[id(p)])

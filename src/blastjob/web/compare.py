@@ -13,6 +13,7 @@ from blastjob.core import company as co
 # Re-exported: the rule lives in core so discovery and core can use it too.
 from blastjob.core.agencies import AGGREGATOR_COMPANIES as AGGREGATOR_COMPANIES
 from blastjob.core.agencies import is_agency as is_agency
+from blastjob.matching.gate import below_floor
 from blastjob.web import stage_lists
 
 _COUNTRY_ONLY = {"united states", "usa", "us"}
@@ -20,7 +21,8 @@ _COUNTRY_ONLY = {"united states", "usa", "us"}
 
 _COLS = (
     "id, source, company, title, url, alignment_score, rationale, match_strengths, "
-    "match_gaps, comp_min, comp_max, comp_provenance, geo_remote, geo_location_raw, "
+    "match_gaps, comp_min, comp_max, comp_currency, comp_provenance, geo_remote, "
+    "geo_location_raw, "
     "geo_city, geo_region, review_state, application_state, first_seen, cluster_id"
 )
 
@@ -38,7 +40,7 @@ def red_flags(row: RowLike, profile: dict | None, floor: int) -> list[str]:
         flags.append("aggregator / recruiting platform — not the employer")
     if row["comp_provenance"] != "posted":
         flags.append("comp not posted")
-    elif (row["comp_max"] or 0) < floor:
+    elif below_floor(row["comp_max"], row["comp_currency"], floor):
         flags.append("posted max below floor")
     location = (row["geo_location_raw"] or "").strip().lower()
     if location in _COUNTRY_ONLY and not row["geo_remote"]:

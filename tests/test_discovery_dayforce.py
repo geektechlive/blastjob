@@ -72,11 +72,13 @@ REMOTE_DIRECTOR = {
     "postingLocations": [],
 }
 
-# maxCount > PAGE_SIZE so the loop must ask for a second page, then stop because
-# paginationStart has passed the server's own total (mirrors the live 54/3-page
-# board, scaled down so the fixtures stay readable).
-PAGE_0 = {"jobPostings": [VP_IT, TELLER], "maxCount": 26, "offset": 0, "count": 2}
-PAGE_1 = {"jobPostings": [REMOTE_DIRECTOR], "maxCount": 26, "offset": 25, "count": 1}
+# maxCount > the (test-shrunk) page size so the loop must ask for a second page,
+# then stop because paginationStart has passed the server's own total (mirrors the
+# live 54/3-page board, scaled down so the fixtures stay readable). The pages hold
+# exactly maxCount postings between them: a listing short of maxCount raises.
+SMALL_PAGE = 2
+PAGE_0 = {"jobPostings": [VP_IT, TELLER], "maxCount": 3, "offset": 0, "count": 2}
+PAGE_1 = {"jobPostings": [REMOTE_DIRECTOR], "maxCount": 3, "offset": 2, "count": 1}
 
 
 def test_parse_board_token_roundtrip():
@@ -180,8 +182,13 @@ def _mock_transport(calls: list[httpx.Request], pages=(PAGE_0, PAGE_1)) -> httpx
     return httpx.MockTransport(handler)
 
 
+@pytest.fixture
+def small_pages(monkeypatch):
+    monkeypatch.setattr(dayforce, "PAGE_SIZE", SMALL_PAGE)
+
+
 @pytest.mark.asyncio
-async def test_adapter_sends_csrf_header_and_pages_to_the_server_total():
+async def test_adapter_sends_csrf_header_and_pages_to_the_server_total(small_pages):
     calls: list[httpx.Request] = []
     a = dayforce.DayforceAdapter(
         "Lakeshore Credit Union",
@@ -202,7 +209,7 @@ async def test_adapter_sends_csrf_header_and_pages_to_the_server_total():
         '{"clientNamespace":"lakeshorecu","jobBoardCode":"CANDIDATEPORTAL",'
         '"cultureCode":"en-US","paginationStart":0}',
         '{"clientNamespace":"lakeshorecu","jobBoardCode":"CANDIDATEPORTAL",'
-        '"cultureCode":"en-US","paginationStart":25}',
+        '"cultureCode":"en-US","paginationStart":2}',
     ]
 
     # Teller dropped by the scope gate; both VP rows kept, with full JDs.
@@ -211,7 +218,7 @@ async def test_adapter_sends_csrf_header_and_pages_to_the_server_total():
 
 
 @pytest.mark.asyncio
-async def test_known_ids_still_emit_the_full_jd():
+async def test_known_ids_still_emit_the_full_jd(small_pages):
     """Unlike Workday, the JD ships with the listing — there is no detail fetch
     to skip, so a known id must not be blanked into a stub."""
     calls: list[httpx.Request] = []
@@ -228,6 +235,9 @@ async def test_known_ids_still_emit_the_full_jd():
 
 @pytest.mark.asyncio
 async def test_max_pages_caps_a_server_that_never_reports_a_short_page():
+    # The cap stops the loop. Round 2 (D6): a board bigger than the cap returns what
+    # it read and flags the listing partial, so the pipeline never stale-marks the
+    # unread tail (it used to raise, which made any >500-posting board fail daily).
     calls: list[httpx.Request] = []
     full = {
         "jobPostings": [dict(VP_IT, jobPostingId=i) for i in range(1, 26)],
@@ -239,12 +249,14 @@ async def test_max_pages_caps_a_server_that_never_reports_a_short_page():
         max_pages=3,
         transport=_mock_transport(calls, pages=(full,)),
     )
-    await a.fetch()
+    out = await a.fetch()
+    assert len(out) == 25  # the mock repeats one page; ids dedupe
+    assert "page cap" in a.partial_listing_note
     assert sum(1 for c in calls if c.method == "POST") == 3
 
 
 @pytest.mark.asyncio
-async def test_empty_page_stops_the_loop_even_when_max_count_lies_high():
+async def test_empty_page_stops_the_loop_and_a_short_listing_raises(small_pages):
     calls: list[httpx.Request] = []
     empty = {"jobPostings": [], "maxCount": 10_000}
     a = dayforce.DayforceAdapter(
@@ -253,9 +265,9 @@ async def test_empty_page_stops_the_loop_even_when_max_count_lies_high():
         drop_terms=_DROP_TERMS,
         transport=_mock_transport(calls, pages=(PAGE_0, empty)),
     )
-    out = await a.fetch()
+    with pytest.raises(ValueError, match="short"):
+        await a.fetch()
     assert sum(1 for c in calls if c.method == "POST") == 2
-    assert [p.external_id for p in out] == ["18280"]
 
 
 @pytest.mark.asyncio

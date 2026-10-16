@@ -44,13 +44,14 @@ def _client(cfg) -> TestClient:
 
 def _job_with_packet(conn, cfg) -> tuple[int, Path]:
     """A kept job whose packet exists on disk and is quarantined."""
-    jid = dbc.upsert_job(conn, source="s1", external_id="e1", company="Acme", title="VP Ops")
+    # Title and file tokens agree: release frees only the job's own role's files.
+    jid = dbc.upsert_job(conn, source="s1", external_id="e1", company="Acme", title="VP IT")
     out = Path(cfg.paths.output_dir) / "acme-2026-09-16"
     out.mkdir(parents=True)
     stem = "Alex_Rivera_Resume_-_Acme_VP_IT"
     (out / f"{stem}.md").write_text("# Resume", encoding="utf-8")
     (out / f"{stem}.docx").write_text("docx", encoding="utf-8")
-    (out / "vp-ops.packet_report.json").write_text('{"state": "quarantined"}', encoding="utf-8")
+    (out / "vp-it.packet_report.json").write_text('{"state": "quarantined"}', encoding="utf-8")
     conn.execute(
         "INSERT INTO build_runs (job_id, run_id, status, artifact_dir, lease_expires_at, "
         "created_at, updated_at) VALUES (?,?,?,?,datetime('now'),datetime('now'),datetime('now'))",
@@ -112,7 +113,7 @@ def test_release_transitions_the_sidecar_to_acknowledged_override(cfg, conn):
     import json
 
     jid, out = _job_with_packet(conn, cfg)
-    sidecar = out / "vp-ops.packet_report.json"
+    sidecar = out / "vp-it.packet_report.json"
     sidecar.write_text(
         json.dumps({"state": "quarantined", "sendable": False, "reasons": ["banned characters"]}),
         encoding="utf-8",

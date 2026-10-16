@@ -128,6 +128,40 @@ def parse_range(text: str) -> DateRange | None:
     )
 
 
+def _date_line(line: str | None) -> str:
+    """`line` when it is a bare date range (`*Jan 2020 - Dec 2023*`), else "".
+
+    Ingest (`core/ingest._serialize_history`) writes a role's dates on the line
+    AFTER its `### Title | Company` heading, in italics. Only a line that is
+    nothing but a range counts, so a bullet that happens to mention two years
+    ("- Migrated between 2001 - 2003") is never read as the role's dates."""
+    if line is None or re.match(r"\s*(?:[-+\u2022#]|\*\s)", line):
+        return ""
+    inner = line.strip().strip("*_ ").strip()
+    return inner if inner and _RANGE_RE.fullmatch(inner) else ""
+
+
+def history_headings(work_history_md: str) -> list[tuple[list[str], str]]:
+    """Every `### ` heading in the work history as (`|`-split parts, date text).
+
+    The date text is the heading itself plus, when the very next line is a bare
+    date range, that line: a heading with its dates in parentheses and an ingested
+    one with the dates underneath both parse. The stored history format is not
+    rewritten; the readers adapt to it."""
+    lines = work_history_md.splitlines()
+    out: list[tuple[list[str], str]] = []
+    for i, line in enumerate(lines):
+        if not line.startswith("### "):
+            continue
+        parts = [p.strip() for p in line[4:].split("|")]
+        following = lines[i + 1] if i + 1 < len(lines) else None
+        # Joined with a pipe: "Sample Corp 2016 - Present" would read "Corp 2016"
+        # as a (non-month) month-year start and parse nothing.
+        dates = _date_line(following)
+        out.append((parts, f"{line} | {dates}" if dates else line))
+    return out
+
+
 def employer_names(work_history_md: str) -> list[str]:
     """Employer names from the work history's `### Title | Company | City` headings."""
     out: list[str] = []
@@ -157,14 +191,11 @@ def history_dates(work_history_md: str) -> dict[str, DateRange]:
     docstring claimed this side did too; now it does.
     """
     ranges: dict[str, list[DateRange]] = {}
-    for line in work_history_md.splitlines():
-        if not line.startswith("### "):
-            continue
-        parts = [p.strip() for p in line[4:].split("|")]
+    for parts, date_text in history_headings(work_history_md):
         if len(parts) < 2 or not parts[1]:
             continue
         name = re.sub(r"\s*\([^)]*\)\s*$", "", parts[1]).strip()
-        rng = parse_range(line)
+        rng = parse_range(date_text)
         if name and rng:
             ranges.setdefault(company_key(name), []).append(rng)
     return {

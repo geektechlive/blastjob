@@ -21,6 +21,10 @@ from blastjob.models.job import BuildState
 
 BUSY_TIMEOUT_MS = 5000
 DEFAULT_LEASE_MINUTES = 20
+# A revision is a model call plus several scoring calls (each up to the CLI timeout).
+REFINE_LEASE_MINUTES = 90
+# `build_runs.run_id` prefix marking a refine's claim row (no schema change needed).
+REFINE_RUN_PREFIX = "refine:"
 
 # Generated once per process. Stamped on every build_runs row this process
 # claims so a later recovery pass can tell "a previous process's build" (dead
@@ -170,16 +174,34 @@ def init_db_at(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def upsert_job(conn: sqlite3.Connection, *, source: str, external_id: str, **fields) -> int:
+def upsert_job(
+    conn: sqlite3.Connection,
+    *,
+    source: str,
+    external_id: str,
+    commit: bool = True,
+    refresh_title: bool = True,
+    **fields,
+) -> int:
     """Insert a discovered posting or refresh a known one by (source, external_id).
 
     A refresh touches only source-owned fields (JD, url, last_seen, source_state)
     — never review_state / build_state / application_state, so user decisions and
-    in-flight builds survive rediscovery.
+    in-flight builds survive rediscovery. Three more refresh guards, each from a
+    real overwrite:
+    - a JD only moves to the same or a higher quality class (`jd_class`), and an
+      undecided row's score goes with the old text (`_clear_score_sql`);
+    - an empty company never replaces a stored one (a re-sent whole-card alert
+      carries none, and the stored name may have been repaired since);
+    - `refresh_title=False` (whole-card alert rows, whose "title" is the entire
+      card text) keeps the stored title; first sight still stores what it has.
+
+    `commit=False` leaves the write in the caller's transaction, so a batch of
+    upserts and the bookkeeping that depends on them can land or roll back as one.
     """
     now = _now()
     existing = conn.execute(
-        "SELECT id, jd_pasted_at FROM jobs WHERE source=? AND external_id=?",
+        "SELECT id, jd_pasted_at, raw_jd, review_state FROM jobs WHERE source=? AND external_id=?",
         (source, external_id),
     ).fetchone()
 
@@ -197,23 +219,66 @@ def upsert_job(conn: sqlite3.Connection, *, source: str, external_id: str, **fie
         cur = conn.execute(
             f"INSERT INTO jobs ({col_names}) VALUES ({placeholders})", tuple(cols.values())
         )
-        conn.commit()
+        if commit:
+            conn.commit()
         return int(cur.lastrowid or 0)
 
     # Refresh only source-owned columns. A pasted description is the user's, not
     # the source's: the snippet the source keeps sending must not replace it.
     source_owned = {k: v for k, v in fields.items() if k in _SOURCE_OWNED}
-    if existing["jd_pasted_at"]:
-        source_owned.pop("raw_jd", None)
+    if not source_owned.get("company"):
+        source_owned.pop("company", None)
+    if not refresh_title:
+        source_owned.pop("title", None)
+    clear_score = _guard_jd(source_owned, existing)
     source_owned["last_seen"] = now
     source_owned["source_state"] = "active"
     assignments = ", ".join(f"{k}=?" for k in source_owned)
     conn.execute(
-        f"UPDATE jobs SET {assignments} WHERE id=?",
+        f"UPDATE jobs SET {assignments}{', ' + _CLEAR_SCORE_SQL if clear_score else ''} WHERE id=?",
         (*source_owned.values(), existing["id"]),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(existing["id"])
+
+
+# The score belongs to the JD it was computed from (see `set_pasted_jd`).
+_CLEAR_SCORE_SQL = "alignment_score=NULL, rationale='', match_strengths='', match_gaps=''"
+
+JD_STUB, JD_SNIPPET, JD_FULL, JD_PASTED = range(4)
+
+
+def jd_class(raw_jd: str | None, jd_pasted_at: str | None = None) -> int:
+    """Quality class of a description: stub (empty) < snippet < full < pasted."""
+    if jd_pasted_at:
+        return JD_PASTED
+    n = len((raw_jd or "").strip())
+    if n == 0:
+        return JD_STUB
+    return JD_SNIPPET if n < MIN_FULL_JD_CHARS else JD_FULL
+
+
+def _guard_jd(source_owned: dict, existing: sqlite3.Row) -> bool:
+    """Decide whether this refresh may replace the stored JD, editing
+    `source_owned` in place. Returns True when the JD text changed on an
+    undecided row, i.e. its score must be cleared.
+
+    A lower class never replaces a higher one (a snippet must not clobber a full
+    JD, and nothing the source sends replaces a pasted one); the same class does,
+    so a revised full posting still lands. Compared on stripped text, so a
+    whitespace-only difference is no change and costs no re-score."""
+    if "raw_jd" not in source_owned:
+        return False
+    incoming = source_owned["raw_jd"] or ""
+    stored_class = jd_class(existing["raw_jd"], existing["jd_pasted_at"])
+    if jd_class(incoming) < stored_class or stored_class == JD_PASTED:
+        source_owned.pop("raw_jd")
+        return False
+    if incoming.strip() == (existing["raw_jd"] or "").strip():
+        source_owned.pop("raw_jd")  # unchanged: leave the stored text byte-for-byte
+        return False
+    return existing["review_state"] in UNDECIDED_STATES
 
 
 # Columns a rediscovery is allowed to refresh — facts the source owns. Comp
@@ -291,8 +356,7 @@ def set_pasted_jd(conn: sqlite3.Connection, job_id: int, text: str) -> bool:
         conn.execute("UPDATE jobs SET jd_pasted_at=? WHERE id=?", (_now(), job_id))
     elif prev[1] in UNDECIDED_STATES:
         conn.execute(
-            "UPDATE jobs SET raw_jd=?, jd_pasted_at=?, alignment_score=NULL, rationale='', "
-            "match_strengths='', match_gaps='' WHERE id=?",
+            f"UPDATE jobs SET raw_jd=?, jd_pasted_at=?, {_CLEAR_SCORE_SQL} WHERE id=?",
             (body, _now(), job_id),
         )
     else:
@@ -309,9 +373,12 @@ def claim_for_build(conn: sqlite3.Connection, job_id: int, run_id: str) -> bool:
     """
     now = datetime.now()
     lease = (now + timedelta(minutes=DEFAULT_LEASE_MINUTES)).isoformat()
+    # One statement, so a refine's claim and this one cannot both succeed.
     cur = conn.execute(
-        "UPDATE jobs SET build_state='tailoring' WHERE id=? AND build_state IN ('none','failed')",
-        (job_id,),
+        "UPDATE jobs SET build_state='tailoring' WHERE id=? AND build_state IN ('none','failed') "
+        "AND NOT EXISTS (SELECT 1 FROM build_runs WHERE job_id=jobs.id AND status='running' "
+        "AND run_id LIKE ? AND lease_expires_at >= ?)",
+        (job_id, REFINE_RUN_PREFIX + "%", now.isoformat()),
     )
     if cur.rowcount != 1:
         conn.rollback()
@@ -329,6 +396,44 @@ def claim_for_build(conn: sqlite3.Connection, job_id: int, run_id: str) -> bool:
         conn.rollback()
         return False
     return True
+
+
+def claim_for_refine(conn: sqlite3.Connection, job_id: int, run_id: str) -> bool:
+    """Claim the job's packet folder for a resume revision.
+
+    A refine and a tailor both rewrite the same files, so they exclude each other
+    here, durably: this refuses while a build holds the job (`tailoring`) or another
+    refine runs, and `claim_for_build` refuses while a refine's row is live. The
+    claim is a `build_runs` row whose run id carries `REFINE_RUN_PREFIX`; it is
+    deleted by `release_refine`, never left behind as a 'failed' build that
+    would pose as the job's latest attempt. One INSERT...SELECT, so it is atomic."""
+    now = datetime.now()
+    lease = (now + timedelta(minutes=REFINE_LEASE_MINUTES)).isoformat()
+    cur = conn.execute(
+        "INSERT INTO build_runs "
+        "(job_id, run_id, status, lease_expires_at, created_at, updated_at, owner_token) "
+        "SELECT j.id, ?, 'running', ?, ?, ?, ? FROM jobs j WHERE j.id=? "
+        "AND COALESCE(j.build_state, 'none') != 'tailoring' "
+        "AND NOT EXISTS (SELECT 1 FROM build_runs b WHERE b.job_id=j.id AND b.status='running' "
+        "AND b.run_id LIKE ? AND b.lease_expires_at >= ?)",
+        (
+            REFINE_RUN_PREFIX + run_id,
+            lease,
+            now.isoformat(),
+            now.isoformat(),
+            PROCESS_TOKEN,
+            job_id,
+            REFINE_RUN_PREFIX + "%",
+            now.isoformat(),
+        ),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def release_refine(conn: sqlite3.Connection, run_id: str) -> None:
+    conn.execute("DELETE FROM build_runs WHERE run_id=?", (REFINE_RUN_PREFIX + run_id,))
+    conn.commit()
 
 
 def finish_build(conn: sqlite3.Connection, run_id: str, *, artifact_dir: str, ok: bool) -> None:
@@ -403,6 +508,10 @@ def recover_stale_builds(conn: sqlite3.Connection, *, now: datetime | None = Non
         (PROCESS_TOKEN, ts),
     ).fetchall()
     for r in stale:
+        if r["run_id"].startswith(REFINE_RUN_PREFIX):
+            # A dead refine's claim is simply dropped (see `claim_for_refine`).
+            conn.execute("DELETE FROM build_runs WHERE run_id=?", (r["run_id"],))
+            continue
         conn.execute(
             "UPDATE build_runs SET status='failed', updated_at=? WHERE run_id=?",
             (ts, r["run_id"]),

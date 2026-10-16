@@ -107,10 +107,14 @@ def test_quarantine_does_not_clobber_existing_destination(tmp_path):
 
     quarantine(tmp_path, stems=[STEM], reasons=["x"])
 
-    # The pre-existing quarantined file must survive untouched...
-    assert (qdir / f"{STEM}.md").read_text(encoding="utf-8") == "PRE-EXISTING"
-    # ...and the source that could not be moved must still exist (not deleted).
-    assert (tmp_path / f"{STEM}.md").exists()
+    # Changed on purpose (Group A, A1): leaving the source public to protect the
+    # old held copy broke the postcondition that a targeted document never stays
+    # next to a working download. The old copy is parked, never overwritten or
+    # deleted, and the newer document takes the held name.
+    parked = list((qdir / "superseded").iterdir())
+    assert [p.read_text(encoding="utf-8") for p in parked] == ["PRE-EXISTING"]
+    assert not (tmp_path / f"{STEM}.md").exists()
+    assert (qdir / f"{STEM}.md").read_text(encoding="utf-8") == "# Resume\n"
 
 
 @pytest.mark.parametrize(

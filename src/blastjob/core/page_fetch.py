@@ -29,10 +29,16 @@ AGGREGATOR_HOSTS: frozenset[str] = frozenset(
         "jobgether.com", "swooped.co", "dice.com", "builtin.com", "wellfound.com",
         "salary.com", "talent.com", "jobrapido.com", "snagajob.com", "careerjet.com",
         "whatjobs.com", "recruit.net", "jobilize.com", "ihire.com", "nexxt.com", "upward.net",
-        "jobs.com", "google.com", "bing.com",
+        "jobs.com", "google.com", "bing.com", "lnkd.in", "linkedin.cn",
     }
 )  # fmt: skip
+# Never contacted from any code path, even by a caller that allows aggregators.
+LINKEDIN_HOSTS: frozenset[str] = frozenset({"linkedin.com", "lnkd.in", "linkedin.cn"})
 MAX_HOPS = 5
+# Connections are pooled by (scheme, host, port) and the host is now the pinned IP, so a
+# kept-alive TLS session for one name could carry a request for another name on the
+# same IP without its certificate being checked. Never reuse a connection.
+_NO_REUSE = httpx.Limits(max_keepalive_connections=0)
 MAX_BODY_BYTES = 2 * 1024 * 1024
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _TIMEOUT_S = 15
@@ -62,20 +68,27 @@ def host_of(url: str) -> str:
     return (urlsplit(url).hostname or "").lower().rstrip(".")
 
 
-def is_aggregator_host(host: str) -> bool:
+def _in_hosts(host: str, hosts: frozenset[str]) -> bool:
     labels = host.lower().rstrip(".").split(".")
-    return any(".".join(labels[i:]) in AGGREGATOR_HOSTS for i in range(len(labels)))
+    return any(".".join(labels[i:]) in hosts for i in range(len(labels)))
 
 
-def fetchable(url: str) -> bool:
+def is_aggregator_host(host: str) -> bool:
+    return _in_hosts(host, AGGREGATOR_HOSTS)
+
+
+def fetchable(url: str, *, allow_aggregators: bool = False) -> bool:
     """http(s), a host, and not an aggregator (linkedin.com included). Parsed by
-    httpx, the parser that sends the request, so the two cannot disagree."""
+    httpx, the parser that sends the request, so the two cannot disagree.
+    `allow_aggregators` admits job boards (enrich.py reads Adzuna/Indeed pages)
+    but never LinkedIn."""
     try:
         parsed = httpx.URL(url)
     except (httpx.InvalidURL, TypeError, ValueError):
         return False
     host = parsed.host.lower().rstrip(".")
-    return parsed.scheme in ("http", "https") and bool(host) and not is_aggregator_host(host)
+    refused = LINKEDIN_HOSTS if allow_aggregators else AGGREGATOR_HOSTS
+    return parsed.scheme in ("http", "https") and bool(host) and not _in_hosts(host, refused)
 
 
 # --- the network ---------------------------------------------------------------
@@ -97,16 +110,41 @@ def _public_ip(text: str) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-async def _hop_ok(url: str, resolve: Resolve) -> bool:
-    if not fetchable(url):
-        return False
+async def _connect_addresses(
+    url: str, resolve: Resolve, *, allow_aggregators: bool = False
+) -> list[str] | None:
+    """The public addresses this hop may be requested at (all of them validated,
+    in resolver order), or None when the hop is refused. The caller connects to
+    one of THESE, so a second DNS lookup (which could answer differently:
+    rebinding) never decides where the request goes. Trying the rest on a
+    connect failure keeps a dead first A/AAAA record from failing the hop."""
+    if not fetchable(url, allow_aggregators=allow_aggregators):
+        return None
     host = httpx.URL(url).host.lower().rstrip(".")
     try:
-        return _public_ip(host)
+        return [host] if _public_ip(host) else None
     except ValueError:
         pass  # a name, not an address literal
-    addresses = await resolve(host)
-    return bool(addresses) and all(_public_ip(a) for a in addresses)
+    addresses = [a.split("%")[0] for a in await resolve(host)]
+    if not addresses or not all(_public_ip(a) for a in addresses):
+        return None
+    return list(dict.fromkeys(addresses))
+
+
+def _pinned(url: str, address: str) -> tuple[httpx.URL, dict[str, str], dict[str, str]]:
+    """(URL at `address`, Host header, request extensions) for one hop. The Host
+    header and the TLS SNI/certificate check keep the ORIGINAL name, so the
+    server and its certificate see exactly what an unpinned request would."""
+    parsed = httpx.URL(url)
+    host = parsed.host
+    default_port = {"http": 80, "https": 443}.get(parsed.scheme)
+    host_header = host if parsed.port in (None, default_port) else f"{host}:{parsed.port}"
+    if ":" in host:  # IPv6 literal
+        host_header = f"[{host}]" + host_header[len(host) :]
+    name = host.rstrip(".")
+    if address == host.lower().rstrip("."):
+        return parsed, {"Host": host_header}, {}
+    return parsed.copy_with(host=address), {"Host": host_header}, {"sni_hostname": name}
 
 
 async def safe_get(
@@ -114,25 +152,61 @@ async def safe_get(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     resolve: Resolve | None = None,
+    allow_aggregators: bool = False,
+    timeout_s: float = _TIMEOUT_S,
 ) -> Page | None:
     """GET with redirects followed by hand, each hop validated before it is
     requested (scheme, aggregator/linkedin, public address). None when a hop
-    is refused or there are more than MAX_HOPS redirects."""
+    is refused or there are more than MAX_HOPS redirects. `allow_aggregators`
+    admits job boards on every hop; LinkedIn is refused regardless.
+
+    Each hop connects to the address that was validated (no second lookup), with
+    the original Host header and TLS name. `trust_env=False`: no proxy or CA
+    override from the environment may reroute a validated fetch."""
     first_host, cross, current = host_of(url), False, url
     headers = {"User-Agent": _BROWSER_UA, "Accept": "text/html,application/xhtml+xml"}
-    async with httpx.AsyncClient(timeout=_TIMEOUT_S, transport=transport) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout_s, transport=transport, trust_env=False, limits=_NO_REUSE
+    ) as client:
         for _hop in range(MAX_HOPS + 1):
-            if not await _hop_ok(current, resolve or _resolve_host):
+            addresses = await _connect_addresses(
+                current, resolve or _resolve_host, allow_aggregators=allow_aggregators
+            )
+            if addresses is None:
                 return None
-            async with client.stream("GET", current, headers=headers) as resp:
+            outcome = await _get_hop(client, current, addresses, headers)
+            if isinstance(outcome, _Redirect):
+                current = urljoin(current, outcome.location)
+                cross = cross or host_of(current) != first_host
+                continue
+            return Page(outcome[0], current, outcome[1], cross)
+    return None
+
+
+@dataclass(frozen=True)
+class _Redirect:
+    location: str
+
+
+async def _get_hop(
+    client: httpx.AsyncClient, url: str, addresses: list[str], headers: dict[str, str]
+) -> _Redirect | tuple[int, str]:
+    """One hop: (status, body) or a redirect. A failed connect moves on to the
+    next validated address; the last failure is raised."""
+    for i, address in enumerate(addresses):
+        target, host_headers, extensions = _pinned(url, address)
+        try:
+            async with client.stream(
+                "GET", target, headers={**headers, **host_headers}, extensions=extensions
+            ) as resp:
                 location = resp.headers.get("location", "")
                 if resp.status_code in _REDIRECTS and location:
-                    current = urljoin(current, location)
-                    cross = cross or host_of(current) != first_host
-                    continue
-                body = await _capped_body(resp)
-                return Page(resp.status_code, current, body, cross)
-    return None
+                    return _Redirect(location)
+                return resp.status_code, await _capped_body(resp)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            if i == len(addresses) - 1:
+                raise
+    raise AssertionError("unreachable: addresses is never empty")
 
 
 async def _capped_body(resp: httpx.Response) -> str:

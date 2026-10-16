@@ -54,6 +54,63 @@ def _register(cfg, job_id: int, run_dir: Path, artifact_dir: str) -> None:
         conn.close()
 
 
+def _job_identity(cfg, job_id: int | None) -> tuple[str, str, str] | None:
+    """(company, title, build_state) of the job being revised, or None.
+
+    The role comes from the JOB, never from "the newest resume in the folder": a
+    current-layout folder is shared by every role at that company that day."""
+    if job_id is None:
+        return None
+    from blastjob.db import client as dbc
+
+    try:
+        conn = dbc.init_db(cfg)
+    except Exception:  # noqa: BLE001
+        log.warning("refine: could not look up job %s", job_id, exc_info=True)
+        return None
+    try:
+        row = conn.execute(
+            "SELECT company, title, build_state FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return row["company"] or "", row["title"] or "", row["build_state"] or ""
+
+
+def _claim(cfg, job_id: int, run_id: str) -> bool:
+    """Take the job's DB claim (`db.client.claim_for_refine`), so a tailor started
+    meanwhile is refused instead of racing this revision's publish."""
+    from blastjob.db import client as dbc
+
+    try:
+        conn = dbc.init_db(cfg)
+    except Exception:  # noqa: BLE001
+        log.warning("refine: could not claim job %s", job_id, exc_info=True)
+        return False
+    try:
+        return dbc.claim_for_refine(conn, job_id, run_id)
+    finally:
+        conn.close()
+
+
+def _release(cfg, run_id: str) -> None:
+    from blastjob.db import client as dbc
+
+    try:
+        conn = dbc.init_db(cfg)
+    except Exception:  # noqa: BLE001
+        log.warning("refine: could not release claim %s", run_id, exc_info=True)
+        return
+    try:
+        dbc.release_refine(conn, run_id)
+    except Exception:  # noqa: BLE001
+        log.warning("refine: could not release claim %s", run_id, exc_info=True)
+    finally:
+        conn.close()
+
+
 def make_refine_work(
     artifact_dir: str | None,
     feedback: str,
@@ -62,7 +119,9 @@ def make_refine_work(
     job_id: int | None = None,
 ):
     async def work(run: Run):
+        from blastjob.core.packet_verify import PacketNotQuarantinedError
         from blastjob.core.refine import run_refine
+        from blastjob.core.refine_files import RefineBusyError
 
         if not artifact_dir:
             run.emit("error", "No packet to revise — tailor this role first.")
@@ -73,22 +132,56 @@ def make_refine_work(
             return None
 
         cfg = load_config()
+        identity = _job_identity(cfg, job_id)
+        if job_id is not None and identity is None:
+            # Without the job's own company and role the only way to pick a resume
+            # is "the newest one in the folder", which in a shared company-day
+            # folder can be another role's. Refuse rather than guess.
+            run.emit("error", "Could not look up this job, so its resume cannot be picked safely.")
+            return None
+        if identity is not None and identity[2] == "tailoring":
+            # A tailor in flight is writing this very folder.
+            run.emit("error", "A tailoring build is running for this job; revise after it ends.")
+            return None
+        who = {"company": identity[0], "role": identity[1]} if identity else {}
+        if job_id is not None and not _claim(cfg, job_id, run.id):
+            run.emit(
+                "error", "A tailor or another revision holds this job; try again after it ends."
+            )
+            return None
         run.emit("log", f"Revising the resume in {run_dir.name}...")
         try:
             new_path, fit = await run_refine(
-                run_dir, feedback, cfg, CostTracker(), on_text=lambda t: run.emit("output", t)
+                run_dir,
+                feedback,
+                cfg,
+                CostTracker(),
+                on_text=lambda t: run.emit("output", t),
+                **who,
             )
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, RefineBusyError) as exc:
             run.emit("error", str(exc))
             return None
+        except PacketNotQuarantinedError as exc:
+            run.emit("error", f"{exc} The revision was NOT accepted; do not send this packet.")
+            return None
+        finally:
+            if job_id is not None:
+                _release(cfg, run.id)
         if job_id is not None:
             _register(cfg, job_id, run_dir, artifact_dir)
         score = getattr(fit, "groundedness_score", None)
         run.emit(
             "log",
             f"Saved {new_path.name}"
-            + (f" — groundedness now {score}" if score is not None else ""),
+            + (f" — groundedness now {score}" if score is not None else " — not re-scored"),
         )
+        if new_path.parent.name == "quarantine":
+            run.emit(
+                "error",
+                "The revision failed the packet checks and is held in quarantine; "
+                "see the packet report for why.",
+            )
         return {"path": str(new_path), "groundedness": score}
 
     return work

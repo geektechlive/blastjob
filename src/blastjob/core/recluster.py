@@ -118,15 +118,26 @@ def _merges(
 
 def apply_recluster(conn: sqlite3.Connection, plan: list[Merge]) -> int:
     """Perform `plan`; each join is re-checked for conflicts. Returns how many
-    merges changed the database. Commits."""
+    merges changed the database. Commits.
+
+    One `BEGIN IMMEDIATE` transaction: the plan was read earlier, so the write
+    lock is taken before the first re-check and a cockpit click (a 'different'
+    decision, a split) cannot land between a merge's conflict check and its
+    write. Any failure rolls the whole plan back."""
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     changed = 0
-    for merge in plan:
-        anchor = merge.job_ids[0]
-        before = _cluster_count(conn, merge.job_ids)
-        for other in merge.job_ids[1:]:
-            rc.merge_jobs(conn, anchor, other)
-        if _cluster_count(conn, merge.job_ids) < before:
-            changed += 1
+    try:
+        for merge in plan:
+            anchor = merge.job_ids[0]
+            before = _cluster_count(conn, merge.job_ids)
+            for other in merge.job_ids[1:]:
+                rc.merge_jobs(conn, anchor, other)
+            if _cluster_count(conn, merge.job_ids) < before:
+                changed += 1
+    except Exception:
+        conn.rollback()
+        raise
     conn.commit()
     return changed
 

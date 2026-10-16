@@ -46,6 +46,7 @@ import logging
 import os
 import re
 import ssl
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -316,23 +317,23 @@ def _indeed_location(loc_line: str) -> tuple[bool | None, str, str, str]:
     return remote, raw, city, region
 
 
-def _indeed_comp(lines: list[str]) -> tuple[int, int, str]:
+def _indeed_comp(lines: list[str]) -> tuple[int, int, str, str]:
     """First line among the anchor's following lines that looks like pay
     ('$' plus a digit) becomes comp_summary; parse_salary_range fills the
     bounds (hourly rates fall below its $10k floor, so comp stays 0 but the
     summary text is kept)."""
     for line in lines:
         if "$" in line and re.search(r"\d", line):
-            lo, hi, _ = parse_salary_range(line)
-            return lo, hi, line.strip()
-    return 0, 0, ""
+            lo, hi, cur = parse_salary_range(line)
+            return lo, hi, line.strip(), cur
+    return 0, 0, "", "USD"
 
 
 def _indeed_posting(jk: str, a: _Anchor) -> RawPosting:
     lines = [ln for ln in a.after if not _INDEED_CHROME_LINE.match(ln.strip())]
     company, loc_line = _company_location(lines)
     remote, location_raw, city, region = _indeed_location(loc_line)
-    comp_min, comp_max, comp_summary = _indeed_comp(a.after)
+    comp_min, comp_max, comp_summary, comp_currency = _indeed_comp(a.after)
     return RawPosting(
         source="indeed",
         external_id=jk,
@@ -346,6 +347,7 @@ def _indeed_posting(jk: str, a: _Anchor) -> RawPosting:
         remote=remote,
         comp_min=comp_min,
         comp_max=comp_max,
+        comp_currency=comp_currency,
         comp_summary=comp_summary,
         extra={"from_alert": True},
     )
@@ -477,11 +479,31 @@ def _imap_date(d: date) -> str:
     return d.strftime("%d-%b-%Y")
 
 
-def open_imap(host: str) -> imaplib.IMAP4:
+# Per-socket-operation timeout. imaplib's default is none, so one stalled read
+# held the whole discovery run (a thread cannot be cancelled from asyncio).
+DEFAULT_IMAP_TIMEOUT_S = 30
+# Wall-clock budget for one mailbox sweep, checked inside the fetch loop: a
+# server that answers each command slowly never trips the socket timeout.
+DEFAULT_IMAP_DEADLINE_S = 300.0
+
+
+def open_imap(host: str, timeout: float = DEFAULT_IMAP_TIMEOUT_S) -> imaplib.IMAP4:
     """IMAP over TLS with the certificate and hostname verified. Without an
     explicit context imaplib uses an UNVERIFIED one, which would hand the app
-    password to anyone able to intercept the connection."""
-    return imaplib.IMAP4_SSL(host, ssl_context=ssl.create_default_context())
+    password to anyone able to intercept the connection. `timeout` bounds every
+    socket operation."""
+    return imaplib.IMAP4_SSL(host, ssl_context=ssl.create_default_context(), timeout=timeout)
+
+
+def _close_imap(conn: imaplib.IMAP4) -> None:
+    """Log out; if the server will not answer, drop the socket instead."""
+    try:
+        conn.logout()
+    except Exception:  # noqa: BLE001
+        try:
+            conn.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def fetch_alert_messages(
@@ -494,12 +516,22 @@ def fetch_alert_messages(
     mailbox: str = "INBOX",
     connect: Callable[[str], imaplib.IMAP4] | None = None,
     is_alert: Callable[[str, str], bool] = looks_like_alert,
+    timeout_s: float = DEFAULT_IMAP_TIMEOUT_S,
+    deadline_s: float = DEFAULT_IMAP_DEADLINE_S,
+    clock: Callable[[], float] = time.monotonic,
 ) -> list[MailMessage]:
     """Return alert-looking messages newer than `since` whose Message-ID isn't
     in `skip_message_ids`. Headers are fetched for every recent message (cheap),
     bodies only for the ones that pass `is_alert`. Read-only (BODY.PEEK):
-    nothing is flagged, moved or deleted — the mailbox stays the user's."""
-    conn = (connect or open_imap)(host)
+    nothing is flagged, moved or deleted — the mailbox stays the user's.
+
+    Bounded two ways: `timeout_s` per socket operation, and `deadline_s` for the
+    whole sweep, checked before each message. Past the deadline
+    the sweep stops and returns the messages read so far (TimeoutError only when
+    none were read); the connection is closed on the way out and messages not
+    returned are simply not recorded in the ledger, so the next run fetches them."""
+    conn = connect(host) if connect else open_imap(host, timeout=timeout_s)
+    deadline = clock() + deadline_s
     try:
         conn.login(user, password)
         conn.select(mailbox, readonly=True)
@@ -508,6 +540,14 @@ def fetch_alert_messages(
         uids = data[0].split() if typ == "OK" and data and data[0] else []
         out: list[MailMessage] = []
         for uid in sorted(uids, key=lambda b: int(b)):
+            if clock() > deadline:
+                msg = f"IMAP sweep exceeded {deadline_s:g}s; closing the connection"
+                if not out:
+                    raise TimeoutError(msg)
+                # Keep what was read: unrecorded messages retry next run, and
+                # discarding them would let a slow mailbox never make progress.
+                log.warning("%s; returning %d message(s) read so far", msg, len(out))
+                break
             typ, data = conn.uid(
                 "FETCH", uid.decode(), "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID FROM SUBJECT)])"
             )
@@ -534,10 +574,7 @@ def fetch_alert_messages(
             )
         return out
     finally:
-        try:
-            conn.logout()
-        except Exception:  # noqa: BLE001
-            pass
+        _close_imap(conn)
 
 
 @dataclass(frozen=True)
@@ -571,6 +608,7 @@ class MailAlertAdapter:
         timeout_s: int = 15,
         debug_dir: Path | None = None,
         known_companies: Iterable[str] = (),
+        deadline_s: float = DEFAULT_IMAP_DEADLINE_S,
     ):
         # Company names already in the DB: a whole-card alert whose text ends
         # with one splits on it (see linkedin_cards).
@@ -584,8 +622,16 @@ class MailAlertAdapter:
         self.enrich = enrich
         self._fetch_messages = fetch_messages
         self.timeout_s = timeout_s
+        self.deadline_s = deadline_s
         self.debug_dir = debug_dir
         self.ledger: list[LedgerEntry] = []
+        # One (ledger entry, that message's postings) per message, in mailbox
+        # order. The pipeline persists each batch with its ledger row in ONE
+        # transaction, so a message whose postings fail to save is rolled back
+        # and stays retryable instead of being marked done with its jobs lost.
+        # Postings shared by several messages are the same object in each batch,
+        # so enrichment (which edits them in place) reaches every copy.
+        self.batches: list[tuple[LedgerEntry, list[RawPosting]]] = []
 
     def _dump_debug_html(self, m: MailMessage) -> None:
         """Best-effort capture of a message that parsed to 0 postings, so a
@@ -614,17 +660,25 @@ class MailAlertAdapter:
             since=since,
             skip_message_ids=self.skip_message_ids,
             mailbox=self.mailbox,
+            timeout_s=self.timeout_s,
+            deadline_s=self.deadline_s,
         )
         postings: dict[tuple[str, str], RawPosting] = {}
         ledger: list[LedgerEntry] = []
+        batches: list[tuple[LedgerEntry, list[RawPosting]]] = []
+
+        def record(entry: LedgerEntry, found: list[RawPosting] | None = None) -> None:
+            ledger.append(entry)
+            batches.append((entry, [postings[(p.source, p.external_id)] for p in found or []]))
+
         for m in messages:
             try:
                 source, found = parse_alert(m.sender, m.html, self.known_companies)
             except Exception as e:  # noqa: BLE001 — one bad email never sinks the run
-                ledger.append(LedgerEntry(m.message_id, "", m.uid, "error", 0, repr(e)[:200]))
+                record(LedgerEntry(m.message_id, "", m.uid, "error", 0, repr(e)[:200]))
                 continue
             if not source:
-                ledger.append(LedgerEntry(m.message_id, "", m.uid, "ignored", 0))
+                record(LedgerEntry(m.message_id, "", m.uid, "ignored", 0))
                 continue
             if not found:
                 log.warning(
@@ -636,12 +690,13 @@ class MailAlertAdapter:
                     self.lookback_days,
                 )
                 self._dump_debug_html(m)
-                ledger.append(LedgerEntry(m.message_id, source, m.uid, "empty", 0))
+                record(LedgerEntry(m.message_id, source, m.uid, "empty", 0))
                 continue
             for p in found:
                 postings.setdefault((p.source, p.external_id), p)
-            ledger.append(LedgerEntry(m.message_id, source, m.uid, "ok", len(found)))
+            record(LedgerEntry(m.message_id, source, m.uid, "ok", len(found)), found)
         self.ledger = ledger
+        self.batches = batches
         out = list(postings.values())
         if self.enrich and out:
             from blastjob.discovery.enrich import enrich_full_jds

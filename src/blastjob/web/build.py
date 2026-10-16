@@ -18,6 +18,7 @@ import sqlite3
 from pathlib import Path
 
 from blastjob import config as cfg_mod
+from blastjob.core.packet_verify import PacketNotQuarantinedError
 from blastjob.db import client as dbc
 from blastjob.llm import caching
 from blastjob.llm.cost import CostTracker
@@ -56,7 +57,10 @@ def recipient_block(contact: sqlite3.Row | None) -> str:
 
 def sse_format(ev: Event) -> str:
     """Serialize a runtime Event as one SSE frame (multiline data split per spec)."""
-    lines = ev.data.split("\n") if ev.data else [""]
+    # A bare \r is a line terminator to an SSE parser too, so fold CRLF/CR to LF
+    # before splitting or a stray one would end a data line early.
+    data = ev.data.replace("\r\n", "\n").replace("\r", "\n")
+    lines = data.split("\n") if data else [""]
     frame = f"id: {ev.id}\nevent: {ev.kind}\n"
     frame += "".join(f"data: {ln}\n" for ln in lines)
     return frame + "\n"
@@ -115,7 +119,9 @@ def make_tailor_work(job_id: int, load_config=cfg_mod.load_config):
                 )
                 return None
             if not dbc.claim_for_build(conn, job_id, run.id):
-                run.emit("log", "A tailoring build is already in progress for this job.")
+                run.emit(
+                    "log", "A tailoring build or a revision is already in progress for this job."
+                )
                 return None
 
             run.emit("log", f"Tailoring for {job['title']} @ {job['company']}...")
@@ -135,6 +141,11 @@ def make_tailor_work(job_id: int, load_config=cfg_mod.load_config):
                     include_cover_letter=True,
                 )
                 ok = True
+            except PacketNotQuarantinedError as e:
+                # Failed, never 'tailored': a held document is still public. The
+                # folder is recorded anyway so the job page points at the packet.
+                out_dir = e.out_dir
+                run.emit("error", f"{type(e).__name__}: {e}")
             except Exception as e:  # noqa: BLE001 — record on the run, mark build failed
                 run.emit("error", f"{type(e).__name__}: {e}")
             dbc.finish_build(conn, run.id, artifact_dir=str(out_dir or ""), ok=ok)

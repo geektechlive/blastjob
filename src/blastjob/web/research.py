@@ -253,11 +253,22 @@ def make_research_work(company: str, load_config=cfg_mod.load_config):
         cfg = load_config()
         conn = dbc.init_db(cfg)
         try:
+            # What we read now is what the save is checked against: an edit made
+            # while the (minutes-long) research runs must win, not be overwritten.
+            before = co.get_profile(conn, company)
+            expected = before["updated_at"] if before else None
             profile = await research_company(cfg, company, emit=run.emit)
             if profile is None:
                 run.emit("error", "Could not build a profile from what the web returned.")
                 return None
-            pid = co.upsert_profile(conn, profile)
+            pid = co.refresh_research_facts(conn, profile, expected_updated_at=expected)
+            if pid is None:
+                run.emit(
+                    "error",
+                    f"The profile for {company} changed while research was running, so "
+                    "nothing was saved. Run research again.",
+                )
+                return None
             run.emit(
                 "log",
                 f"Profile saved. Open /companies/{co.company_key(company).replace(' ', '%20')} "

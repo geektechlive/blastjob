@@ -228,7 +228,7 @@ async def test_run_daily_sends_the_best_link(cfg, conn, monkeypatch):
 
         return DiscoveryResult()
 
-    async def no_closure(cfg, conn, res):
+    async def no_closure(cfg, conn, res, **_kw):
         return None
 
     async def no_replies(cfg, conn, res, dry_run=False):

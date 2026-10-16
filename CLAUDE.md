@@ -113,7 +113,7 @@ sh scripts/install-launchd.sh web     # install the cockpit as an always-on laun
 sh scripts/install-launchd.sh daily   # install the 07:30 daily run; no argument installs both
 
 # Daily autopilot: discover -> score -> notify (notify.mode)
-uv run blastjob-daily --dry-run     # print the digest, send/stamp nothing
+uv run blastjob-daily --dry-run     # print the digest, send/stamp nothing; closure runs in shadow
 uv run blastjob-daily               # what launchd runs at 07:30
 uv run blastjob-daily --status      # last recorded run (daily_runs), send nothing
 uv run blastjob-daily --sweep-search-firms [--no-score]  # on-demand search-firm run; sends/records nothing
@@ -274,9 +274,17 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
   failure tolerant), normalize to `RawPosting`, then upsert by identity
   `(source, external_id)`. A refresh touches only source-owned columns, never the
   user's review/build state (and never blanks a stored JD: an empty description means
-  "presence only"). Cross-source dupes are grouped into a reversible cluster, never
-  merged. ATS boards (Greenhouse/Ashby/Lever/Workday/Dayforce) need no key; Adzuna is
-  optional (free key in the secrets file).
+  "presence only"). A JD refresh compares quality classes, never lengths:
+  presence stub < snippet (`is_jd_snippet`) < full < pasted; a lower class never
+  replaces a higher one, a full JD replaces a full one (a real revision), and a
+  changed JD clears an undecided row's score so `only_unscored` re-scores it. An
+  empty company never overwrites a stored one, and a whole-card alert row never
+  refreshes its title. Each posting is upserted in isolation (one bad row is a
+  source error, not the end of the run). A source that returns 0 rows while >= 3
+  are active, or (full snapshots only) under half of >= 10 active, is NOT
+  stale-marked; the skip is a digest note. Cross-source dupes are grouped into a
+  reversible cluster, never merged. ATS boards (Greenhouse/Ashby/Lever/Workday/
+  Dayforce) need no key; Adzuna is optional (free key in the secrets file).
   - **Workday** (`workday.py`): `token = "tenant/wdN/site"`; listing POST per title
     query, detail GET only for postings without a stored JD; `source` is per board
     (`workday:{tenant}`) so one board's outage can't stale-mark another's jobs. A req
@@ -299,7 +307,12 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
   - **Alert emails** (`mailalerts.py`): LinkedIn/Indeed job-alert mail over IMAP (app
     password; env-var names in settings, values in the secrets file). Incremental source
     (`snapshot = False`, so the pipeline never stale-marks for it); per-message ledger
-    keyed by Message-ID in `mail_ledger`. This is the sanctioned LinkedIn feed: no
+    keyed by Message-ID in `mail_ledger`, written in ONE transaction with that
+    message's postings (`MailAlertAdapter.batches`), each posting under its own
+    SAVEPOINT: the message is `ok` if any posting saved (failures are source
+    errors), `error` (retried) only if none did. IMAP is TLS-verified (`open_imap`),
+    with a 30 s socket timeout and a 300 s fetch deadline that closes the connection
+    and keeps the messages already read. This is the sanctioned LinkedIn feed: no
     browser automation, no unofficial APIs. Indeed parsing handles click-tracking
     wrappers (cts.indeed.com, pagead/clk, rc/clk/dl), template chrome, salary lines, and
     text/plain alerts; a recognized alert that parses to 0 postings logs a warning and
@@ -368,7 +381,11 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
 - **Gate** (`matching/gate.py`): surface at alignment ≥ threshold; a visible
   borderline band (threshold−5..threshold) and conditional/ambiguous geo go to the
   review queue; **unknown/undisclosed comp SURFACES (badged)**: only *verified* posted
-  comp below the floor is a hard reject. Two scores are kept distinct: this
+  comp below the floor is a hard reject, and only a USD (or unlabelled $) posted MAX is
+  comparable (`gate.below_floor`, also used by Compare and the funnel). "From $X" /
+  "$X+" stores a minimum with max 0 (unknown), so it never hard-rejects; another
+  currency surfaces too. A malformed model alignment is treated as missing (retried),
+  never stored as 0. Two scores are kept distinct: this
   pre-generation alignment score vs. the post-generation groundedness `FitScore`.
   `alignment_threshold` defaults to 78. `comp_floor_usd` defaults to 0, which disables
   the comp gate until a floor is set.
@@ -376,6 +393,8 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
 ### Web cockpit (`web/`)
 
 FastAPI + HTMX bound to `web.host` (default `127.0.0.1`) by `blastjob-web`.
+Every response carries `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `nosniff` and
+`Referrer-Policy: same-origin` (added in `LocalRequestGuard`; no script policy yet).
 State-changing routes require a per-launch CSRF token + local Origin check; all
 untrusted job text renders through Jinja autoescaping. Discovery/matching/tailoring
 run as background jobs via `web/runtime.py` (a replayable event log; tailoring streams
@@ -390,9 +409,10 @@ discovery adapter covers (a screenshot, a forwarded link). Inserts one `jobs` ro
 posting lands on the same row instead of duplicating it) then runs the ordinary
 `run_matching(..., job_ids=[id])` pass scoped to just that row: same gate/geo/
 prefilter/CAS rules as a discovered job, nothing special-cased. That scoped run is
-named `score-job` (kept off `matching.pipeline.SINGLE_FLIGHT` so it still runs while a
-full matching pass is in flight) and is in `BANNER_RUNS`, so the existing global run
-panel shows it; no second progress system. An unsafe URL is dropped, not stored
+named `score-job` (kept off `web.runtime.SINGLE_FLIGHT` so it still runs while a
+full matching pass is in flight; discovery and matching share ONE slot,
+`FLIGHT_GROUPS`) and is in `BANNER_RUNS`, so the existing global run panel shows it;
+no second progress system. An unsafe URL is dropped, not stored
 (`web/urls.safe_external_url`), with a visible note on the job page.
 
 `POST /jobs/{id}/jd`: store a pasted full description over a snippet
@@ -406,6 +426,9 @@ text changed, a `score-job` run (`web/paste_rescore.py` →
 `run_matching` (gate + CAS), kept rows score-only (never `review_state`, no comp
 inference), archived rows not at all. Both score writes CAS on the `raw_jd` that
 was scored, so a newer paste wins a race.
+The paste response carries `HX-Trigger: refresh-run-status`; `base.html`'s `#run-status`
+listens for it and re-reads `/runs/active`, which is what makes the re-score appear in
+the banner without a page reload.
 
 `POST /jobs/{id}/prep` (kept jobs): interview prep pack streamed via `web/prep.py` →
 `core/prep.py`: role at a glance, JD→STAR table, likely Q&A, 30/60/90, questions to
@@ -503,6 +526,8 @@ of/and/the/for/&), used by the discovery fingerprint and both rules below (not b
   different sources in the same metro. A remote or unplaceable side counts as the same
   metro only when BOTH sides are non-authoritative; any pair with a board posting
   (including two different boards) needs strict proximity or both explicitly remote.
+  The same-city-NAME shortcut also needs equal regions when both are known (Columbus
+  OH is not Columbus GA); centroid/radius matching still crosses state lines.
   Two reqs on one authoritative board never merge; agency/aggregator companies never
   auto-merge. **A repost of an application in progress joins it** (an aggregator once
   re-served an applied-to req under a new ad id weeks later and it surfaced as new):
@@ -581,7 +606,12 @@ must overlap, and the two must share a location), else intermediaries
 board and we link only on an exact normalized title or the single candidate ≥
 `TITLE_MATCH_MIN_RATIO` (uncalibrated) on a board whose slug/tenant IS the company
 key. Linked postings are re-checked per run (Workday `confirm_open`, full-board
-membership); a failed probe keeps the prior verdict. A row whose link is the user's
+membership); a failed probe keeps the prior verdict. A stored sibling link is
+re-checked with `sibling_is_proof` every run and dropped (verdict `unverifiable`, no
+state move; a close that link had caused is reopened via `reopen_transition`) once it
+fails; a 'different' decision clears links between the pair
+(`role_clusters.clear_links_between`) and the network search never re-links a pair
+the user rejected. `sweep_filled` records the `filled` packet outcome. A row whose link is the user's
 `manual` one is skipped entirely (display-only; see "One apply here link"). Adzuna
 stale with no link is `likely_closed` (badge only). Kept + `''`/`drafted` + closed →
 `posting_closed` (prior saved; reopen restores unless the user moved it); applied →
@@ -622,7 +652,11 @@ redirect → closed; 200 with the linked JobPosting still trusted → open unles
 `validThrough` is past (then no evidence); anything else → no evidence. Every request
 goes through `page_fetch.safe_get`: redirects followed by hand, ≤5 hops, every hop
 checked BEFORE it is requested (http/https, not an aggregator, resolves only to public
-addresses), body capped at 2 MB. `tests/conftest.py::_no_real_page_fetches` forbids the
+addresses), the connection made to the address that was validated (Host header and
+TLS SNI/certificate check keep the original name; no second DNS lookup, so no
+rebinding window; `trust_env=False`; no connection reuse), body capped at 2 MB.
+`allow_aggregators=True` (used only by `discovery/enrich.py` for Adzuna/Indeed pages)
+admits job boards but never LinkedIn (`LINKEDIN_HOSTS`, incl. `lnkd.in`). `tests/conftest.py::_no_real_page_fetches` forbids the
 real fetch/search suite-wide. **Known risk, accepted:** with `closure_auto` on, one
 trusted 404/410 moves a kept, unapplied job straight to `posting_closed`. A false 410
 from an employer's own ATS is unlikely, the move is reversible, and a later
@@ -639,8 +673,13 @@ offer). `negotiated_floor(job)` = highest stated minimum that drew no pushback.
 Cockpit: `/companies`, `/companies/{key}`, snapshot + signal form on kept job pages,
 and a "Research company" button that runs `web/research.py` (Jina search → read ~4
 primary pages → LLM fills the schema from that material only; sources allowlisted to
-fetched URLs). Long-form markdown workups still go in the application folder; the
-profile row points at them via `workup_path`.
+fetched URLs). On an existing profile research writes only research-owned fact fields
+(`company.RESEARCH_OWNED`) and only where the new value is non-empty (a thinner re-run
+never erases a stored fact or its sources), fills `strategy`/`summary` only while empty, and never
+touches user-owned fields (`workup_path`, ratings, risks, questions, `extra`); the
+write is a CAS on the `updated_at` read when research started, and a conflict saves
+nothing and says so. Long-form markdown workups still go in the application folder;
+the profile row points at them via `workup_path`.
 
 ### People + addressed outreach (`web/people.py`, `models/contact.py`)
 
@@ -679,7 +718,8 @@ for missing Discord credentials unless the mode is `discord`. Contents: surfaced
 jobs with `notified_at = ''` (best score first, posting URL before the cockpit link
 because the digest is read on a phone; the URL is the cluster's best apply link,
 `web/apply_link.apply_links_for`, else the row's own), follow-ups due, per-source
-errors, and a Monday heartbeat. `notified_at` is stamped only after the channel's 2xx:
+errors, discovery notes (e.g. a stale-mark skipped for a suspiciously empty board),
+and a Monday heartbeat. `notified_at` is stamped only after the channel's 2xx:
 at-least-once by design. Runs on the machine that holds the DB and the `claude` login,
 via `launchd/blastjob.daily.plist.template` (installed by
 `sh scripts/install-launchd.sh daily` as `local.$USER.blastjob.daily`) →
@@ -706,8 +746,16 @@ login, so read the warning in `web/launch.py` first. On Linux, run `blastjob-web
 (`llm/providers.py`) hardens it so it behaves as a plain model: prompt via **stdin**
 (work-history frontmatter starts with `---`, which argv parses as a flag and crashes;
 stdin also dodges arg-length limits), the caller's system prompt as an override + an
-output-only rule (else it narrates into the output), tools denied, dynamic sections
-excluded, run in a neutral cwd, and stdout noise line-filtered.
+output-only rule (else it narrates into the output), dynamic sections excluded, run in
+a per-process `mkdtemp(0700)` cwd, and stdout noise line-filtered. **It runs with NO
+tools at all:** `--tools ""`, `--strict-mcp-config` (no `--mcp-config`, so no MCP
+server) and `--setting-sources ""` (no user permission allowlist or hooks), plus
+`--disallowedTools` as a backstop. Without them the subprocess loaded every MCP server
+in the user's Claude config (334 tools on the owner's machine, GitHub writes
+pre-allowed) while its prompt carries attacker-controllable postings. Output is
+decoded incrementally (a multibyte character can straddle a read), the run has a
+timeout (`CLI_TIMEOUT_SECONDS`), a non-zero exit or `is_error` raises `CLIError`, and
+the child is killed on cancel or exit.
 
 ## Truth guarantees (read before touching the tailor or scoring path)
 
@@ -755,8 +803,24 @@ was missing. The short version:
 
 Every build verifies the packet it just produced and records the verdict in
 `{role-slug}.packet_report.json`. The vocabulary is `core/packet_report.py`
-(`Finding`/`PacketReport`/`GateVerdict`); `core/build.py::_verify_packet` runs the
-checks and `core/packet_gate.gate` decides.
+(`Finding`/`PacketReport`/`GateVerdict`); `core/packet_verify.py` runs the checks and
+the hold, and `core/packet_gate.gate` decides.
+
+- **Quarantine is per role and fails closed.** The packet folder is shared by every
+  role tailored for that company that day, so quarantine and release work per stem
+  (release from the cockpit frees only the job's own role). If any targeted file is
+  still public afterwards, `QuarantineIncompleteError` → the build is FAILED, never
+  tailored (`PacketNotQuarantinedError`; the folder is still recorded). Downloads
+  refuse any file a QUARANTINED report names, wherever it sits.
+- **A scorer that did not run is never an all-clear.** It goes in `checks_skipped`
+  and the gate gives a visible "not checked" reason (still not blocking). A model
+  `null` in a fit-score field becomes its default (an empty quote fails the check).
+- **Refine re-verifies.** It targets the job's own role (never "newest file in the
+  folder"), claims the job in the DB (`claim_for_refine`, a `refine:` build_runs row:
+  tailor and refine exclude each other) plus a per-resume `flock`, never lifts a hold
+  on a verification crash, stages and moves files atomically, re-scores
+  the resume, runs the deterministic checks, gate and hold like a build, and
+  re-scores the cover letter only if it changed.
 
 - **FATAL is calibrated to the boards actually applied through, not to a parser
   vendor.** The defaults assume Workday, Dayforce, LinkedIn and Greenhouse; Textkernel

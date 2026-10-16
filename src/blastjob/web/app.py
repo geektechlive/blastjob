@@ -323,26 +323,6 @@ def create_app(
         finally:
             c.close()
 
-    def _row_response(
-        request: Request, c: sqlite3.Connection, job_id: int, *, moved: bool, from_list: str
-    ) -> HTMLResponse:
-        """What a row action answers. A missing job is a 404 (rendering the row
-        against None raised a 500). From a stage list the job has left the
-        list, so the answer is empty and the row's outerHTML swap removes it;
-        if the move was refused the page reloads to show where the job really
-        is. Elsewhere (the job page ignores the body) the updated row renders."""
-        job = service.annotate_network_one(c, service.job_detail(c, job_id))
-        if job is None:
-            return HTMLResponse("Not found", status_code=404)
-        if from_list:
-            return HTMLResponse("", headers={} if moved else {"HX-Refresh": "true"})
-        return render(
-            request,
-            "_job_row.html",
-            job=job,
-            threshold=load_config().discovery.alignment_threshold,
-        )
-
     @app.post("/jobs/{job_id}/keep", response_class=HTMLResponse)
     async def keep(
         request: Request,
@@ -358,7 +338,7 @@ def create_app(
                 ReviewState.KEPT,
                 [ReviewState.NEW, ReviewState.SURFACED, ReviewState.QUEUED],
             )
-            return _row_response(request, c, job_id, moved=moved, from_list=from_list)
+            return vh.row_response(deps, request, c, job_id, moved=moved, from_list=from_list)
         finally:
             c.close()
 
@@ -376,7 +356,12 @@ def create_app(
         c = conn()
         try:
             moved = sm.run_action(c, job_id, action)
-            return _row_response(request, c, job_id, moved=moved, from_list="1")
+            if moved and action == "advance":
+                # Advance keeps the row on Applied (only its stage changes), so
+                # the empty-200 outerHTML swap would delete a row that is still
+                # listed. Reload to show the new stage.
+                return HTMLResponse("", headers={"HX-Refresh": "true"})
+            return vh.row_response(deps, request, c, job_id, moved=moved, from_list="1")
         finally:
             c.close()
 
@@ -396,13 +381,17 @@ def create_app(
             moved = service.archive_job(
                 c,
                 job_id,
-                [ReviewState.NEW, ReviewState.SURFACED, ReviewState.QUEUED, ReviewState.KEPT],
+                [ReviewState.NEW, ReviewState.SURFACED, ReviewState.QUEUED],
                 reason=reason,
                 note=note,
             )
-            return _row_response(request, c, job_id, moved=moved, from_list=from_list)
+            return vh.row_response(deps, request, c, job_id, moved=moved, from_list=from_list)
         finally:
             c.close()
+
+    def _applied_at(c: sqlite3.Connection, job_id: int) -> str:
+        row = c.execute("SELECT applied_at FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return ((row["applied_at"] if row else "") or "").strip()
 
     @app.post("/jobs/{job_id}/status", response_class=HTMLResponse)
     async def set_status(
@@ -419,6 +408,7 @@ def create_app(
         try:
             # Permissive expected set: any current application_state is allowed to
             # move (users correct mistakes); the CAS still guards review_state='kept'.
+            first_send = status == "applied" and not _applied_at(c, job_id)
             moved = service.set_application_state(c, job_id, status, ["", *STATUSES])
             send_note = ""
             if moved:
@@ -429,7 +419,9 @@ def create_app(
                 # and outcomes attached to a send that did not exist.
                 from blastjob.core import packet_sends as ps
 
-                if status == "applied":
+                # Only the move that first stamps applied_at is a send; a move
+                # back into applied (screen -> applied) is the same attempt.
+                if first_send:
                     send_note = sm.record_send_for_job(c, job_id)
                 try:
                     ps.record_outcome_for_job(c, job_id, status)
@@ -455,6 +447,7 @@ def create_app(
         unaudited bypass quarantine exists to prevent.
         """
         from blastjob.core import quarantine as qz
+        from blastjob.core.refine import locate as locate_resume
 
         stated = reason.strip()
         if not stated:
@@ -469,18 +462,39 @@ def create_app(
             target = packets.safe_output_path(load_config(), packet["dir"])
             if target is None or not target.exists():
                 return HTMLResponse("No packet folder", status_code=404)
-            moved = qz.release(target, reason=stated)
+            row = service.job_detail(c, job_id)
+            title = row["title"] if row is not None else ""
+            # The folder is shared by every role tailored for this company that
+            # day: release only this job's documents, or another role's held
+            # files come back public under a report that still says held.
+            try:
+                found = locate_resume(target, row["company"] if row else "", title)
+            except FileNotFoundError:
+                return HTMLResponse("No resume for this role in the packet", status_code=404)
+            # A legacy per-role folder (no slug) belongs to this role whole.
+            stems = [found.stem, found.cover_stem] if found.slug else None
+            moved = qz.release(target, reason=stated, stems=stems)
             if not moved:
                 return HTMLResponse("Nothing is quarantined", status_code=400)
             # The folder and the sidecar must agree. Without this the documents
             # come back but the report still says "quarantined", so the page
             # keeps showing the held badge and offers Release again.
-            row = service.job_detail(c, job_id)
-            title = row["title"] if row is not None else ""
             if not packet_view.record_override(
                 packet["dir"], reason=stated, role_slug=_packet_role_slug(packet, title) or ""
             ):
+                # Public files under a report that still says "quarantined" would be
+                # refused by every download with no explanation. Put them back and say so.
                 log.warning("released job %s but could not record the override", job_id)
+                stuck = qz.undo_release(target, moved, why="override could not be recorded")
+                suffix = (
+                    f" {len(stuck)} file(s) could not be re-held and are still in the folder."
+                    if stuck
+                    else " Nothing was released; try again."
+                )
+                return HTMLResponse(
+                    "The release could not be recorded in the packet report." + suffix,
+                    status_code=500,
+                )
             return HTMLResponse("", headers={"HX-Refresh": "true"})
         finally:
             c.close()

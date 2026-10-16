@@ -79,6 +79,10 @@ class DailyResult:
     new_jobs: int = 0
     followups: int = 0
     errors: dict[str, str] = field(default_factory=dict)
+    # Non-failures worth a human's attention (a snapshot the guard refused to
+    # act on, a channel that has never yielded anything): shown in the digest,
+    # not counted as errors.
+    notes: dict[str, str] = field(default_factory=dict)
     sent: bool = False
     digest: str = ""
     backup_path: str = ""
@@ -200,6 +204,7 @@ def build_digest(
     closed_postings: list[dict] | None = None,
     replies: list[ReplyMatch] | None = None,
     apply_links: Mapping[int, ApplyLink] | None = None,
+    notes: Mapping[str, str] | None = None,
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
@@ -207,7 +212,8 @@ def build_digest(
     links = apply_links or {}
     closed = closed_postings or []
     replied = replies or []
-    if not jobs and not errors and not followups and not heartbeat and not closed and not replied:
+    noted = notes or {}
+    if not (jobs or errors or followups or heartbeat or closed or replied or noted):
         return ""
     n = len(jobs)
     title = f"{HEADER} — {n} new role{'s' if n != 1 else ''}" if n else HEADER
@@ -246,6 +252,11 @@ def build_digest(
         lines.append("**Source errors**")
         for src, err in sorted(errors.items()):
             lines.append(f"• {src}: {err[:160]}")
+    if noted:
+        lines.append("")
+        lines.append("**Notes**")
+        for src, note in sorted(noted.items()):
+            lines.append(f"• {src}: {note[:200]}")
     if heartbeat:
         lines.append("")
         lines.append(heartbeat)
@@ -410,6 +421,7 @@ async def run_daily(
         res.fetched = dres.fetched
         res.per_source = dict(dres.per_source)
         res.errors.update(dres.errors)
+        res.notes.update(dres.notes)
         log.info(
             "discovery: fetched %d saved %d stale %d errors %d",
             dres.fetched,
@@ -460,7 +472,7 @@ async def run_daily(
             log.exception("matching pipeline failed")
             res.errors["matching"] = applog.redact(f"{type(e).__name__}: {e}")
 
-    await _closure_pass(cfg, conn, res)
+    await _closure_pass(cfg, conn, res, shadow=dry_run)
     await _replies_pass(cfg, conn, res, dry_run=dry_run)
 
     jobs = pending_jobs(conn)
@@ -478,6 +490,7 @@ async def run_daily(
         warm_ids=warm_ids,
         closed_postings=res.closed_postings,
         replies=res.replies,
+        notes=res.notes,
         apply_links=links,
     )
     res.duration_s = time.monotonic() - run_start
@@ -501,6 +514,7 @@ async def run_daily(
         warm_ids=warm_ids,
         closed_postings=res.closed_postings,
         replies=res.replies,
+        notes=res.notes,
         apply_links=links,
     )
     await send(res.digest)  # raises on failure -> nothing stamped
@@ -513,7 +527,9 @@ async def run_daily(
     return res
 
 
-async def _closure_pass(cfg: BlastJobConfig, conn: sqlite3.Connection, res: DailyResult) -> None:
+async def _closure_pass(
+    cfg: BlastJobConfig, conn: sqlite3.Connection, res: DailyResult, *, shadow: bool = False
+) -> None:
     """Posting closure, after discovery + matching so it sees today's
     source_state. Never sinks the run: a failure is reported like a source error.
 
@@ -523,7 +539,9 @@ async def _closure_pass(cfg: BlastJobConfig, conn: sqlite3.Connection, res: Dail
     not ride along on record_run's or mark_notified's later commit."""
     secrets_mod.load_secrets_env()
     try:
-        cres = await closure.run_closure(cfg, conn)
+        # A dry run must not move jobs even with closure_auto on (it still
+        # records verdicts and links, like --closure-report).
+        cres = await closure.run_closure(cfg, conn, shadow=shadow)
     except Exception as e:
         conn.rollback()
         log.exception("closure pass failed")

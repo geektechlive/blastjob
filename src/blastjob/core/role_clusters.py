@@ -38,6 +38,7 @@ from blastjob.core.agencies import is_agency
 from blastjob.core.closure_links import is_authoritative
 from blastjob.core.company import company_key
 from blastjob.core.titles import normalize_role_title
+from blastjob.discovery.textutil import normalize_region
 from blastjob.matching.geo import classify_location, haversine_miles, town_centroid
 from blastjob.models.config import DiscoveryConfig
 
@@ -70,10 +71,19 @@ class Place:
     remote: bool
     city: str
     centroid: tuple[float, float] | None
+    region: str = ""  # upper-cased state/region code, "" when unknown
 
     @property
     def unplaceable(self) -> bool:
         return not self.remote and self.centroid is None and self.city in ("", *_COUNTRY_ONLY)
+
+
+def _state_code(region: str) -> str:
+    """Upper-cased two-letter state/province code, else "" (unknown). Unrecognised
+    text ("United States", "USA") must not read as a state that conflicts with
+    "WI" for the same city."""
+    code = normalize_region(region or "").upper()
+    return code if len(code) == 2 and code.isalpha() and code.lower() not in _COUNTRY_ONLY else ""
 
 
 def _norm_city(text: str) -> str:
@@ -98,19 +108,23 @@ def place_of(row: Row, geo: DiscoveryConfig) -> Place:
         remote=bool(row["geo_remote"]),
         city=city,
         centroid=town_centroid(geo.towns, key) if key else None,
+        region=_state_code(row["geo_region"] or ""),
     )
 
 
 def same_metro(a: Place, b: Place, radius_miles: float, *, loose: bool) -> bool:
-    """Same normalized city, both centroids within `radius_miles`, or both
-    remote. `loose` also accepts a remote or unplaceable side ("United
-    States", empty): fine for the same employer's own title, too weak to tie
-    an agency posting to an employer."""
+    """Same normalized city (in the same state, when both are known), both
+    centroids within `radius_miles`, or both remote. `loose` also accepts a
+    remote or unplaceable side ("United States", empty): fine for the same
+    employer's own title, too weak to tie an agency posting to an employer.
+    The city-name shortcut needs equal regions because "Springfield, IL" and
+    "Springfield, MO" are not one metro; radius matching is unchanged."""
     if a.remote and b.remote:
         return True
     if loose and (a.remote or b.remote or a.unplaceable or b.unplaceable):
         return True
-    if a.city and a.city == b.city and a.city not in _COUNTRY_ONLY:
+    same_region = not (a.region and b.region) or a.region == b.region
+    if a.city and a.city == b.city and a.city not in _COUNTRY_ONLY and same_region:
         return True
     if a.centroid and b.centroid:
         return haversine_miles(*a.centroid, *b.centroid) <= radius_miles
@@ -312,6 +326,7 @@ def split_pair(
     `keep`). If `keep` is reachable from `other` some other way, `other` moves
     alone; the recorded 'different' then blocks any merge back. Commits."""
     record_decision(conn, keep, other, DIFFERENT)
+    clear_links_between(conn, keep, other)
     members = _members(conn, keep)
     by_id = {int(m["id"]): m for m in members}
     if other not in by_id or len(members) < 2:
@@ -332,6 +347,23 @@ def split_pair(
         (target, *sorted(moving)),
     )
     conn.commit()
+
+
+def clear_links_between(conn: sqlite3.Connection, a: int, b: int) -> None:
+    """Drop the employer link each of two jobs holds TO the other. A stored
+    sibling link was proven by the pairing the user just rejected, so it must not
+    keep standing in for the posting. The user's manual link is display-only data
+    and is never touched. Does not commit."""
+    from blastjob.web.apply_link import MANUAL_LINK
+
+    for job, target in ((a, b), (b, a)):
+        conn.execute(
+            "UPDATE jobs SET employer_link_source='', employer_link_external_id='', "
+            "employer_link_url='' WHERE id=? AND COALESCE(employer_link_source,'')<>? "
+            "AND (employer_link_source, employer_link_external_id) = "
+            "(SELECT source, external_id FROM jobs WHERE id=?)",
+            (job, MANUAL_LINK, target),
+        )
 
 
 def _component(

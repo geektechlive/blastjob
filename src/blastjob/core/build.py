@@ -2,28 +2,20 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Sequence
+import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from blastjob import config as cfg_mod
-from blastjob.core import docx_text, packet_gate, prose_check, quarantine, resume_format
+from blastjob.core import packet_verify
 from blastjob.core.cover_letter_score import (
-    CoverLetterScore,
     render_cover_letter_score_md,
     score_cover_letter,
 )
 from blastjob.core.coverage_run import coverage_gaps_for, render_gaps_md
-from blastjob.core.packet_report import (
-    Artifact,
-    CoverageGap,
-    Finding,
-    PacketReport,
-    PacketState,
-    Severity,
-)
 from blastjob.core.paths import application_dir, name_token, person_slug, resolve_role_slug
-from blastjob.core.research_facts import CompanyFact, distill_research, facts_block
+from blastjob.core.research_facts import distill_research, facts_block
 from blastjob.core.scoring import parse_score as _parse_score
 from blastjob.core.scoring import render_score_md as _render_score_md
 from blastjob.core.scoring import score_resume as _score_resume
@@ -38,12 +30,22 @@ log = logging.getLogger(__name__)
 
 __all__ = ["run_build", "_parse_score", "_render_score_md", "_score_resume"]
 
+# Moved to core/packet_verify.py so refine runs the same checks; the old private
+# names stay because tests and web/packet_view.py refer to them.
+_verify_packet = packet_verify.verify_packet
+_quarantine_stems = packet_verify.quarantine_stems
+_gate_and_report = packet_verify.gate_and_report
+_report_json = packet_verify.report_json
+
+
+PacketNotQuarantinedError = packet_verify.PacketNotQuarantinedError
+
 
 def _history_name(work_history_md: str) -> str:
     """Pull the candidate name from the work_history frontmatter (`name: ...`)."""
-    import re
-
-    m = re.search(r"^name:\s*(.+)$", work_history_md, re.MULTILINE)
+    # `[ \t]*` and `[^\n]+`, never `\s*(.+)`: `\s` crosses the newline, so an empty
+    # `name:` captured the NEXT line ("email: ...") as the candidate's name.
+    m = re.search(r"^name:[ \t]*([^\n]+)$", work_history_md, re.MULTILINE)
     return m.group(1).strip() if m else "Candidate"
 
 
@@ -264,8 +266,16 @@ async def run_build(
         cover_letter_score=cover_letter_score,
         coverage_gaps=coverage_gaps,
         company_facts=company_facts,
+        cover_letter_expected=include_cover_letter,
     )
-    verdict = _gate_and_report(packet_report, out_dir, role_slug, app_config=app_config)
+    verdict = _gate_and_report(
+        packet_report,
+        out_dir,
+        role_slug,
+        app_config=app_config,
+        resume_stem=resume_stem,
+        cover_stem=cover_stem,
+    )
     if on_text:
         if verdict is None:
             on_text("\nPacket check: verification failed — see the packet report.\n")
@@ -280,15 +290,14 @@ async def run_build(
     # held resume must take the ATS file exported from the same markdown.
     # A verification crash (verdict is None) quarantines NOTHING -- one broken
     # checker would otherwise hold every packet.
-    if verdict is not None and verdict.state is PacketState.QUARANTINED:
-        stems = _quarantine_stems(verdict, resume_stem=resume_stem, cover_stem=cover_stem)
-        try:
-            if stems:
-                quarantine.quarantine(out_dir, stems=stems, reasons=list(verdict.reasons))
-        except Exception as e:  # noqa: BLE001 — never lose the packet to its own guard
-            log.exception("quarantine failed for %s", role_slug)
-            if on_text:
-                on_text(f"Quarantine failed: {e}\n")
+    # FAIL-CLOSED: a document that could not be moved fails the build below
+    # rather than being swallowed; the old `except Exception` here let a held
+    # packet stay downloadable and still be marked done.
+    hold_failure = packet_verify.hold_documents(
+        out_dir, verdict, role_slug, resume_stem=resume_stem, cover_stem=cover_stem
+    )
+    if hold_failure and on_text:
+        on_text(f"{hold_failure}\n")
 
     # This build made up to six LLM calls (research, fact distillation, resume,
     # cover letter, cover-letter score, fit score), each already recorded into
@@ -375,6 +384,9 @@ async def run_build(
         encoding="utf-8",
     )
 
+    if hold_failure:
+        raise PacketNotQuarantinedError(hold_failure, out_dir)
+
     if on_text:
         on_text("Done!\n")
 
@@ -391,10 +403,9 @@ def _letterhead(body_md: str, work_history_md: str, company: str = "") -> str:
     details cannot drift or be invented.
     """
     import datetime as _dt
-    import re as _re
 
     fm = dict(
-        _re.findall(r"^(name|email|phone|location|linkedin):\s*(.+)$", work_history_md, _re.M)
+        re.findall(r"^(name|email|phone|location|linkedin):[ \t]*([^\n]+)$", work_history_md, re.M)
     )
     name = fm.get("name", "").strip()
     if not name:
@@ -421,260 +432,6 @@ def _letterhead(body_md: str, work_history_md: str, company: str = "") -> str:
     if "Sincerely," not in body:
         tail = ["", "Sincerely,"] + tail
     return "\n".join(head) + "\n" + body + "\n".join(tail) + "\n"
-
-
-def _verify_packet(
-    *,
-    resume_md: str,
-    cover_letter_md: str,
-    work_history_md: str,
-    job_description: str,
-    out_dir: Path,
-    resume_stem: str,
-    fit_score: FitScore | None,
-    cover_letter_score: CoverLetterScore | None = None,
-    coverage_gaps: Sequence[CoverageGap] = (),
-    company_facts: Sequence[CompanyFact] = (),
-) -> PacketReport:
-    """Run every deterministic check over a finished packet and aggregate one
-    report.
-
-    Structure and characters are checked against the EXPORTED .docx when it
-    exists, because that is the file an ATS parses; the markdown is the
-    fallback. Prose findings are advisory.
-
-    Every check is fail-soft, and a failed check is RECORDED. Before that, a
-    crashed checker was swallowed with a bare `continue`, so a packet whose
-    checks never ran was indistinguishable from a clean one: same green badge,
-    same "no findings recorded". `checks_run` / `checks_failed` exist so silence
-    can be told apart from an all-clear.
-    """
-    findings: list[Finding] = []
-
-    docx_lines: list[str] | None = None
-    docx_path = out_dir / f"{resume_stem}.docx"
-    if docx_path.exists():
-        try:
-            docx_lines = docx_text.extract_text(docx_path)
-        except Exception as e:  # noqa: BLE001 — fall back to the markdown
-            log.warning("docx read-back failed for %s: %s", docx_path.name, e)
-            docx_lines = None
-
-    # Only `source_span` is trusted from a distilled fact: research_facts
-    # verifies the span verbatim against the sidecar, but never checks the
-    # model-written `statement` against it, so a figure could be minted there.
-    trusted_spans = [f.source_span for f in company_facts if getattr(f, "source_span", "")]
-
-    checks: list[tuple[str, Callable[[], list[Finding]]]] = [
-        (
-            "resume_structure",
-            lambda: resume_format.check_structure(
-                resume_md,
-                work_history_md=work_history_md,
-                today=datetime.now().date(),
-                docx_lines=docx_lines,
-            ),
-        ),
-        (
-            "resume_arithmetic",
-            lambda: packet_gate.check_arithmetic(
-                resume_md, work_history_md, artifact=Artifact.RESUME
-            ),
-        ),
-        (
-            "resume_prose",
-            lambda: prose_check.check_prose(
-                resume_md,
-                kind="resume",
-                history=work_history_md,
-                job_description=job_description,
-            ),
-        ),
-    ]
-    if cover_letter_md:
-        checks += [
-            (
-                "cover_letter_arithmetic",
-                lambda: packet_gate.check_arithmetic(
-                    cover_letter_md,
-                    work_history_md,
-                    artifact=Artifact.COVER_LETTER,
-                    trusted_spans=trusted_spans,
-                ),
-            ),
-            (
-                "cover_letter_prose",
-                lambda: prose_check.check_prose(
-                    cover_letter_md,
-                    kind="cover_letter",
-                    history=work_history_md,
-                    job_description=job_description,
-                ),
-            ),
-        ]
-
-    ran: list[str] = []
-    failed: list[str] = []
-    for name, check in checks:
-        try:
-            findings.extend(check())
-            ran.append(name)
-        except Exception as e:  # noqa: BLE001 — a broken checker is not a bad packet
-            log.exception("packet check %s failed", name)
-            failed.append(name)
-            findings.append(
-                Finding(
-                    severity=Severity.MAJOR,
-                    code="checker_failed",
-                    message=(
-                        f"The {name} check crashed ({type(e).__name__}), so it verified nothing."
-                    ),
-                    artifact=(
-                        Artifact.COVER_LETTER
-                        if name.startswith("cover_letter")
-                        else Artifact.RESUME
-                    ),
-                    source="core/build.py",
-                )
-            )
-
-    # An ungrounded claim the resume scorer already found becomes a finding so
-    # the gate can name it instead of quoting a bare number at the user.
-    #
-    # Except date contradictions. `core/scoring.py` injects those into `claims`
-    # tagged `source_section="dates"`, and `resume_format` already reports the
-    # same defect as FATAL `role_not_in_history` using the stronger history
-    # aggregation (every heading per employer, not just the first). Re-emitting
-    # them here produced a second finding with an EMPTY evidence field, filed
-    # under "claims with no support in your work history" -- which is a mislabel
-    # for a date range, and made one defect look like three.
-    if fit_score is not None:
-        findings.extend(
-            Finding(
-                severity=Severity.MAJOR,
-                code="unsupported_claim",
-                message=claim.claim_text,
-                artifact=Artifact.RESUME,
-                evidence=claim.evidence_quote,
-                source="work_history.md",
-            )
-            for claim in fit_score.claims
-            if not claim.grounded and claim.source_section != "dates"
-        )
-    if cover_letter_score is not None:
-        findings.extend(cover_letter_score.findings)
-
-    return PacketReport(
-        artifact_dir=str(out_dir),
-        groundedness=fit_score.groundedness_score if fit_score else None,
-        jd_phrasing=fit_score.jd_alignment_score if fit_score else None,
-        # An unscored letter is None, never 0: a call that did not happen is not
-        # evidence of a defect.
-        cover_letter_groundedness=(
-            cover_letter_score.overall_score
-            if cover_letter_score is not None and cover_letter_score.scored
-            else None
-        ),
-        findings=tuple(findings),
-        coverage_gaps=tuple(coverage_gaps),
-        checks_run=tuple(ran),
-        checks_failed=tuple(failed),
-    )
-
-
-def _quarantine_stems(verdict, *, resume_stem: str, cover_stem: str) -> list[str]:
-    """Which document stems leave the folder.
-
-    RULE (what leaves the folder). Only the quarantined artifacts' documents
-    move: RESUME -> the resume stem AND the `_ATS` text file exported from the
-    same markdown, COVER_LETTER -> the letter stem. A resume held back while its
-    own ATS twin stays downloadable would be the badge-not-a-gate defect
-    quarantine exists to end; a letter's fatal taking the resume was the defect
-    this scoping exists to end.
-    """
-    stems: list[str] = []
-    if Artifact.RESUME in verdict.quarantined_artifacts:
-        stems += [resume_stem, f"{resume_stem}_ATS"]
-    if Artifact.COVER_LETTER in verdict.quarantined_artifacts:
-        stems.append(cover_stem)
-    return stems
-
-
-def _gate_and_report(report: PacketReport, out_dir: Path, role_slug: str, *, app_config):
-    """Gate the packet and write its sidecar. Returns the verdict, or None when
-    verification itself failed.
-
-    RULE (a verification bug must never orphan a packet). A raise anywhere in
-    here reaches web/build.py, which records `artifact_dir=""` -- the packet
-    then exists on disk and is unreachable from the job page forever. So a
-    verification crash is reported as `verification_failed, sendable: false` and
-    does NOT quarantine: one broken checker would otherwise quarantine every
-    packet and teach the user to click Release without reading.
-    """
-    try:
-        verdict = packet_gate.gate(report, cfg=app_config)
-        (out_dir / f"{role_slug}.packet_report.json").write_text(
-            json.dumps(_report_json(report, verdict), indent=2), encoding="utf-8"
-        )
-        return verdict
-    except Exception as e:  # noqa: BLE001 — never lose the packet to its own guard
-        log.exception("packet verification failed for %s", role_slug)
-        try:
-            (out_dir / f"{role_slug}.packet_report.json").write_text(
-                json.dumps(
-                    {
-                        "state": "verification_failed",
-                        "sendable": False,
-                        "reasons": [f"Verification crashed: {type(e).__name__}: {e}"],
-                        "findings": [],
-                        "checks_run": list(report.checks_run),
-                        "checks_failed": list(report.checks_failed),
-                        "checks_skipped": list(report.checks_skipped),
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-        except OSError:
-            log.exception("could not even write the failure sidecar for %s", role_slug)
-        return None
-
-
-def _report_json(report: PacketReport, verdict) -> dict:
-    """The packet report as a sidecar. Read by the cockpit; also the record of
-    what was known about a packet at the moment it was built."""
-    return {
-        "state": verdict.state.value,
-        "sendable": verdict.sendable,
-        "reasons": list(verdict.reasons),
-        "artifact_dir": report.artifact_dir,
-        # Which documents are unsafe, so the panel can say "the letter is held,
-        # the resume is clear" instead of leaving the user to guess.
-        "quarantined_artifacts": sorted(a.value for a in verdict.quarantined_artifacts),
-        # A packet whose checks did not run is not a clean packet.
-        "checks_run": list(report.checks_run),
-        "checks_failed": list(report.checks_failed),
-        "checks_skipped": list(report.checks_skipped),
-        "groundedness": report.groundedness,
-        "jd_phrasing": report.jd_phrasing,
-        "cover_letter_groundedness": report.cover_letter_groundedness,
-        "coverage_gaps": [
-            {"requirement": g.requirement, "history_quote": g.history_quote, "priority": g.priority}
-            for g in report.coverage_gaps
-        ],
-        "findings": [
-            {
-                "severity": f.severity.value,
-                "code": f.code,
-                "message": f.message,
-                "artifact": f.artifact.value,
-                "line": f.line,
-                "evidence": f.evidence,
-                "source": f.source,
-            }
-            for f in report.findings
-        ],
-    }
 
 
 async def _generate_cover_letter(
