@@ -22,8 +22,7 @@ def _flatten_to_strings(value: object) -> list[str]:
 
     walk(value)
     # de-dupe preserving order
-    seen: set[str] = set()
-    return [s for s in out if not (s in seen or seen.add(s))]
+    return list(dict.fromkeys(out))
 
 
 class DateRange(BaseModel):

@@ -349,7 +349,9 @@ def record_run(conn: sqlite3.Connection, res: DailyResult) -> int:
         ),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    if cur.lastrowid is None:
+        raise RuntimeError("daily_runs insert returned no row id")
+    return cur.lastrowid
 
 
 def mark_run_sent(conn: sqlite3.Connection, run_id: int) -> None:

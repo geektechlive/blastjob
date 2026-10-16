@@ -30,9 +30,17 @@ HTML_WRAPPER = """<!DOCTYPE html>
 def write(content_md: str, out_dir: Path, stem: str = "resume") -> Path:
     import markdown as md_lib
     from weasyprint import CSS, HTML
+    from weasyprint.urls import URLFetcher
 
     html_body = md_lib.markdown(content_md, extensions=["tables", "nl2br", "fenced_code"])
     full_html = HTML_WRAPPER.format(css=RESUME_CSS, body=html_body)
     dest = out_dir / f"{stem}.pdf"
-    HTML(string=full_html).write_pdf(str(dest), stylesheets=[CSS(string=RESUME_CSS)])
+    # Fetch nothing. The markdown is model output shaped by untrusted job and
+    # research text, and markdown passes raw HTML through, so an <img> pointing
+    # at file:// or a remote host would otherwise be read into a PDF that is sent
+    # to an employer. An empty tuple refuses every scheme (None would allow all).
+    no_fetch = URLFetcher(allowed_protocols=(), allow_redirects=False)
+    HTML(string=full_html, url_fetcher=no_fetch).write_pdf(
+        str(dest), stylesheets=[CSS(string=RESUME_CSS)]
+    )
     return dest

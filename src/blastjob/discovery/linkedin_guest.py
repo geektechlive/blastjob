@@ -45,7 +45,7 @@ _AGGREGATOR_MARK = re.compile(r"provided by|provided pay range|estimated by|\bes
 _HOURLY_MARK = re.compile(r"/\s*hr\b|per\s+hour|hourly", re.I)
 _MONEY_SPAN = re.compile(r"\$[\d,]+(?:\.\d+)?\*?\s*(?:-|to)\s*\$[\d,]+(?:\.\d+)?\*?", re.I)
 # Zero-width / bidi formatting marks some ATS pages sprinkle around headings.
-_INVISIBLE_MARKS = re.compile(r"[​-‏‪-‮﻿]")
+_INVISIBLE_MARKS = re.compile(r"[\u200b-\u200f\u202a-\u202e\ufeff]")
 
 
 def _strip_invisible(text: str) -> str:

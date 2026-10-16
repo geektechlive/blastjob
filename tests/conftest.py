@@ -314,3 +314,19 @@ def _no_real_network(request, monkeypatch):
             f"{'; '.join(violations[:5])}. Fake them (see tests/conftest.py::_no_real_network).",
             pytrace=False,
         )
+
+
+@pytest.fixture(autouse=True)
+def _loopback_test_client(monkeypatch):
+    """TestClient addresses requests to `testserver` by default; the cockpit's
+    LocalRequestGuard refuses any non-local Host (the DNS-rebinding defense), so
+    every in-process client defaults to http://127.0.0.1 instead. A test that
+    exercises the refusal passes its own base_url or Host header."""
+    from fastapi.testclient import TestClient
+
+    original = TestClient.__init__
+
+    def init(self, app, base_url: str = "http://127.0.0.1", *args, **kwargs):
+        original(self, app, base_url, *args, **kwargs)
+
+    monkeypatch.setattr(TestClient, "__init__", init)

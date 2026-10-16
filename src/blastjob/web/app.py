@@ -52,7 +52,7 @@ from blastjob.web import stages as st
 from blastjob.web import view_helpers as vh
 from blastjob.web.deps import Deps
 from blastjob.web.runtime import RUNTIME, Run
-from blastjob.web.security import CSRF_HEADER, LAUNCH_TOKEN, require_csrf
+from blastjob.web.security import CSRF_HEADER, LAUNCH_TOKEN, LocalRequestGuard, require_csrf
 from blastjob.web.upload_guard import MaxBodySizeMiddleware
 from blastjob.web.urls import safe_external_url
 
@@ -141,6 +141,9 @@ def create_app(
     # Outermost: require_csrf's `await request.form()` spools the whole body
     # before any route runs, so an in-route size check can never fire first.
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=MAX_NETWORK_UPLOAD_BYTES)
+    # Added last, so it runs first: refuse a non-local Host (DNS rebinding) and a
+    # foreign-Origin write before anything else, including the size check.
+    app.add_middleware(LocalRequestGuard)
     app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
 
     def conn() -> sqlite3.Connection:

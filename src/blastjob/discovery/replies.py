@@ -271,7 +271,7 @@ def fetch_message_dates(
     callers treat a missing uid as "date unknown" rather than retrying."""
     if not uids:
         return {}
-    conn = (connect or imaplib.IMAP4_SSL)(host)
+    conn = (connect or ma.open_imap)(host)
     out: dict[str, str] = {}
     try:
         conn.login(user, password)

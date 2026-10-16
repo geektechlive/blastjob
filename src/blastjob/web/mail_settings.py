@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from blastjob import logging as applog
+from blastjob.discovery.mailalerts import open_imap
 from blastjob.discovery.replies import MailAccount, personal_account
 from blastjob.models.config import BlastJobConfig
 from blastjob.secrets import secrets_file_hint
@@ -223,7 +224,7 @@ def probe(
         )
     conn: imaplib.IMAP4 | None = None
     try:
-        conn = (connect or imaplib.IMAP4_SSL)(acct.host)
+        conn = (connect or open_imap)(acct.host)
     except OSError as e:
         return False, applog.redact(f"Cannot reach {acct.host}: {type(e).__name__}")
     try:

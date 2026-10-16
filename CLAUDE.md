@@ -136,7 +136,7 @@ uv run --extra dev pytest -q
 uv run --extra dev pytest tests/test_paths.py::test_slugify_special_chars
 uv run --extra dev ruff check src tests
 uv run --extra dev ruff format src tests
-uv run --extra dev mypy src/blastjob/<module>
+uv run --extra dev mypy                     # whole tree; zero errors
 uv run python scripts/check_no_personal_data.py   # leak check against YOUR data (see CONTRIBUTING.md)
 
 # Coverage (no omit config: everything counts)

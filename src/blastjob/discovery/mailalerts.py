@@ -45,6 +45,7 @@ import imaplib
 import logging
 import os
 import re
+import ssl
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -278,11 +279,11 @@ def _extract_indeed_jk(href: str) -> str | None:
     """jk from a direct Indeed link, or from the nested viewjob URL inside a
     click-tracking wrapper (cts.indeed.com/...&url=<encoded viewjob url>)."""
     q = parse_qs(urlparse(href).query)
-    jk = (q.get("jk") or [None])[0]
+    jk = next(iter(q.get("jk", [])), None)
     if jk:
         return jk
     for key in _INDEED_WRAPPED_URL_KEYS:
-        nested = (q.get(key) or [None])[0]
+        nested = next(iter(q.get(key, [])), None)
         if not nested:
             continue
         m = _IN_JK.search(nested)
@@ -476,6 +477,13 @@ def _imap_date(d: date) -> str:
     return d.strftime("%d-%b-%Y")
 
 
+def open_imap(host: str) -> imaplib.IMAP4:
+    """IMAP over TLS with the certificate and hostname verified. Without an
+    explicit context imaplib uses an UNVERIFIED one, which would hand the app
+    password to anyone able to intercept the connection."""
+    return imaplib.IMAP4_SSL(host, ssl_context=ssl.create_default_context())
+
+
 def fetch_alert_messages(
     *,
     host: str,
@@ -491,11 +499,12 @@ def fetch_alert_messages(
     in `skip_message_ids`. Headers are fetched for every recent message (cheap),
     bodies only for the ones that pass `is_alert`. Read-only (BODY.PEEK):
     nothing is flagged, moved or deleted — the mailbox stays the user's."""
-    conn = (connect or imaplib.IMAP4_SSL)(host)
+    conn = (connect or open_imap)(host)
     try:
         conn.login(user, password)
         conn.select(mailbox, readonly=True)
-        typ, data = conn.uid("SEARCH", None, "SINCE", _imap_date(since))
+        # No charset argument: imaplib skipped the None this used to pass.
+        typ, data = conn.uid("SEARCH", "SINCE", _imap_date(since))
         uids = data[0].split() if typ == "OK" and data and data[0] else []
         out: list[MailMessage] = []
         for uid in sorted(uids, key=lambda b: int(b)):

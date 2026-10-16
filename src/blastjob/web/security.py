@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import ipaddress
 import secrets
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 # One token per process launch. Embedded in pages, required back on writes.
 LAUNCH_TOKEN = secrets.token_urlsafe(24)
-
-_ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 
 # Spelled out rather than using ipaddress.is_private, which also returns True for
 # reserved and documentation ranges such as 203.0.113.0/24 (TEST-NET-3). Those are
@@ -53,21 +53,79 @@ def _host_ok(value: str) -> bool:
     malicious web page from driving this via DNS rebinding: the attacker's page
     carries its own domain in Origin, never a private address.
     """
-    if not value:
+    if not value or "://" not in value:
         return False
-    # value is a scheme://host[:port]; extract host
     try:
-        hostport = value.split("://", 1)[1].split("/", 1)[0]
-    except IndexError:
+        host = urlsplit(value).hostname
+    except ValueError:
         return False
-    host = hostport.rsplit(":", 1)[0] if ":" in hostport else hostport
-    if host in _ALLOWED_HOSTS:
+    return _is_local(host or "")
+
+
+def _is_local(host: str) -> bool:
+    """A bare hostname (no port, no brackets) that is loopback or a private
+    address literal. A DNS name other than localhost never is: that is the
+    name a rebinding page would arrive under."""
+    if host.strip("[]") in {"127.0.0.1", "localhost", "::1"}:
         return True
     try:
         ip = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return False
     return any(ip in net for net in _PRIVATE_NETS)
+
+
+def _host_header_ok(value: str) -> bool:
+    try:
+        host = urlsplit(f"//{value}").hostname
+    except ValueError:
+        return False
+    return _is_local(host or "")
+
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+class LocalRequestGuard:
+    """Runs before routing and before any body is read.
+
+    - Host must be loopback or a private address literal (421 otherwise). A
+      DNS-rebinding page reaches the cockpit under its own domain name, so
+      this is what keeps it from reading pages; the Origin check below only
+      covers writes.
+    - A write whose Origin/Referer is foreign is refused here (403), before
+      Starlette spools a multipart body to disk. `require_csrf` still checks
+      the token per route.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in scope["headers"]}
+        if not _host_header_ok(headers.get("host", "")):
+            await _refuse(send, 421, b"misdirected request: not a local host")
+            return
+        if scope["type"] == "http" and scope["method"] not in _SAFE_METHODS:
+            origin = headers.get("origin") or headers.get("referer") or ""
+            if origin and not _host_ok(origin):
+                await _refuse(send, 403, b"bad origin")
+                return
+        await self.app(scope, receive, send)
+
+
+async def _refuse(send: Send, status: int, body: bytes) -> None:
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
 
 
 async def require_csrf(request: Request) -> None:

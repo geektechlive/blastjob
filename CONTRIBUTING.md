@@ -11,7 +11,7 @@ uv sync --extra dev
 uv run --extra dev pytest -q
 uv run --extra dev ruff check src tests
 uv run --extra dev ruff format src tests
-uv run --extra dev mypy src/blastjob/<module you touched>
+uv run --extra dev mypy                 # whole tree (config in pyproject.toml)
 sh scripts/verify.sh   # the whole gate in one command: run it before landing
 ```
 
@@ -19,8 +19,8 @@ sh scripts/verify.sh   # the whole gate in one command: run it before landing
   dependencies by editing `pyproject.toml` and running `uv lock`; never
   `pip install` into the venv.
 - Ruff rules E, F, I (isort), UP (pyupgrade), line length 100. Fix every finding.
-- Type hints on every function you write or change; zero new mypy errors in the
-  modules you touch.
+- Type hints on every function you write or change; mypy stays at zero errors
+  across the tree.
 - External data (board JSON, mail, LLM output, uploaded files) is parsed into a
   Pydantic model at the boundary.
 - Read `CLAUDE.md` ("Truth guarantees") and `docs/ARCHITECTURE.md` before touching

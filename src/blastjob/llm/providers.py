@@ -15,9 +15,14 @@ import os
 import shutil
 import tempfile
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, cast
 
 from blastjob.llm.cost import CostTracker, cost_from_usage
 from blastjob.models.config import BlastJobConfig, LLMConfig
+
+if TYPE_CHECKING:
+    from anthropic.lib.streaming import AsyncMessageStreamManager
+    from anthropic.types import MessageParam, TextBlockParam
 
 
 class ProviderNotConfiguredError(Exception):
@@ -83,18 +88,21 @@ async def anthropic_stream(
     system: list[dict],
     messages: list[dict],
     max_tokens: int,
-) -> tuple[AsyncIterator[str], object]:
-    """Returns (text_iterator, final_message_awaitable)."""
+) -> AsyncMessageStreamManager:
+    """Return the SDK's stream manager: an async context manager exposing
+    `text_stream` and `get_final_message()`, the same shape as the other
+    providers' stream objects."""
     from anthropic import AsyncAnthropic
 
     client = AsyncAnthropic(api_key=os.environ.get(cfg.anthropic_api_key_env))
-    stream = client.messages.stream(
+    # Callers build plain dicts in the Messages API shape; the SDK's TypedDicts
+    # describe the same structure.
+    return client.messages.stream(
         model=cfg.anthropic_model,
         max_tokens=max_tokens,
-        system=system,
-        messages=messages,
+        system=cast("list[TextBlockParam]", system),
+        messages=cast("list[MessageParam]", messages),
     )
-    return stream
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +304,8 @@ async def claudecli_stream(system: str, prompt: str, usage_box: _CLIUsageBox) ->
       limits). stdin sidesteps both.
     - The caller's system prompt is an override + an output-only rule so the CLI
       behaves as a plain model, not the narrating coding agent.
-    - Tools denied, dynamic sections excluded, run in an empty neutral dir.
+    - No built-in tools, no MCP servers, no user/project settings; dynamic
+      sections excluded; run in an empty neutral dir.
     - `--output-format stream-json --include-partial-messages --verbose` gives
       real per-chunk text deltas AND a genuine token-usage figure on the
       terminal `result` line — this is what lets the claude-cli path (the
@@ -322,6 +331,14 @@ async def claudecli_stream(system: str, prompt: str, usage_box: _CLIUsageBox) ->
             system + _CLI_OUTPUT_ONLY,
             "--exclude-dynamic-system-prompt-sections",
         ]
+    # No tools of any kind. The prompt carries job postings, alert mail and
+    # research text, all attacker-controllable; the user's Claude config may load
+    # MCP servers (mail, chat, GitHub, network devices) with some tools
+    # pre-allowed, and a posting must never be able to drive them. --tools ""
+    # turns off every built-in, --strict-mcp-config with no --mcp-config loads no
+    # MCP server, and --setting-sources "" skips user/project settings (their
+    # permission allowlists and hooks). --disallowedTools stays as a backstop.
+    args += ["--tools", "", "--strict-mcp-config", "--setting-sources", ""]
     args += ["--disallowedTools", _CLI_DISALLOWED_TOOLS]
 
     proc = await asyncio.create_subprocess_exec(

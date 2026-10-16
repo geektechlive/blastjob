@@ -493,7 +493,7 @@ def test_parse_linkedin_guest_page_extracts_jd_and_pay():
 # fixture. ----------
 
 NORTHWIND_PAY_BLOCK = (
-    "‎\n\nNorthwind Pay Range\n\n$165,000.00 - $190,000.00* + benefits.\n\n‎ ‎\n\n"
+    "\u200e\n\nNorthwind Pay Range\n\n$165,000.00 - $190,000.00* + benefits.\n\n\u200e \u200e\n\n"
     "Pay varies by where a role is based, reflecting local market conditions."
 )
 
