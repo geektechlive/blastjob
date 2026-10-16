@@ -24,3 +24,6 @@ local/
 *.db-wal
 secrets.env
 config.toml
+
+# Claude Code worktrees (one per in-flight change; never commit them)
+.claude/worktrees/

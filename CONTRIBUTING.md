@@ -12,6 +12,7 @@ uv run --extra dev pytest -q
 uv run --extra dev ruff check src tests
 uv run --extra dev ruff format src tests
 uv run --extra dev mypy src/blastjob/<module you touched>
+sh scripts/verify.sh   # the whole gate in one command: run it before landing
 ```
 
 - Python 3.11 to 3.14, managed with [uv](https://docs.astral.sh/uv/). Add

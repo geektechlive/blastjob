@@ -253,3 +253,16 @@ def test_surfaced_page_drops_the_repost_once_merged_into_the_application(conn, c
     assert repost in before
     assert repost not in after
     assert applied_page.count(applied) == 1 and repost not in applied_page
+
+
+def test_place_of_a_multi_location_row_uses_its_primary_location():
+    """A req listing "Chicago, IL; Fairhaven, OH" is placed at its primary
+    location for clustering, so it can't auto-merge with a different req an
+    aggregator posted in the home town (issue #3 review)."""
+    row = {
+        "geo_city": "Chicago",
+        "geo_region": "IL",
+        "geo_remote": 0,
+        "geo_location_raw": "Chicago, IL; Fairhaven, OH",
+    }
+    assert rc.place_of(row, geo_fixture.region_cfg()).centroid is None

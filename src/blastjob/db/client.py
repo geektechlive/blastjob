@@ -244,6 +244,9 @@ _SOURCE_OWNED = {
 # API cuts at 500 characters and an alert email can carry one line.
 MIN_FULL_JD_CHARS = 600
 MAX_PASTED_JD_CHARS = 60_000
+# The machine-owned review states (matching.pipeline.MACHINE_STATES); a row in
+# any other state carries a user decision.
+UNDECIDED_STATES = ("new", "surfaced", "queued")
 
 
 def is_jd_snippet(raw_jd: str | None, jd_pasted_at: str | None) -> bool:
@@ -254,17 +257,48 @@ def is_jd_snippet(raw_jd: str | None, jd_pasted_at: str | None) -> bool:
     return len((raw_jd or "").strip()) < MIN_FULL_JD_CHARS
 
 
+def _pasted_body(text: str | None) -> str:
+    return (text or "").strip()[:MAX_PASTED_JD_CHARS]
+
+
+def pasted_jd_changes(conn: sqlite3.Connection, job_id: int, text: str) -> bool:
+    """Would pasting `text` change this job's stored description? (Compared as
+    `set_pasted_jd` would store it, so trailing whitespace is no change.)"""
+    body = _pasted_body(text)
+    prev = conn.execute("SELECT raw_jd FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return bool(body) and prev is not None and _pasted_body(prev[0]) != body
+
+
 def set_pasted_jd(conn: sqlite3.Connection, job_id: int, text: str) -> bool:
     """Store a hand-pasted full description and stamp it so rediscovery keeps
-    it. A blank paste is rejected rather than wiping the snippet."""
-    body = (text or "").strip()[:MAX_PASTED_JD_CHARS]
+    it. A blank paste is rejected rather than wiping the snippet.
+
+    New text on an UNDECIDED row (new/surfaced/queued) clears the score fields:
+    a score belongs to the JD it was computed from, and score reuse keys on
+    employer + title + JD, so a snippet's score left beside the full text would
+    be replayed as the full text's (issue #4). The caller re-scores
+    (`matching.rescore`), and a NULL score is also what the daily
+    `only_unscored` pass picks up. A KEPT row keeps its score: no pass ever
+    retries a kept row, so clearing it would lose the number for good if the
+    re-score failed; `rescore` replaces it and ignores its stale reuse entry."""
+    body = _pasted_body(text)
     if not body:
         return False
-    cur = conn.execute(
-        "UPDATE jobs SET raw_jd=?, jd_pasted_at=? WHERE id=?", (body, _now(), job_id)
-    )
+    prev = conn.execute("SELECT raw_jd, review_state FROM jobs WHERE id=?", (job_id,)).fetchone()
+    if prev is None:
+        return False
+    if _pasted_body(prev[0]) == body:
+        conn.execute("UPDATE jobs SET jd_pasted_at=? WHERE id=?", (_now(), job_id))
+    elif prev[1] in UNDECIDED_STATES:
+        conn.execute(
+            "UPDATE jobs SET raw_jd=?, jd_pasted_at=?, alignment_score=NULL, rationale='', "
+            "match_strengths='', match_gaps='' WHERE id=?",
+            (body, _now(), job_id),
+        )
+    else:
+        conn.execute("UPDATE jobs SET raw_jd=?, jd_pasted_at=? WHERE id=?", (body, _now(), job_id))
     conn.commit()
-    return cur.rowcount == 1
+    return True
 
 
 def claim_for_build(conn: sqlite3.Connection, job_id: int, run_id: str) -> bool:

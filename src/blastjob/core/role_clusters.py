@@ -85,11 +85,15 @@ def place_of(row: Row, geo: DiscoveryConfig) -> Place:
     """Where `row` is, for clustering purposes: the configured town that
     `matching.geo.classify_location` finds, so an explicit other-state or
     foreign location ("Jackson, MS" when a home town is also named Jackson)
-    gets no centroid rather than borrowing the home town's."""
+    gets no centroid rather than borrowing the home town's.
+
+    A multi-location row ("A; B; C") is placed at its primary location only:
+    geo may let it through on a later home-state location, but two postings
+    are only the same metro by where the req is anchored, so a far req can't
+    auto-merge with a different req an aggregator posted locally."""
     city = _norm_city(row["geo_city"] or "")
-    _signal, key = classify_location(
-        row["geo_city"] or "", row["geo_region"] or "", row["geo_location_raw"] or "", geo
-    )
+    primary = (row["geo_location_raw"] or "").split(";", 1)[0]
+    _signal, key = classify_location(row["geo_city"] or "", row["geo_region"] or "", primary, geo)
     return Place(
         remote=bool(row["geo_remote"]),
         city=city,

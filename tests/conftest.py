@@ -18,6 +18,19 @@ from blastjob.discovery.resolve import BoardHit  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _clean_runtime():
+    """Background runs live on one process-wide RUNTIME, and a finished run stays
+    "active" in the status banner for minutes. Without this, a run one test
+    starts (a paste re-score, a manual-job score) shows up in a later test's
+    `/runs/active`: an order-dependent failure. Every module imports the same
+    object, so clearing it covers them all."""
+    from blastjob.web.runtime import RUNTIME
+
+    yield
+    RUNTIME._runs.clear()
+
+
+@pytest.fixture(autouse=True)
 def _offline_closure_deps(monkeypatch):
     """The daily run now includes the closure pass, whose default resolver
     probes live ATS boards. Any test that reaches it without injecting its own

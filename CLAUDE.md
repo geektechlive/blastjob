@@ -125,6 +125,8 @@ uv run blastjob-daily --duplicate-applications  # kept applications sharing comp
 uv run blastjob-daily --backfill-artifacts-report  # packet files + past events the backfill would index; writes nothing
 uv run blastjob-daily --backfill-artifacts         # index them (idempotent; missing files listed, skipped)
 uv run blastjob-daily --closure-report      # shadow closure run: moves nothing, sends nothing
+uv run blastjob-daily --refetch-workday-locations-report  # geo-rejected Workday rows with extra locations; writes nothing
+uv run blastjob-daily --refetch-workday-locations         # store them, re-score the changed rows
 uv run python -m blastjob.core.prep <job_id>   # interview prep pack for one job
 uv run python -m blastjob.discovery.resolve "<Company>" [...]  # probe Workday/Dayforce/GH-Lever-Ashby, print confirmed boards
 touch "${BLASTJOB_DATA_DIR:-$HOME/.blastjob}/PAUSE"   # kill switch: the daily run exits immediately
@@ -277,7 +279,14 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
   optional (free key in the secrets file).
   - **Workday** (`workday.py`): `token = "tenant/wdN/site"`; listing POST per title
     query, detail GET only for postings without a stored JD; `source` is per board
-    (`workday:{tenant}`) so one board's outage can't stale-mark another's jobs. Add the
+    (`workday:{tenant}`) so one board's outage can't stale-mark another's jobs. A req
+    open in several places stores primary + `additionalLocations` as "A; B; C" in
+    `geo_location_raw` ("N Locations" placeholders dropped). Geo judges each segment on
+    its own text, and a segment placed within range wins, so an out-of-state primary
+    can't hide a home-state location; with none placed, the whole string is judged
+    as before (an unplaceable segment never rescues an out-of-area posting).
+    Same-role clustering places such a row at its primary location only. Rows stored
+    before this are repaired by `--refetch-workday-locations[-report]`. Add the
     user's own employers to `discovery.target_boards`; `resolve.probe_workday` (or
     `python -m blastjob.discovery.resolve "<Company>"`) finds them via Jina search + a
     confirming POST.
@@ -386,6 +395,18 @@ full matching pass is in flight) and is in `BANNER_RUNS`, so the existing global
 panel shows it; no second progress system. An unsafe URL is dropped, not stored
 (`web/urls.safe_external_url`), with a visible note on the job page.
 
+`POST /jobs/{id}/jd`: store a pasted full description over a snippet
+(`dbc.set_pasted_jd`). A score belongs to the JD it was computed from, and score
+reuse keys on employer + title + JD, so a stale score beside new text would be
+replayed. New text therefore clears an undecided row's score (the daily
+`only_unscored` pass retries a NULL). A kept row keeps its old score, because
+nothing retries a kept row; the re-score drops it from the reuse table. When the
+text changed, a `score-job` run (`web/paste_rescore.py` →
+`matching/rescore.rescore_job`) re-scores it: undecided rows through the scoped
+`run_matching` (gate + CAS), kept rows score-only (never `review_state`, no comp
+inference), archived rows not at all. Both score writes CAS on the `raw_jd` that
+was scored, so a newer paste wins a race.
+
 `POST /jobs/{id}/prep` (kept jobs): interview prep pack streamed via `web/prep.py` →
 `core/prep.py`: role at a glance, JD→STAR table, likely Q&A, 30/60/90, questions to
 ask, gaps; stories only from `work_history.md`, and `mark_unverified_numbers` appends
@@ -449,7 +470,9 @@ folder": the `{role-slug}.*` sidecars, the resume/cover-letter documents for exa
 that company+role token pair (incl. `_ATS`, `.vN` rotations, `quarantine/`), and
 `*.followup-{job_id}.md`; a legacy per-role folder (bare `metadata.json`) is taken
 whole. Never a glob of a shared company-day folder. Hooks (best-effort, a warning on
-failure, never a build-status change): tailor (`web/build.py`, after `finish_build`),
+failure, never a build-status change): tailor (`web/build.py`, after `finish_build`;
+it also writes `{role-slug}.apply_link.html`, a one-link page to the cluster's best
+apply route from `apply_link.apply_links_for`, via `web/apply_file.py`; no link, no file),
 refine (`web/refine.py`, `job_id` passed by the route, re-scanned by `role_files`, not
 refine's newest-by-mtime pick), follow-up draft, prep pack.
 

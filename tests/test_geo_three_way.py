@@ -165,6 +165,54 @@ def test_empty_location_is_unknown_not_rejected():
 
 
 # --------------------------------------------------------------------------
+# multi-location postings ("A; B; C"): placed by the best listed location
+# --------------------------------------------------------------------------
+
+
+def test_multi_location_posting_is_placed_at_its_home_state_town():
+    """An out-of-state primary location must not hide a home-state one listed
+    after it (Workday `additionalLocations`, Greenhouse "A; B")."""
+    status, dist, passes, cond = _assess(
+        "Springfield, VA; Red Bank NJ; Fairhaven OH", city="Springfield", region="VA"
+    )
+    assert status == GeoStatus.APPROXIMATE
+    assert passes and not cond
+    assert dist is not None and dist < 5
+
+
+def test_multi_location_posting_takes_the_nearest_listed_town():
+    status, dist, passes, cond = _assess("Rivermont, OH; Fairhaven, OH; Elmcrest, OH")
+    assert status == GeoStatus.APPROXIMATE and passes and not cond
+    assert dist is not None and dist < 5
+
+
+def test_multi_location_town_match_is_scoped_to_its_own_segment():
+    """'Jackson, MS' must not be placed at the configured home town 'jackson'
+    just because another segment names the home state."""
+    status, dist, passes, cond = _assess("Jackson, MS; Elmcrest, OH")
+    assert status == GeoStatus.APPROXIMATE and passes and cond  # elmcrest, not jackson
+    assert dist is not None and dist > 35
+
+
+def test_multi_location_all_elsewhere_is_still_rejected():
+    status, _d, passes, _c = _assess("Greenville, NC; Fayetteville, NC")
+    assert _is_dropped(status, passes)
+
+
+def test_an_unplaceable_segment_does_not_rescue_an_out_of_area_posting():
+    """Only a home-state location changes the verdict. With none, the whole
+    string is judged as before: "New York, NY; London" stays a reject, not a
+    review item because "London" alone is unplaceable."""
+    status, _d, passes, _c = _assess("New York, NY; London")
+    assert _is_dropped(status, passes)
+
+
+def test_a_placeholder_segment_does_not_hide_a_home_town():
+    status, dist, passes, _c = _assess("5 Locations; Fairhaven, OH")
+    assert status == GeoStatus.APPROXIMATE and passes and dist is not None
+
+
+# --------------------------------------------------------------------------
 # pipeline integration: the drop happens in run_matching, so prove it there too
 # --------------------------------------------------------------------------
 

@@ -73,7 +73,7 @@ class DiscoveryResult:
     reclustered: int = 0
 
 
-# SQL twin of normalize._PLACEHOLDER_LOCATION (^\d+\s+locations?$). SQLite has
+# SQL twin of normalize.PLACEHOLDER_LOCATION (^\d+\s+locations?$). SQLite has
 # no regex, so: a leading digit (GLOB is case-sensitive, LIKE is not) and a
 # "... location(s)" tail. Verified against the live DB 2026-09-12 — matches
 # exactly the 128 rows the regex rejects, and not "Building 5 Locations Campus".

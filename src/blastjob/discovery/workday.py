@@ -58,6 +58,7 @@ import httpx
 
 from blastjob.discovery.base import RawPosting
 from blastjob.discovery.http import request_json
+from blastjob.discovery.normalize import PLACEHOLDER_LOCATION
 from blastjob.discovery.textutil import html_to_text, split_location
 from blastjob.matching.prefilter import classify_scope
 
@@ -209,10 +210,30 @@ def stub_posting(company: str, ref: BoardRef, item: dict) -> RawPosting:
     )
 
 
+def _is_place(text: str) -> bool:
+    """Non-empty and not Workday's "5 Locations" count placeholder."""
+    return bool(text) and not PLACEHOLDER_LOCATION.match(text)
+
+
+def additional_locations(info: dict) -> list[str]:
+    """The `additionalLocations` of a detail payload, cleaned (issue #3)."""
+    cleaned = (str(x).strip() for x in info.get("additionalLocations") or [])
+    return [x for x in cleaned if _is_place(x)]
+
+
+def listed_locations(info: dict, primary: str) -> str:
+    """Every place a req is open in, primary first, as "A; B; C" (the form
+    Greenhouse already uses). Geo places a posting by its best listed
+    location, so an out-of-state primary can't hide a home-state one."""
+    places = [primary.strip(), *additional_locations(info)]
+    return "; ".join(p for p in places if _is_place(p))
+
+
 def parse_detail(company: str, ref: BoardRef, item: dict, detail: dict) -> RawPosting:
     info = detail.get("jobPostingInfo") or {}
-    loc = info.get("location") or item.get("locations_text", "")
-    city, region = split_location(loc)
+    primary = info.get("location") or item.get("locations_text", "")
+    city, region = split_location(primary)
+    loc = listed_locations(info, primary)
     remote_type = info.get("remoteType") or ""
     workplace = _workplace(remote_type)
     country = info.get("country")

@@ -124,13 +124,19 @@ def register(app: FastAPI, deps: Deps) -> None:
         jd: str = Form(""),
         _: None = Depends(require_csrf),
     ):
-        """Store the full description the user pasted over a truncated snippet."""
+        """Store the full description the user pasted over a truncated snippet,
+        then re-score it against the new text (issue #4)."""
+        from blastjob.web.paste_rescore import start_rescore
+
         c = deps.conn()
         try:
+            changed = dbc.pasted_jd_changes(c, job_id, jd)
             saved = dbc.set_pasted_jd(c, job_id, jd)
             job = service.job_detail(c, job_id)
             if job is None:
                 return HTMLResponse("Not found", status_code=404)
+            if saved and changed:
+                start_rescore(deps.load_config, job_id)
             error = "" if saved else "Nothing to save: the pasted description was empty."
             return deps.render(request, "_jd_block.html", job=job, jd_error=error)
         finally:

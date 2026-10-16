@@ -147,7 +147,13 @@ async def test_tailor_runs_once_the_full_description_is_pasted(cfg, conn, monkey
     assert seen["jd"] == FULL_JD.strip()
 
 
-def test_paste_route_saves_and_detail_page_drops_the_snippet_warning(cfg):
+def test_paste_route_saves_and_detail_page_drops_the_snippet_warning(cfg, monkeypatch):
+    from blastjob.matching import rescore
+
+    async def no_rescore(*_a, **_k):
+        return 0
+
+    monkeypatch.setattr(rescore, "rescore_job", no_rescore)  # covered in test_paste_rescore
     conn = dbc.init_db(cfg)
     jid = _kept_job(conn, SNIPPET[:500])
     conn.close()

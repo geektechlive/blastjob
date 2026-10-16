@@ -242,6 +242,38 @@ def test_build_hook_registers_this_roles_files_with_the_run(conn, cfg, monkeypat
     assert not {r["path"] for r in rows} & {str(p.resolve()) for p in theirs}
 
 
+def test_build_hook_writes_and_indexes_an_apply_link_page(conn, cfg, monkeypatch):
+    from blastjob.web import build as web_build
+    from blastjob.web.runtime import Run
+
+    jid = _job(conn)
+    conn.execute(
+        "UPDATE jobs SET raw_jd=?, url=? WHERE id=?",
+        ("x" * 2000, "https://boards.example.com/acme/jobs/1", jid),
+    )
+    conn.commit()
+    out = application_dir(Path(cfg.paths.output_dir), COMPANY)
+
+    async def fake_build(**_k):
+        return out, None
+
+    monkeypatch.setattr("blastjob.core.build.run_build", lambda **k: fake_build(**k))
+
+    async def go():
+        _fake_build(out, ROLE)
+        await web_build.make_tailor_work(jid, lambda: cfg)(Run(id="run-a", name="tailor"))
+
+    asyncio.run(go())
+    kinds = {r["kind"]: r["path"] for r in artifacts.artifacts_for(conn, jid)}
+    assert "apply_link" in kinds
+    page = Path(kinds["apply_link"]).read_text(encoding="utf-8")
+    assert 'href="https://boards.example.com/acme/jobs/1"' in page
+
+
+def test_apply_link_page_has_its_own_kind():
+    assert artifacts.kind_for("vp-it.apply_link.html") == "apply_link"
+
+
 def test_build_hook_failure_never_fails_the_build(conn, cfg, monkeypatch):
     from blastjob.web import build as web_build
     from blastjob.web.runtime import Run

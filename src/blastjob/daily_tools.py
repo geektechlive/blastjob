@@ -8,6 +8,9 @@ Each flag prints a report and exits; none sends anything or records a run.
   (`discovery.linkedin_repair`). The report writes nothing.
 - `--duplicate-applications`: kept rows with an application that share a
   company key and normalized title with another one (read-only).
+- `--refetch-workday-locations-report` / `--refetch-workday-locations`: re-read
+  geo-rejected Workday rows for `additionalLocations`
+  (`discovery.workday_locations`); apply re-scores the rows it changed.
 """
 
 from __future__ import annotations
@@ -66,6 +69,37 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
     bf_help = "index packet files + past application events (core/backfill.py)"
     ap.add_argument("--backfill-artifacts-report", action="store_true", help=f"report: {bf_help}")
     ap.add_argument("--backfill-artifacts", action="store_true", help=bf_help)
+    wl_help = "re-read geo-rejected Workday rows for additional locations (issue #3)"
+    ap.add_argument(
+        "--refetch-workday-locations-report", action="store_true", help=f"report: {wl_help}"
+    )
+    ap.add_argument(
+        "--refetch-workday-locations",
+        action="store_true",
+        help=f"{wl_help}; stores them, then re-scores the changed rows",
+    )
+
+
+def refetch_workday_locations_cli(
+    cfg: BlastJobConfig, conn: sqlite3.Connection, *, apply: bool
+) -> str:
+    """Plan always; on `apply`, store the new locations and re-run matching on
+    exactly those rows so their geo verdict (and score) land now."""
+    import asyncio
+
+    from blastjob.discovery import workday_locations as wl
+    from blastjob.llm.cost import CostTracker
+    from blastjob.matching.pipeline import run_matching
+
+    fixes = asyncio.run(wl.plan(conn, cfg))
+    if not apply:
+        return wl.format_report(fixes, applied=None)
+    changed = wl.apply(conn, fixes)
+    report = wl.format_report(fixes, applied=changed)
+    if changed:
+        res = asyncio.run(run_matching(cfg, conn, CostTracker(), job_ids=changed))
+        report += f"\nscored {res.scored}: surfaced {res.surfaced}, queued {res.queued}"
+    return report
 
 
 def dispatch(args: argparse.Namespace, cfg: BlastJobConfig, conn: sqlite3.Connection) -> str | None:
@@ -89,4 +123,6 @@ def dispatch(args: argparse.Namespace, cfg: BlastJobConfig, conn: sqlite3.Connec
         from blastjob.core import backfill
 
         return backfill.run(conn, apply=args.backfill_artifacts)
+    if args.refetch_workday_locations_report or args.refetch_workday_locations:
+        return refetch_workday_locations_cli(cfg, conn, apply=args.refetch_workday_locations)
     return None

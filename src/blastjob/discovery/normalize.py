@@ -19,7 +19,7 @@ _NORM = re.compile(r"[^a-z0-9]+")
 
 # "5 Locations" / "2 locations" — Workday's multi-site placeholder. It is a
 # COUNT, not a place: writing it destroys a city the detail fetch already knew.
-_PLACEHOLDER_LOCATION = re.compile(r"^\d+\s+locations?$", re.I)
+PLACEHOLDER_LOCATION = re.compile(r"^\d+\s+locations?$", re.I)
 
 # Remote/hybrid intent in free-form location text. Hybrid is checked first and
 # wins: a hybrid role still has to be commutable, so it is NOT remote.
@@ -96,7 +96,7 @@ def to_job_columns(p: RawPosting) -> dict:
     # "unchanged in the DB" rather than "overwrite the detail-derived value with
     # a placeholder", which is what degraded 120 live rows to "N Locations".
     raw = (p.location_raw or "").strip()
-    if raw and not _PLACEHOLDER_LOCATION.match(raw):
+    if raw and not PLACEHOLDER_LOCATION.match(raw):
         cols["geo_location_raw"] = raw
         if p.city.strip():
             cols["geo_city"] = p.city.strip()

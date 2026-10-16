@@ -123,6 +123,33 @@ def test_parse_detail_builds_posting():
     assert p.posted_at == "2026-08-31"
 
 
+def test_parse_detail_keeps_additional_locations_primary_first():
+    ref = workday.parse_board_token("acme/wd1/Careers")
+    item = workday.parse_listing(LISTING)[0]
+    detail = {
+        "jobPostingInfo": {
+            **DETAIL["jobPostingInfo"],
+            "location": "Springfield, VA",
+            "additionalLocations": ["Red Bank NJ", "Fairhaven OH"],
+        }
+    }
+    p = workday.parse_detail("Acme", ref, item, detail)
+    assert p.location_raw == "Springfield, VA; Red Bank NJ; Fairhaven OH"
+    assert (p.city, p.region) == ("Springfield", "VA")  # the primary's, as before
+
+
+def test_listed_locations_drops_the_n_locations_placeholder():
+    info = {"additionalLocations": ["Fairhaven OH", "3 Locations"]}
+    assert workday.listed_locations(info, "5 Locations") == "Fairhaven OH"
+
+
+def test_parse_detail_without_additional_locations_is_unchanged():
+    ref = workday.parse_board_token("acme/wd1/Careers")
+    item = workday.parse_listing(LISTING)[0]
+    p = workday.parse_detail("Acme", ref, item, DETAIL)
+    assert p.location_raw == "Springfield, Ohio, United States"
+
+
 def test_stub_posting_has_empty_description_and_columns_omit_raw_jd():
     ref = workday.parse_board_token("acme/wd1/Careers")
     item = workday.parse_listing(LISTING)[0]

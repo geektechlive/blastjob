@@ -63,7 +63,7 @@ NO_CANDIDATE_PROFILE_NOTE = (
 )
 
 
-def _work_history(cfg: BlastJobConfig) -> str:
+def work_history_text(cfg: BlastJobConfig) -> str:
     path = cfg_mod.data_dir(cfg) / "work_history.md"
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
@@ -219,7 +219,7 @@ async def run_matching(
     job_ids: Collection[int] | None = None,
 ) -> MatchResult:
     res = MatchResult()
-    wh = _work_history(cfg)
+    wh = work_history_text(cfg)
     res.company_skipped = auto_archive_rejected_companies(conn)
     rejections = load_rejections(conn)
     rows = _load_candidates(conn, only_unscored=only_unscored, job_ids=job_ids)
@@ -331,10 +331,13 @@ async def run_matching(
         )
         # CAS on review_state: the cockpit may have been open while the LLM ran
         # (daily job + a human clicking Keep). A user decision made mid-run must
-        # win over the score that arrives after it.
+        # win over the score that arrives after it. Also CAS on raw_jd: a JD
+        # pasted while this batch was in flight must not get the old text's
+        # score (it is re-scored on its own; issue #4).
         conn.execute(
             "UPDATE jobs SET alignment_score=?, rationale=?, match_strengths=?, "
-            f"match_gaps=?, review_state=? WHERE id=? AND review_state IN ({MACHINE_STATES})",
+            f"match_gaps=?, review_state=? WHERE id=? AND review_state IN ({MACHINE_STATES}) "
+            "AND raw_jd IS ?",
             (
                 alignment,
                 sc["rationale"],
@@ -342,6 +345,7 @@ async def run_matching(
                 "\n".join(sc.get("gaps", [])),
                 outcome.review_state.value,
                 jid,
+                r["raw_jd"],
             ),
         )
         if outcome.review_state == ReviewState.SURFACED:

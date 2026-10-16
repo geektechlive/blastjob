@@ -257,6 +257,35 @@ def assess_geo(
     if remote and cfg.remote_ok:
         return GeoStatus.VERIFIED, None, True, False
 
+    places = [p.strip() for p in location_raw.split(";") if p.strip()]
+    if len(places) > 1:
+        # "A; B; C" lists several places the job is open in. Judge each on its
+        # own text (a town in one segment must not borrow another segment's
+        # state). Only a segment that is actually placed within range changes
+        # the verdict; otherwise the whole string is judged as before, so an
+        # unplaceable segment ("London", "Corporate HQ") can't turn an
+        # out-of-area posting into a review item.
+        best = max((_assess_place("", "", p, cfg) for p in places), key=_verdict_rank)
+        if _verdict_rank(best)[0] >= _PLACED_PASS:
+            return best
+    return _assess_place(city, region, location_raw, cfg)
+
+
+_PLACED_PASS = 2  # _verdict_rank tier of a pass with a known distance
+
+
+def _verdict_rank(v: tuple[GeoStatus, float | None, bool, bool]) -> tuple[int, float]:
+    """Order for picking the best of several locations: an in-radius pass,
+    then a conditional pass, then an unknown, then a reject; nearer first."""
+    status, dist, passes, conditional = v
+    if passes and status != GeoStatus.UNKNOWN:
+        return (3 if not conditional else 2, -(dist or 0.0))
+    return (1 if passes else 0, 0.0)
+
+
+def _assess_place(
+    city: str, region: str, location_raw: str, cfg: DiscoveryConfig
+) -> tuple[GeoStatus, float | None, bool, bool]:
     signal, key = classify_location(city, region, location_raw, cfg)
     if signal == "other":
         # A concrete other place: nothing across a border is a short commute.

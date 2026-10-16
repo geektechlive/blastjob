@@ -23,6 +23,7 @@ from blastjob.llm import caching
 from blastjob.llm.cost import CostTracker
 from blastjob.llm.providers import make_stream
 from blastjob.models.config import BlastJobConfig
+from blastjob.web.apply_file import write_apply_file
 from blastjob.web.runtime import Event, Run
 
 log = logging.getLogger(__name__)
@@ -85,6 +86,9 @@ def _register_outputs(
             log.warning(
                 "build %s: no files matched job %s's role in %s", run_id, job["id"], out_dir
             )
+        apply_page = write_apply_file(conn, job["id"], files)
+        if apply_page is not None:
+            files = [*files, apply_page]
         artifacts.register_paths(
             conn, files, job_id=job["id"], build_run_id=artifacts.build_run_pk(conn, run_id)
         )

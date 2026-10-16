@@ -40,6 +40,7 @@ ARTIFACT_KINDS: tuple[str, ...] = (
     "coverage_gaps",
     "metadata",
     "packet_report",
+    "apply_link",
     "interview_prep",
     "followup",
     "transcript",
@@ -62,6 +63,7 @@ _SIDECARS: tuple[tuple[str, str], ...] = (
     ("fit_score.json", "fit_score"),
     ("fit_score.md", "fit_score"),
     ("metadata.json", "metadata"),
+    ("apply_link.html", "apply_link"),
 )
 _FOLLOWUP = re.compile(r"\.followup-\d+\.md$")
 _HAND_FILED: tuple[tuple[str, str], ...] = (
