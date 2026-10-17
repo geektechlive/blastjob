@@ -244,6 +244,12 @@ streamed LLM chunk is unbounded otherwise.
    via `exporters/`
 6. Writes sidecars: `job_description.md`, `company_research.md`, `metadata.json`
 
+Documents are named `{Person}_Resume_-_{token}` / `{Person}_Cover_Letter_-_{token}`,
+where `paths.document_token` caps the company+role token at 40 characters so every
+upload stays at or under 80 (Indeed refuses 90+; issue #19). Every matcher (artifacts,
+refine, quarantine) accepts `paths.document_tokens`: the capped token and the legacy
+uncapped one, so packets built before the cap still resolve.
+
 Persona text in every prompt comes from `cfg.candidate.profile_text()`; never hardcode
 a candidate, field or seniority in a prompt.
 

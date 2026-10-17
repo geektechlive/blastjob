@@ -14,7 +14,7 @@ from blastjob.core.cover_letter_score import (
     score_cover_letter,
 )
 from blastjob.core.coverage_run import coverage_gaps_for, render_gaps_md
-from blastjob.core.paths import application_dir, name_token, person_slug, resolve_role_slug
+from blastjob.core.paths import application_dir, document_token, person_slug, resolve_role_slug
 from blastjob.core.research_facts import distill_research, facts_block
 from blastjob.core.scoring import parse_score as _parse_score
 from blastjob.core.scoring import render_score_md as _render_score_md
@@ -145,9 +145,10 @@ async def run_build(
     # build professional, self-describing file stems: {Person}_Resume_-_{Co}_{Role}.
     out_dir = application_dir(out_root, company)
     person = person_slug(_history_name(work_history_md))
-    co_tok, role_tok = name_token(company), name_token(role)
-    resume_stem = f"{person}_Resume_-_{co_tok}_{role_tok}"
-    cover_stem = f"{person}_Cover_Letter_-_{co_tok}_{role_tok}"
+    # Capped so every document fits an upload form's name limit (issue #19).
+    token = document_token(company, role)
+    resume_stem = f"{person}_Resume_-_{token}"
+    cover_stem = f"{person}_Cover_Letter_-_{token}"
     # Collision-safe: "VP, IT" and "VP IT" slugify identically, and this folder
     # is shared across every role at this company today, so a bare slugify let a
     # second role silently overwrite the first's sidecars.

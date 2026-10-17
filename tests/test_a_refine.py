@@ -11,7 +11,7 @@ import pytest
 
 from blastjob.core import quarantine as qz
 from blastjob.core.packet_verify import PacketNotQuarantinedError
-from blastjob.core.paths import name_token, person_slug
+from blastjob.core.paths import document_token, person_slug
 from blastjob.core.refine import run_refine_detailed
 from blastjob.core.refine_files import RefineBusyError, lease
 from blastjob.llm.cost import CostTracker
@@ -24,7 +24,7 @@ PERSON = person_slug("Jane Doe")
 
 
 def _stem(kind: str, role: str, company: str = "Acme") -> str:
-    return f"{PERSON}_{kind}_-_{name_token(company)}_{name_token(role)}"
+    return f"{PERSON}_{kind}_-_{document_token(company, role)}"
 
 
 VP, CIO = _stem("Resume", "VP IT"), _stem("Resume", "CIO")

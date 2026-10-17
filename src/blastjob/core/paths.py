@@ -18,6 +18,109 @@ def name_token(text: str) -> str:
     return re.sub(r"[\s-]+", "_", cleaned)[:48].strip("_") or "Unknown"
 
 
+# Indeed refuses an upload whose name is 90+ characters (issue #19); 80 leaves room
+# for stricter boards. The longest uploadable name is `{person}_Resume_-_{token}
+# _ATS.ats.txt` (person + 22 + token), so a 40-character token keeps every
+# document at or under 80 for a person slug of up to 18 characters.
+DOCUMENT_TOKEN_MAX = 40
+_HASH_LEN = 4
+_COMPANY_SUFFIXES = frozenset(
+    "inc incorporated corp corporation llc ltd co company plc lp llp".split()
+)
+_FILLER_WORDS = frozenset("of and the for remote hybrid onsite".split())
+# Applied in order; whole words only. The second tier runs only when the first
+# plus a shorter company still does not fit.
+_ROLE_ABBREVIATIONS = (
+    ("chief information security officer", "CISO"),
+    ("chief information officer", "CIO"),
+    ("chief technology officer", "CTO"),
+    ("chief operating officer", "COO"),
+    ("chief executive officer", "CEO"),
+    ("chief financial officer", "CFO"),
+    ("executive vice president", "EVP"),
+    ("senior vice president", "SVP"),
+    ("vice president", "VP"),
+    ("information technology", "IT"),
+    ("senior", "Sr"),
+)
+_ROLE_ABBREVIATIONS_TIGHT = (
+    ("director", "Dir"),
+    ("technology", "Tech"),
+    ("information", "Info"),
+    ("management", "Mgmt"),
+    ("manager", "Mgr"),
+    ("operations", "Ops"),
+    ("infrastructure", "Infra"),
+    ("engineering", "Eng"),
+)
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in re.split(r"[\s_-]+", re.sub(r"[^\w\s-]", " ", text)) if w]
+
+
+def _company_words(company: str) -> list[str]:
+    words = _words(company)
+    while len(words) > 1 and words[-1].lower() in _COMPANY_SUFFIXES:
+        words.pop()
+    if len(words) > 1 and words[0].lower() == "the":
+        words.pop(0)
+    return words
+
+
+def _abbreviate(text: str, table: tuple[tuple[str, str], ...]) -> str:
+    for phrase, short in table:
+        text = re.sub(rf"\b{phrase}\b", short, text, flags=re.IGNORECASE)
+    return text
+
+
+def _role_words(role: str, *, tight: bool) -> list[str]:
+    text = _abbreviate(re.sub(r"\([^)]*\)", " ", role), _ROLE_ABBREVIATIONS)
+    if tight:
+        text = _abbreviate(text, _ROLE_ABBREVIATIONS_TIGHT)
+    return [w for w in _words(text) if w.lower() not in _FILLER_WORDS]
+
+
+def document_token(company: str, role: str) -> str:
+    """The `{Co}_{Role}` part of a packet document's name, at most
+    DOCUMENT_TOKEN_MAX characters.
+
+    A token that already fits is returned unchanged, so packets named before
+    this cap keep their names. Otherwise: drop company legal suffixes and role
+    parentheticals, abbreviate title words, drop filler, then drop trailing
+    company words (safe: a packet folder holds one company). Only a cut into
+    the role itself is lossy, and it carries a hash of the raw company + role
+    so two roles at one company never share a name."""
+    full = f"{name_token(company)}_{name_token(role)}"
+    if len(full) <= DOCUMENT_TOKEN_MAX:
+        return full
+    company_words = _company_words(company) or ["Unknown"]
+    for tight in (False, True):
+        role_words = _role_words(role, tight=tight) or _words(role)
+        for keep in range(len(company_words), 0, -1):
+            token = "_".join(company_words[:keep] + role_words)
+            if len(token) <= DOCUMENT_TOKEN_MAX:
+                return token
+    # Hash the raw text, not `full`: name_token cuts at 48 characters, so two
+    # roles that differ past that point share a legacy token.
+    raw = f"{company}\x00{role}".encode()
+    digest = hashlib.sha256(raw).hexdigest()[:_HASH_LEN]
+    cut = token[: DOCUMENT_TOKEN_MAX - _HASH_LEN - 1].rstrip("_")
+    return f"{cut}_{digest}"
+
+
+def document_tokens(company: str, role: str) -> tuple[str, ...]:
+    """Every token a packet document for this company+role may carry: the
+    capped one and, for packets built before the cap, the uncapped one."""
+    legacy = f"{name_token(company)}_{name_token(role)}"
+    return tuple(dict.fromkeys((document_token(company, role), legacy)))
+
+
+def document_tokens_regex(company: str, role: str) -> str:
+    """`document_tokens` as one regex alternation group, each token escaped."""
+    return "(?:" + "|".join(re.escape(t) for t in document_tokens(company, role)) + ")"
+
+
 def person_slug(full_name: str) -> str:
     """'Alexander R. Rivera' -> 'Alexander_Rivera' (first + last, drop middle)."""
     parts = [p for p in re.sub(r"[^\w\s]", "", full_name).split() if len(p) > 1]

@@ -44,7 +44,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from blastjob.core.paths import name_token
+from blastjob.core.paths import document_tokens_regex
 
 log = logging.getLogger(__name__)
 
@@ -356,7 +356,7 @@ def _legacy_names(packet_dir: Path, slug: str, artifacts: list[str]) -> set[str]
     wanted = [kinds[a] for a in artifacts if a in kinds]
     if not wanted:
         return set()
-    tokens = re.escape(f"{name_token(company)}_{name_token(role)}")
+    tokens = document_tokens_regex(company, role)
     pattern = re.compile(
         rf"_(?:{'|'.join(wanted)})_-_{tokens}(?:_ATS)?(?:\.v\d+)?(?:\.ats)?\.[A-Za-z]+$"
     )

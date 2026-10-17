@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 
-from blastjob.core.paths import name_token, resolve_role_slug
+from blastjob.core.paths import document_tokens_regex, resolve_role_slug
 from blastjob.core.quarantine import quarantined_files
 
 log = logging.getLogger(__name__)
@@ -223,7 +223,7 @@ def _document_pattern(company: str, role: str) -> re.Pattern[str]:
     """Resume/cover-letter files for exactly this company+role token pair --
     `_VP_IT` must not swallow `_VP_IT_and_Data` -- including the `_ATS` export
     and refine's archived `.vN.md` rotations."""
-    tokens = re.escape(f"{name_token(company)}_{name_token(role)}")
+    tokens = document_tokens_regex(company, role)
     return re.compile(
         rf"_(?:Resume|Cover_Letter)_-_{tokens}(?:_ATS)?(?:\.v\d+)?(?:\.ats)?\.[A-Za-z]+$"
     )

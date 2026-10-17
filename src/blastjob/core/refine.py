@@ -36,7 +36,7 @@ from blastjob.core.packet_report import (
     PacketState,
     Severity,
 )
-from blastjob.core.paths import name_token, resolve_role_slug
+from blastjob.core.paths import document_tokens_regex, resolve_role_slug
 from blastjob.core.research_facts import distill_research
 from blastjob.core.scoring import render_score_md, score_resume
 from blastjob.exporters import ats, docx, markdown, pdf
@@ -191,7 +191,7 @@ def locate(run_dir: Path, company: str | None, role: str | None) -> Target:
         built_role = str(data.get("role") or role)
     except (OSError, ValueError):
         pass
-    tokens = re.escape(f"{name_token(built_company)}_{name_token(built_role)}")
+    tokens = document_tokens_regex(built_company, built_role)
     pattern = re.compile(rf"^.+_Resume_-_{tokens}\.md$")
     for folder, held in ((run_dir, False), (run_dir / _QUARANTINE_DIR, True)):
         found = _find_in(folder, pattern)

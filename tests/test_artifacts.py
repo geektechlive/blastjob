@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from blastjob.core import artifacts
-from blastjob.core.paths import application_dir, name_token, person_slug, resolve_role_slug
+from blastjob.core.paths import application_dir, document_token, person_slug, resolve_role_slug
 from blastjob.db import client as dbc
 from blastjob.exporters import ats, markdown
 from blastjob.models.config import BlastJobConfig
@@ -51,8 +51,8 @@ def _job(conn, ext: str = "e1", title: str = ROLE) -> int:
 
 def _stems(role: str) -> tuple[str, str]:
     person = person_slug("Alex J. Rivera")
-    co, ro = name_token(COMPANY), name_token(role)
-    return f"{person}_Resume_-_{co}_{ro}", f"{person}_Cover_Letter_-_{co}_{ro}"
+    token = document_token(COMPANY, role)
+    return f"{person}_Resume_-_{token}", f"{person}_Cover_Letter_-_{token}"
 
 
 def _fake_build(out_dir: Path, role: str, company: str = COMPANY) -> list[Path]:
