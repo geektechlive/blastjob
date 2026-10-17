@@ -13,7 +13,10 @@ whole description. Steps, cheapest first:
    stored link), full text only, no score floor.
 3. NETWORK (opt-in, request-metered): kept rows always, undecided rows at or
    above `min_score`; agencies and company-less rows are skipped before any
-   request is spent.
+   request is spent. Undecided copies of a role already applied to (same
+   cluster as an application) are skipped in whole-table runs: they are hidden
+   behind the application everywhere. Identical searches (same company, title,
+   region) run once per run and are shared.
 3b. Adoptions proven only over the network (a posting we do not hold) are
    re-verified, capped and budgeted, oldest first; a refusal reverts.
 4. A stored non-manual link not held in the DB is re-verified and its text read.
@@ -198,6 +201,8 @@ class _Ctx:
     skip_search: Collection[int]
     budget: RequestBudget
     deps: LinkDeps | None
+    applied_clusters: frozenset[int] = frozenset()
+    searches: dict[tuple[str, str, str], cl.Match | None] = field(default_factory=dict)
     index: dict = field(default_factory=dict)
     out: list[RowOutcome] = field(default_factory=list)
     upgraded: list[int] = field(default_factory=list)
@@ -550,6 +555,8 @@ def _due(ctx: _Ctx, row: sqlite3.Row) -> bool:
 def _gate(ctx: _Ctx, row: sqlite3.Row) -> str:
     """Why this row gets no network work ('' = eligible). Checked before any
     request is spent."""
+    if row["review_state"] != "kept" and row["cluster_id"] in ctx.applied_clusters:
+        return "applied_role"
     if row["review_state"] != "kept" and ctx.min_score is not None:
         score = row["alignment_score"]
         if score is None:
@@ -646,14 +653,23 @@ async def _from_stored(ctx: _Ctx, row: sqlite3.Row, snap: dbc.JdSnapshot, link: 
 async def _from_search(ctx: _Ctx, row: sqlite3.Row, snap: dbc.JdSnapshot) -> None:
     assert ctx.deps is not None
     company, title, region = row["company"] or "", row["title"] or "", row["geo_region"] or ""
-    try:
-        match = await cl.resolve_match(company, title, region, ctx.deps)
-    except BudgetExhausted:
-        raise
-    except Exception as e:  # noqa: BLE001 -- a failed search proves nothing either way
-        log.warning("employer-jd: search failed for job %s (%s)", row["id"], type(e).__name__)
-        _no_text(ctx, row, "transient", "transient", via="search", link=None, note=type(e).__name__)
-        return
+    key = (company, title, region)
+    if key in ctx.searches:
+        # The same inputs give the same answer; each row still runs its own
+        # rejection check, verification and compare-and-set below.
+        match = ctx.searches[key]
+    else:
+        try:
+            match = await cl.resolve_match(company, title, region, ctx.deps)
+        except BudgetExhausted:
+            raise
+        except Exception as e:  # noqa: BLE001 -- a failed search proves nothing either way
+            log.warning("employer-jd: search failed for job %s (%s)", row["id"], type(e).__name__)
+            _no_text(
+                ctx, row, "transient", "transient", via="search", link=None, note=type(e).__name__
+            )
+            return
+        ctx.searches[key] = match
     if match is None:
         _no_text(ctx, row, "no_match", "no_match", via="search", link=None)
         return
@@ -688,6 +704,16 @@ async def _network_row(ctx: _Ctx, row: sqlite3.Row) -> None:
         await _from_stored(ctx, row, snap, link)
     else:
         await _from_search(ctx, row, snap)
+
+
+def _applied_clusters(conn: sqlite3.Connection) -> frozenset[int]:
+    """Clusters holding an application (`role_clusters.has_application`). Their
+    undecided members are hidden behind it in every list and the digest."""
+    rows = conn.execute(
+        "SELECT cluster_id, review_state, application_state, applied_at FROM jobs "
+        "WHERE review_state='kept' AND cluster_id IS NOT NULL"
+    ).fetchall()
+    return frozenset(r["cluster_id"] for r in rows if rc.has_application(r))
 
 
 def _reverify_link(row: sqlite3.Row) -> Link | None:
@@ -789,7 +815,9 @@ async def run_upgrade(
     runs through one `RequestBudget(request_limit)` (request UNITS, see
     `closure_links.budgeted`); when it is spent the
     remaining rows are 'cap'. `skip_search_ids` are rows closure already searched
-    this run. The caller re-scores `upgraded`, `reverted` and `stale_kept`."""
+    this run. A whole-table run (`job_ids` None) skips undecided copies of a role
+    already applied to; an explicit `job_ids` request never does. The caller
+    re-scores `upgraded`, `reverted` and `stale_kept`."""
     when = now or datetime.now()
     budget = RequestBudget(request_limit)
     live = cl.budgeted(deps or cl.default_deps(), budget) if network else None
@@ -806,6 +834,7 @@ async def run_upgrade(
         skip_search=skip_search_ids,
         budget=budget,
         deps=live,
+        applied_clusters=_applied_clusters(conn) if job_ids is None else frozenset(),
     )
     ctx.index = cl.authoritative_index(conn)
     _revalidate_all(ctx, job_ids)

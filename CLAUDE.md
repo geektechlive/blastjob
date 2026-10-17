@@ -706,6 +706,11 @@ capped) and must name the job title early (`not_a_jd` otherwise).
   key (optionally plus digits); closure's own page links keep the looser prefix rule.
   Network lookups only for kept rows and undecided rows scoring
   >= `discovery.employer_jd_min_score` (60); agencies and empty company keys never.
+  A search runs once per run for identical (company, title, region) inputs and is
+  shared (each row still verifies and CASes on its own; errors are never reused).
+  Daily and backfill runs skip undecided copies in a cluster holding an application
+  (`applied_role`; no lookup record, so a split re-enables them); kept rows and the
+  cockpit button are never skipped.
 - **Daily:** free copies run after discovery and BEFORE matching (scored once, on the
   full text); the network step runs after closure with the same `default_deps()` (board
   fetches shared) and skips rows closure searched; changed rows are re-scored in one
