@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import re
 from collections.abc import Iterator
 from html.parser import HTMLParser
 from typing import Any
@@ -30,7 +31,7 @@ import httpx
 
 from blastjob.core.closure_links import Link, _compact, match_posting
 from blastjob.core.company import company_key
-from blastjob.core.page_fetch import Fetch, Search, fetchable, host_of, is_aggregator_host
+from blastjob.core.page_fetch import Fetch, Page, Search, fetchable, host_of, is_aggregator_host
 from blastjob.core.page_fetch import jina_search as _jina_search
 from blastjob.core.page_fetch import safe_get as _safe_get
 from blastjob.discovery.base import RawPosting
@@ -165,24 +166,45 @@ def _tenant(url: str) -> str:
     return ""
 
 
-def ats_binding(url: str, html: str, company: str) -> str:
+def _tenant_matches(tenant: str, key: str, *, exact: bool) -> bool:
+    """Does an ATS tenant belong to the company key? The closure rule (`exact`
+    False) accepts any tenant that STARTS with the key, which is enough to prove a
+    posting open or gone. Adopting a page's TEXT needs more: a lookalike tenant
+    ("acmeholdings", "acmeevil") must not pass as "acme". So `exact` accepts the
+    key itself, optionally followed by digits (JazzHR names tenants "acme1")."""
+    if not tenant:
+        return False
+    if not exact:
+        return tenant.startswith(key)
+    return re.fullmatch(re.escape(key) + r"\d*", tenant) is not None
+
+
+def ats_binding(url: str, html: str, company: str, *, exact: bool = False) -> str:
     """The ATS host binding this page to `company` (the page host itself or a
-    <form action> host whose tenant starts with the company key), or ""."""
+    <form action> host whose tenant starts with the company key; with `exact`,
+    whose tenant IS the key, see `_tenant_matches`), or ""."""
     key = _compact(company_key(company or ""))
     if not key:
         return ""
     for candidate in (url, *(urljoin(url, a) for a in _parse(html).form_actions)):
-        tenant = _compact(_tenant(candidate))
-        if tenant and tenant.startswith(key):
+        if _tenant_matches(_compact(_tenant(candidate)), key, exact=exact):
             return host_of(candidate)
     return ""
 
 
 def trusted_employer_page(
-    url: str, html: str, posting: dict, company: str, title: str, region: str
+    url: str,
+    html: str,
+    posting: dict,
+    company: str,
+    title: str,
+    region: str,
+    *,
+    exact_tenant: bool = False,
 ) -> bool:
-    """Is `posting` on this page the company's own, confidently this title?"""
-    if is_aggregator_host(host_of(url)) or not ats_binding(url, html, company):
+    """Is `posting` on this page the company's own, confidently this title?
+    `exact_tenant` is the stricter binding used before ADOPTING the text."""
+    if is_aggregator_host(host_of(url)) or not ats_binding(url, html, company, exact=exact_tenant):
         return False
     postings = job_postings(html)
     key = company_key(company or "")
@@ -220,13 +242,74 @@ async def check_page(
         return False if host_of(page.url) == host_of(link.url) else None
     if page.status != httpx.codes.OK:
         return None
+    p = _verified(page, link, company, title, region)
+    if p is None:
+        return None
+    return None if _expired(p, today or datetime.date.today()) else True
+
+
+def _linked_posting(page: Page, link: Link) -> dict | None:
+    """The page's JobPosting whose canonical url is the stored link."""
     for p in job_postings(page.html):
-        if canonical_url(p, page.url) != link.external_id:
-            continue
-        if not trusted_employer_page(page.url, page.html, p, company, title, region):
-            return None
-        return None if _expired(p, today or datetime.date.today()) else True
+        if canonical_url(p, page.url) == link.external_id:
+            return p
     return None
+
+
+def _verified(
+    page: Page, link: Link, company: str, title: str, region: str, *, exact_tenant: bool = False
+) -> dict | None:
+    """The linked JobPosting, only if it passes every trust check for this
+    company, title and region (the shared core of check_page and
+    page_description). None = absent or untrusted."""
+    p = _linked_posting(page, link)
+    if p is None:
+        return None
+    trusted = trusted_employer_page(
+        page.url, page.html, p, company, title, region, exact_tenant=exact_tenant
+    )
+    return p if trusted else None
+
+
+async def page_description(
+    link: Link,
+    company: str,
+    title: str,
+    region: str,
+    *,
+    fetch: Fetch | None = None,
+    today: datetime.date | None = None,
+) -> tuple[str | None, str]:
+    """(text, reason) for the JD on an employer page, after re-running every
+    trust check of `check_page`. The text is THAT trusted posting's own
+    description, never the first posting on the page. Reasons: 'ok', 'gone'
+    (the host says 404/410, the posting left the page, or it expired),
+    'company_mismatch', 'title_drift', 'no_text'. Not normalized (the text is
+    usually HTML). Network errors raise."""
+    page = await (fetch or _safe_get)(link.url)
+    if page is None or page.cross_host:
+        return None, "no_text"
+    if page.status in GONE_STATUSES:
+        gone = host_of(page.url) == host_of(link.url)
+        return None, "gone" if gone else "no_text"
+    if page.status != httpx.codes.OK:
+        return None, "no_text"
+    p = _linked_posting(page, link)
+    if p is None or _expired(p, today or datetime.date.today()):
+        return None, "gone"
+    if _verified(page, link, company, title, region, exact_tenant=True) is None:
+        return None, _untrusted_reason(page, p, company)
+    text = p.get("description")
+    return (text, "ok") if isinstance(text, str) and text.strip() else (None, "no_text")
+
+
+def _untrusted_reason(page: Page, posting: dict, company: str) -> str:
+    """Why a linked posting failed the trust test: a different employer (or no
+    ATS tenant binding the page to this one), else the title moved."""
+    employer_ok = company_key(org_name(posting)) == company_key(company or "")
+    if not employer_ok or not ats_binding(page.url, page.html, company, exact=True):
+        return "company_mismatch"
+    return "title_drift"
 
 
 async def find_page_link(

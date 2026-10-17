@@ -1,14 +1,22 @@
 {% set is_snippet = is_jd_snippet(job.raw_jd, job.jd_pasted_at) %}
+{% set provenance = jd_provenance(job) %}
 <div class="detail-block" id="jd-block">
   <h3>Job description
     {% if is_snippet %}<span class="jd-note">— only a snippet; scoring and tailoring can't see the rest</span>
+    {% elif provenance %}
+      {% set from_link = jd_provenance_url(job) | safe_url %}
+      <span class="jd-note jd-employer">— {% if from_link %}<a class="ext" href="{{ from_link }}" target="_blank" rel="noopener noreferrer">full description from the employer's posting ({{ provenance }}, fetched {{ (job.jd_fetched_at or '')[:10] }})</a>{% else %}full description from the employer's posting ({{ provenance }}, fetched {{ (job.jd_fetched_at or '')[:10] }}){% endif %}</span>
     {% elif job.jd_pasted_at %}<span class="jd-note jd-pasted">— pasted {{ job.jd_pasted_at[:10] }}</span>{% endif %}
   </h3>
   <pre class="jd">{{ job.raw_jd }}</pre>
-  {% set full = job.url | safe_url %}
+  {# The employer's own posting beats the aggregator's page when we know it. #}
+  {% set full = (job.employer_link_url | safe_url) or (job.url | safe_url) %}
   {% if is_snippet %}
     {% if full %}
       <a class="ext" href="{{ full }}" target="_blank" rel="noopener noreferrer">open the full posting &rarr;</a>
+    {% endif %}
+    {% if not ejd_refusal(job) %}
+      <button type="button" class="jd-find-employer" hx-post="/jobs/{{ job.id }}/employer-jd" hx-target="#jd-block" hx-swap="outerHTML">Find the employer's posting</button>
     {% endif %}
     <form class="jd-paste-form" hx-post="/jobs/{{ job.id }}/jd" hx-target="#jd-block" hx-swap="outerHTML">
       <label for="jd-{{ job.id }}">Paste the full description</label>

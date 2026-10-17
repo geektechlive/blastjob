@@ -34,11 +34,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from blastjob import config as cfg_mod
-from blastjob import daily_tools
+from blastjob import daily_employer_jd, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
-from blastjob.core import closure
-from blastjob.core.closure_links import is_authoritative
+from blastjob.core import closure, closure_links
+from blastjob.core.closure_links import LinkDeps, is_authoritative
 from blastjob.daily_tools import recluster_cli
 from blastjob.db import client as dbc
 from blastjob.llm.cost import CostTracker
@@ -47,6 +47,7 @@ from blastjob.web.apply_link import ApplyLink, apply_links_for
 from blastjob.web.stage_lists import followups_due
 
 if TYPE_CHECKING:
+    from blastjob.core.closure import ClosureResult
     from blastjob.discovery.replies import ReplyMatch
 
 log = logging.getLogger(__name__)
@@ -440,6 +441,10 @@ async def run_daily(
         log.exception("discovery pipeline failed")
         res.errors["discovery"] = applog.redact(f"{type(e).__name__}: {e}")
 
+    # Free sibling copies land BEFORE matching, so a copied row is scored once, on
+    # the full text. Local only: no request, no LLM call.
+    free_copy = await daily_employer_jd.free_copy_step(cfg, conn, res, dry_run=dry_run)
+
     if score:
         # Only never-scored jobs: re-scoring hundreds of resolved postings every
         # morning burned 95 minutes of CLI time on 2026-09-05 for no new signal.
@@ -472,7 +477,13 @@ async def run_daily(
             log.exception("matching pipeline failed")
             res.errors["matching"] = applog.redact(f"{type(e).__name__}: {e}")
 
-    await _closure_pass(cfg, conn, res, shadow=dry_run)
+    # One deps object for closure and the employer-description step, so a board
+    # fetched by one is cached for the other.
+    shared_deps = closure_links.default_deps()
+    closure_res = await _closure_pass(cfg, conn, res, shadow=dry_run, deps=shared_deps)
+    await daily_employer_jd.lookup_step(
+        cfg, conn, res, closure_res, shared_deps, free=free_copy, dry_run=dry_run, score=score
+    )
     await _replies_pass(cfg, conn, res, dry_run=dry_run)
 
     jobs = pending_jobs(conn)
@@ -528,8 +539,13 @@ async def run_daily(
 
 
 async def _closure_pass(
-    cfg: BlastJobConfig, conn: sqlite3.Connection, res: DailyResult, *, shadow: bool = False
-) -> None:
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    res: DailyResult,
+    *,
+    shadow: bool = False,
+    deps: LinkDeps | None = None,
+) -> ClosureResult | None:
     """Posting closure, after discovery + matching so it sees today's
     source_state. Never sinks the run: a failure is reported like a source error.
 
@@ -541,12 +557,12 @@ async def _closure_pass(
     try:
         # A dry run must not move jobs even with closure_auto on (it still
         # records verdicts and links, like --closure-report).
-        cres = await closure.run_closure(cfg, conn, shadow=shadow)
+        cres = await closure.run_closure(cfg, conn, shadow=shadow, deps=deps)
     except Exception as e:
         conn.rollback()
         log.exception("closure pass failed")
         res.errors["closure"] = f"{type(e).__name__}: {e}"
-        return
+        return None
     res.closed_postings = list(cres.closed_kept)
     log.info(
         "closure: checked %d linked %d moved %d filled %d newly closed kept %d (auto=%s)",
@@ -557,6 +573,7 @@ async def _closure_pass(
         len(cres.closed_kept),
         cfg.discovery.closure_auto,
     )
+    return cres
 
 
 async def _replies_pass(
@@ -601,14 +618,22 @@ async def closure_report(cfg: BlastJobConfig, conn: sqlite3.Connection) -> list[
     `would_move_to`: what each row becomes the first run after closure_auto is
     switched on (shadow-stamped closures fire in bulk on that day)."""
     secrets_mod.load_secrets_env()
-    await closure.run_closure(cfg, conn, shadow=True)
+    cres = await closure.run_closure(cfg, conn, shadow=True)
+    would_revert = set(cres.would_revert_jd)
     rows = conn.execute(
         "SELECT id, company, title, source, review_state, employer_link_source, "
         "employer_link_external_id, posting_check, posting_check_manual, posting_closed_at, "
         "application_state FROM jobs WHERE review_state='kept' ORDER BY id"
     ).fetchall()
     now = dt.datetime.now()
-    return [{**dict(r), "would_move_to": closure.would_move_to(r, now=now)} for r in rows]
+    return [
+        {
+            **dict(r),
+            "would_move_to": closure.would_move_to(r, now=now),
+            "would_revert_jd": r["id"] in would_revert,
+        }
+        for r in rows
+    ]
 
 
 def format_closure_report(rows: list[dict]) -> str:
@@ -624,6 +649,7 @@ def format_closure_report(rows: list[dict]) -> str:
         lines.append(
             f"{r['id']} | {r['company']} | {r['title']} | {r['source']} | {link} | "
             f"{check} | {r['application_state'] or '-'} | {r['would_move_to']}"
+            + (" (employer description would revert)" if r.get("would_revert_jd") else "")
         )
     return "\n".join(lines)
 

@@ -35,9 +35,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from blastjob.core.agencies import is_agency
-from blastjob.core.closure_links import is_authoritative
+from blastjob.core.closure_links import Link, employer_jd_ref, is_authoritative
 from blastjob.core.company import company_key
 from blastjob.core.titles import normalize_role_title
+from blastjob.db import client as dbc
 from blastjob.discovery.textutil import normalize_region
 from blastjob.matching.geo import classify_location, haversine_miles, town_centroid
 from blastjob.models.config import DiscoveryConfig
@@ -319,19 +320,22 @@ def merge_jobs(conn: sqlite3.Connection, a: int, b: int) -> str:
 
 def split_pair(
     conn: sqlite3.Connection, keep: int, other: int, radius_miles: float, geo: DiscoveryConfig
-) -> None:
+) -> list[int]:
     """The user says `keep` and `other` are not the same role: record it, and if
     they share a cluster, move `other` out with whatever still belongs with it
     (members linked to it by the auto rule or a 'same' decision, not through
     `keep`). If `keep` is reachable from `other` some other way, `other` moves
-    alone; the recorded 'different' then blocks any merge back. Commits."""
+    alone; the recorded 'different' then blocks any merge back. Commits, once, at
+    the end: the description reverts (see `clear_links_between`) share the
+    caller's transaction, so a failure anywhere rolls all of it back. Returns the
+    ids whose adopted description was reverted (they need a re-score)."""
     record_decision(conn, keep, other, DIFFERENT)
-    clear_links_between(conn, keep, other)
+    reverted = clear_links_between(conn, keep, other)
     members = _members(conn, keep)
     by_id = {int(m["id"]): m for m in members}
     if other not in by_id or len(members) < 2:
         conn.commit()
-        return
+        return reverted
     decided = decisions(conn)
     component = _component(other, by_id, decided, radius_miles, geo)
     # When `keep` is still reachable from `other` (keep~z~other), only `other`
@@ -347,15 +351,19 @@ def split_pair(
         (target, *sorted(moving)),
     )
     conn.commit()
+    return reverted
 
 
-def clear_links_between(conn: sqlite3.Connection, a: int, b: int) -> None:
+def clear_links_between(conn: sqlite3.Connection, a: int, b: int) -> list[int]:
     """Drop the employer link each of two jobs holds TO the other. A stored
     sibling link was proven by the pairing the user just rejected, so it must not
-    keep standing in for the posting. The user's manual link is display-only data
-    and is never touched. Does not commit."""
+    keep standing in for the posting; neither may a description adopted from the
+    other job's posting, which is reverted too (both ways). The user's manual
+    link is display-only data and is never touched. Returns the ids whose
+    description was reverted. Does not commit: the caller's transaction owns it."""
     from blastjob.web.apply_link import MANUAL_LINK
 
+    reverted: list[int] = []
     for job, target in ((a, b), (b, a)):
         conn.execute(
             "UPDATE jobs SET employer_link_source='', employer_link_external_id='', "
@@ -364,6 +372,13 @@ def clear_links_between(conn: sqlite3.Connection, a: int, b: int) -> None:
             "(SELECT source, external_id FROM jobs WHERE id=?)",
             (job, MANUAL_LINK, target),
         )
+        held = conn.execute("SELECT source, external_id FROM jobs WHERE id=?", (target,)).fetchone()
+        if held is None:
+            continue
+        ref = employer_jd_ref(Link(held["source"], held["external_id"]))
+        if dbc.revert_employer_jd(conn, job, ref=ref):
+            reverted.append(job)
+    return reverted
 
 
 def _component(

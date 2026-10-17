@@ -63,8 +63,13 @@ def _get(row: Any, key: str) -> str:
         return ""
 
 
+def board_name(source: str) -> str:
+    """ "Workday" / "Greenhouse" / ... for an ATS source or link source, else ""."""
+    return next((v for k, v in _BOARD_NAMES.items() if source.startswith(k)), "")
+
+
 def _board_label(source: str) -> str:
-    name = next((v for k, v in _BOARD_NAMES.items() if source.startswith(k)), "")
+    name = board_name(source)
     return f"{EMPLOYER_SITE} ({name})" if name else EMPLOYER_SITE
 
 

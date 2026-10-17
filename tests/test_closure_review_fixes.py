@@ -260,6 +260,26 @@ def test_closure_report_has_a_would_move_to_column():
     assert text.splitlines()[1].endswith("| posting_closed")
 
 
+def test_closure_report_names_a_description_it_would_revert():
+    """Shadow closure no longer reverts an adopted employer description; the report
+    says which kept rows WOULD lose it, so the owner sees it before a real run."""
+    row = {
+        "id": 8,
+        "company": "Fabrikam Equipment",
+        "title": "Chief Officer",
+        "source": "adzuna",
+        "employer_link_source": "greenhouse:fabrikam",
+        "employer_link_external_id": "12",
+        "posting_check": "unverifiable",
+        "posting_check_manual": 0,
+        "application_state": "",
+        "would_move_to": "",
+        "would_revert_jd": True,
+    }
+    line = daily.format_closure_report([row]).splitlines()[1]
+    assert "employer description would revert" in line
+
+
 # --- 5: secrets are loaded for the closure pass, dry run included ------------
 
 

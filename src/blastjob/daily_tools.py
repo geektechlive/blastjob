@@ -11,14 +11,22 @@ Each flag prints a report and exits; none sends anything or records a run.
 - `--refetch-workday-locations-report` / `--refetch-workday-locations`: re-read
   geo-rejected Workday rows for `additionalLocations`
   (`discovery.workday_locations`); apply re-scores the rows it changed.
+- `--employer-jd-report` / `--employer-jd [--min-score N] [--max-requests N]`:
+  look up the employer's full description for aggregator snippet rows
+  (`core.employer_jd`); apply stores it and re-scores. The report writes nothing.
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sqlite3
 
+from blastjob.core.closure_links import LinkDeps
 from blastjob.models.config import BlastJobConfig
+
+# Request cap for one hand-run backfill (the daily step has its own setting).
+EMPLOYER_JD_BACKFILL_REQUESTS = 1000
 
 
 def recluster_cli(cfg: BlastJobConfig, conn: sqlite3.Connection, *, apply: bool) -> str:
@@ -78,6 +86,74 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
         action="store_true",
         help=f"{wl_help}; stores them, then re-scores the changed rows",
     )
+    ej_help = "look up the employer's full description for aggregator snippet rows (issue #17)"
+    ap.add_argument(
+        "--employer-jd-report",
+        action="store_true",
+        help=f"report: {ej_help}; makes the lookups, writes nothing",
+    )
+    ap.add_argument(
+        "--employer-jd",
+        action="store_true",
+        help=f"{ej_help}; stores the text, then re-scores the changed rows",
+    )
+    ap.add_argument(
+        "--min-score",
+        type=int,
+        default=None,
+        metavar="N",
+        help="--employer-jd: lowest score an undecided row needs to be looked up "
+        "(default discovery.employer_jd_min_score)",
+    )
+    ap.add_argument(
+        "--max-requests",
+        type=int,
+        default=EMPLOYER_JD_BACKFILL_REQUESTS,
+        metavar="N",
+        help="--employer-jd: request-unit cap for this run (a board probe costs several units)",
+    )
+
+
+async def employer_jd_cli(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    *,
+    apply: bool,
+    min_score: int | None,
+    max_requests: int,
+    deps: LinkDeps | None = None,
+) -> str:
+    """Backfill the employer's description. The report makes the lookups but
+    writes nothing; `apply` stores them, then re-scores the upgraded, reverted
+    and stale kept rows. No daily_runs row, nothing sent."""
+    from blastjob import secrets as secrets_mod
+    from blastjob.core import employer_jd
+    from blastjob.llm.cost import CostTracker
+    from blastjob.matching import rescore
+
+    secrets_mod.load_secrets_env()
+    res = await employer_jd.run_upgrade(
+        cfg,
+        conn,
+        deps=deps,
+        min_score=cfg.discovery.employer_jd_min_score if min_score is None else min_score,
+        network=True,
+        write=apply,
+        request_limit=max_requests,
+        respect_backoff=False,
+    )
+    report = employer_jd.format_report(res, applied=apply)
+    if not apply:
+        return report
+    cost = CostTracker()
+    ids = list(dict.fromkeys([*res.upgraded, *res.reverted, *res.stale_kept]))
+    counts = await rescore.rescore_jobs(cfg, conn, cost, ids)
+    done = counts.undecided + counts.kept
+    return (
+        f"{report}\n\nStored {len(res.upgraded)}, reverted {len(res.reverted)}; "
+        f"re-scored {done} ({len(counts.failed)} failed); "
+        f"{res.requests_used} requests used; cost ${cost.total_cost:.4f}"
+    )
 
 
 def refetch_workday_locations_cli(
@@ -125,4 +201,14 @@ def dispatch(args: argparse.Namespace, cfg: BlastJobConfig, conn: sqlite3.Connec
         return backfill.run(conn, apply=args.backfill_artifacts)
     if args.refetch_workday_locations_report or args.refetch_workday_locations:
         return refetch_workday_locations_cli(cfg, conn, apply=args.refetch_workday_locations)
+    if args.employer_jd_report or args.employer_jd:
+        return asyncio.run(
+            employer_jd_cli(
+                cfg,
+                conn,
+                apply=args.employer_jd,
+                min_score=args.min_score,
+                max_requests=args.max_requests,
+            )
+        )
     return None

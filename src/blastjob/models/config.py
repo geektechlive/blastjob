@@ -262,6 +262,16 @@ class DiscoveryConfig(BaseModel):
     # automatically. Manual "Posting closed"/"Still open" buttons work either way.
     closure_auto: bool = False
 
+    # Employer full-description lookup (core/employer_jd.py). Free copies from a
+    # sibling posting we already hold always run; this switch turns on the
+    # request-metered network step for aggregator snippet rows. Undecided rows
+    # are looked up only at or above `employer_jd_min_score`; kept rows always.
+    employer_jd_lookup: bool = False
+    employer_jd_min_score: int = Field(default=60, ge=0, le=100)
+    # Request UNITS per daily run (each metered call weighted by its worst-case HTTP
+    # fan-out, see closure_links.budgeted): about 15 board-only lookups.
+    employer_jd_daily_requests: int = 300
+
     @field_validator("home_state")
     @classmethod
     def _home_state_is_a_code(cls, state: str) -> str:

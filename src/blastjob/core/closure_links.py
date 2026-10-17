@@ -19,26 +19,35 @@ It is the last fallback, after the board path found nothing.
 from __future__ import annotations
 
 import asyncio
+import functools
+import json
 import os
 import re
 import sqlite3
+import threading
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
+from typing import Any
 
 import httpx
 
 from blastjob.core.company import company_key
+from blastjob.core.page_fetch import MAX_HOPS as PAGE_MAX_HOPS
+from blastjob.db import client as dbc
 from blastjob.discovery import resolve
 from blastjob.discovery.ashby import AshbyAdapter
 from blastjob.discovery.base import RawPosting
+from blastjob.discovery.dayforce import MAX_PAGES as DAYFORCE_MAX_PAGES
 from blastjob.discovery.dayforce import PAGE_SIZE as DAYFORCE_PAGE_SIZE
 from blastjob.discovery.dayforce import DayforceAdapter
 from blastjob.discovery.dayforce import parse_posting as dayforce_posting
 from blastjob.discovery.greenhouse import GreenhouseAdapter
+from blastjob.discovery.http import USER_AGENT
 from blastjob.discovery.lever import LeverAdapter
 from blastjob.discovery.resolve import BoardHit
-from blastjob.discovery.workday import WorkdayAdapter, presence_stub
+from blastjob.discovery.textutil import html_to_text, split_location
+from blastjob.discovery.workday import CLOSED_STATUS, WorkdayAdapter, presence_stub
 from blastjob.models.config import DiscoveryConfig
 
 # Sources whose own sync can prove a posting closed: a full board listing, or a
@@ -93,6 +102,8 @@ _FULL_BOARD_ATS: dict[str, _FullBoard] = {
     "ashby": AshbyAdapter,
 }
 _PROBE_TIMEOUT_S = 15
+# A Workday detail answer is read through this cap, like page_fetch's page bodies.
+MAX_DETAIL_BYTES = 2 * 1024 * 1024
 # Same-metro radius for cluster-sibling proof when the caller passes none.
 DEFAULT_RADIUS_MILES = DiscoveryConfig().commute_radius_miles
 
@@ -104,6 +115,12 @@ class Link:
     source: str
     external_id: str
     url: str = ""
+
+
+def employer_jd_ref(link: Link) -> tuple[str, str]:
+    """The (jd_source, jd_source_ref) provenance a description adopted over
+    `link` carries, so a revert can target exactly that adoption."""
+    return dbc.EMPLOYER_JD_PREFIX + link.source, link.external_id
 
 
 def is_authoritative(source: str | None) -> bool:
@@ -214,6 +231,9 @@ def _as_posting(r: sqlite3.Row) -> RawPosting:
     )
 
 
+posting_of_row = _as_posting  # public: employer_jd re-checks a held row's title
+
+
 def _overlaps(job: sqlite3.Row, posting: RawPosting) -> bool:
     """A candidate last seen before this job first appeared is an earlier
     posting of the same role, not this one; linking to it would close a live
@@ -267,6 +287,68 @@ def db_link(
 
 def _link_of(p: RawPosting) -> tuple[Link, str]:
     return Link(p.source, p.external_id, p.url), str(p.extra.get("source_state", ""))
+
+
+# --- stored links: write, veto, justify (the caller owns the transaction) ------------
+
+
+def save_link(conn: sqlite3.Connection, job_id: int, link: Link) -> int:
+    """Store `link` on the job; rows changed (0 or 1). Never overwrites the
+    user's manual link (see web/apply_link.MANUAL_LINK) or a job with a manual
+    posting verdict. Does not commit."""
+    from blastjob.web.apply_link import MANUAL_LINK  # late: it imports this module
+
+    cur = conn.execute(
+        "UPDATE jobs SET employer_link_source=?, employer_link_external_id=?, "
+        "employer_link_url=? WHERE id=? AND posting_check_manual=0 "
+        f"AND COALESCE(employer_link_source,'') <> '{MANUAL_LINK}'",
+        (link.source, link.external_id, link.url, job_id),
+    )
+    return cur.rowcount
+
+
+def rejected_link(conn: sqlite3.Connection, job_id: int, link: Link) -> bool:
+    """Is `link` a posting the user marked 'not the same role' for this job?"""
+    from blastjob.core import role_clusters as rc
+
+    other = conn.execute(
+        "SELECT id FROM jobs WHERE source=? AND external_id=?", (link.source, link.external_id)
+    ).fetchone()
+    if other is None:
+        return False
+    a, b = rc.pair_of(job_id, other["id"])
+    decided = conn.execute(
+        "SELECT decision FROM same_role_decisions WHERE job_a=? AND job_b=?", (a, b)
+    ).fetchone()
+    return decided is not None and decided["decision"] == rc.DIFFERENT
+
+
+def link_still_proof(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    held_id: int,
+    radius_miles: float,
+    geo: DiscoveryConfig,
+) -> bool:
+    """A stored link to a posting we hold must still be justified. A link made
+    through a cluster sibling stands only while `sibling_is_proof` does: the user
+    may have said 'not the same role' since (or the cluster moved). A link to a
+    posting outside the cluster with no decision between them was not a sibling
+    link (it came from a board match) and is judged by the network path alone.
+    `row` needs `id` and `cluster_id`."""
+    from blastjob.core import role_clusters as rc
+
+    held = conn.execute("SELECT cluster_id FROM jobs WHERE id=?", (held_id,)).fetchone()
+    if held is None:
+        return True
+    a, b = rc.pair_of(row["id"], held_id)
+    decided = conn.execute(
+        "SELECT 1 FROM same_role_decisions WHERE job_a=? AND job_b=?", (a, b)
+    ).fetchone()
+    sibling = row["cluster_id"] is not None and row["cluster_id"] == held["cluster_id"]
+    if decided is None and not sibling:
+        return True
+    return rc.sibling_is_proof(conn, row["id"], held_id, radius_miles, geo)
 
 
 # --- network: resolve a board, fetch it, check a linked posting --------------
@@ -334,6 +416,62 @@ async def check_page(link: Link, company: str, title: str, region: str) -> bool 
     return await page_links.check_page(link, company, title, region)
 
 
+async def page_description(
+    link: Link, company: str, title: str, region: str
+) -> tuple[str | None, str]:
+    """core/page_links.page_description: the trusted posting's own text."""
+    from blastjob.core import page_links
+
+    return await page_links.page_description(link, company, title, region)
+
+
+async def fetch_workday_detail(
+    token: str, url: str, *, transport: httpx.AsyncBaseTransport | None = None
+) -> RawPosting | None:
+    """The CURRENT Workday detail for a posting URL (title, region, text), read
+    from the board token like discovery/workday_locations._fix_for. None = the
+    posting answers 404/410. Raises on an unmappable URL or any other failure."""
+    wd = WorkdayAdapter("", token, queries=[""])
+    detail_url = wd.detail_url_from_public(url)
+    if not detail_url:
+        raise ValueError("unmappable workday url")
+    async with httpx.AsyncClient(
+        timeout=_PROBE_TIMEOUT_S, follow_redirects=True, transport=transport
+    ) as client:
+        payload = await _capped_json(client, detail_url)
+    if payload is None:
+        return None
+    info = (payload or {}).get("jobPostingInfo") or {}
+    _city, region = split_location(info.get("location") or "")
+    return RawPosting(
+        source=wd.source,
+        external_id=str(info.get("jobReqId") or ""),
+        title=(info.get("title") or "").strip(),
+        url=info.get("externalUrl") or url,
+        description=html_to_text(info.get("jobDescription") or ""),
+        region=region,
+    )
+
+
+async def _capped_json(client: httpx.AsyncClient, url: str) -> Any:
+    """GET `url` as JSON through `MAX_DETAIL_BYTES`. None = 404/410; any other
+    non-2xx status raises, and so does a body past the cap (a truncated JSON
+    document is worse than an error)."""
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    async with client.stream("GET", url, headers=headers) as resp:
+        if resp.status_code in CLOSED_STATUS:
+            return None
+        resp.raise_for_status()
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in resp.aiter_bytes():
+            size += len(chunk)
+            if size > MAX_DETAIL_BYTES:
+                raise ValueError(f"workday detail too large (> {MAX_DETAIL_BYTES} bytes)")
+            chunks.append(chunk)
+    return json.loads(b"".join(chunks))
+
+
 @dataclass(frozen=True)
 class LinkDeps:
     """Every network touchpoint of the closure pass, injectable for tests."""
@@ -346,6 +484,116 @@ class LinkDeps:
     check_link: Callable[[Link], Awaitable[bool | None]] = check_link
     find_page: Callable[..., Awaitable[Link | None]] = find_page
     check_page: Callable[[Link, str, str, str], Awaitable[bool | None]] = check_page
+    fetch_workday_detail: Callable[[str, str], Awaitable[RawPosting | None]] = fetch_workday_detail
+    page_description: Callable[[Link, str, str, str], Awaitable[tuple[str | None, str]]] = (
+        page_description
+    )
+
+
+# --- request budget ----------------------------------------------------------------
+#
+# The budget counts REQUEST UNITS: each metered call is charged its worst-case
+# number of HTTP requests, read from the code it fans out to. Retries inside one
+# request (discovery.http backoff) are NOT counted, and a board-cache hit in
+# `default_deps` is still charged its full weight, so the figure over-counts a
+# cached run rather than under-counting an uncached one.
+
+_BOARD_SLUGS = 3  # resolve.slug_variants: compact, hyphen, spaced
+_BOARD_APIS = 3  # greenhouse, lever, ashby per slug
+UNITS_PROBE_COMPANY = _BOARD_SLUGS * _BOARD_APIS
+_PROBE_CANDIDATES = 6  # resolve.probe_*: `candidates[:6]` confirmed
+UNITS_PROBE_WORKDAY = 1 + _PROBE_CANDIDATES  # one Jina search + a count POST each
+UNITS_PROBE_DAYFORCE = 2 + 2 * _PROBE_CANDIDATES  # two searches + (csrf, search) each
+UNITS_DAYFORCE_LISTING = 1 + DAYFORCE_MAX_PAGES  # csrf + one POST per page
+_PAGE_HOPS = PAGE_MAX_HOPS + 1  # page_fetch.safe_get: the request and every redirect
+_PAGE_CANDIDATES = 3  # page_links.MAX_CANDIDATES
+UNITS_FIND_PAGE = 1 + _PAGE_CANDIDATES * _PAGE_HOPS  # one Jina search + candidate pages
+UNITS_PAGE_FETCH = _PAGE_HOPS  # check_page / page_description: one safe_get
+
+
+class BudgetExhausted(Exception):
+    """The request budget is spent; stop resolving."""
+
+
+class RequestBudget:
+    """A count of request units. `take` is all-or-nothing and thread-safe
+    (the probes run in worker threads)."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.used = 0
+        self._lock = threading.Lock()
+
+    @property
+    def remaining(self) -> int:
+        return max(self.limit - self.used, 0)
+
+    @property
+    def exhausted(self) -> bool:
+        return self.remaining == 0
+
+    def take(self, n: int = 1) -> bool:
+        with self._lock:
+            if self.used + n > self.limit:
+                return False
+            self.used += n
+            return True
+
+
+Weight = int | Callable[..., int]
+
+
+def _spend(budget: RequestBudget, units: int) -> None:
+    if not budget.take(units):
+        raise BudgetExhausted(f"request budget of {budget.limit} units cannot cover {units}")
+
+
+def _units(weight: Weight, args: tuple[Any, ...], kwargs: dict[str, Any]) -> int:
+    return weight if isinstance(weight, int) else weight(*args, **kwargs)
+
+
+def _metered_sync(fn: Callable[..., Any], budget: RequestBudget, weight: Weight) -> Any:
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        _spend(budget, _units(weight, args, kwargs))
+        return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _metered_async(fn: Callable[..., Awaitable[Any]], budget: RequestBudget, weight: Weight) -> Any:
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        _spend(budget, _units(weight, args, kwargs))
+        return await fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _board_units(ats: str, *_rest: Any) -> int:
+    return UNITS_DAYFORCE_LISTING if ats == "dayforce" else 1
+
+
+def _link_units(link: Link) -> int:
+    return UNITS_DAYFORCE_LISTING if link.source.startswith("dayforce:") else 1
+
+
+def budgeted(deps: LinkDeps, budget: RequestBudget) -> LinkDeps:
+    """`deps` with EVERY outbound callable metered: each call takes its worst-case
+    request units from `budget` (see the weights above) and raises BudgetExhausted
+    when they do not fit, spending nothing."""
+    return replace(
+        deps,
+        probe_company=_metered_sync(deps.probe_company, budget, UNITS_PROBE_COMPANY),
+        probe_workday=_metered_sync(deps.probe_workday, budget, UNITS_PROBE_WORKDAY),
+        probe_dayforce=_metered_sync(deps.probe_dayforce, budget, UNITS_PROBE_DAYFORCE),
+        fetch_board=_metered_async(deps.fetch_board, budget, _board_units),
+        check_link=_metered_async(deps.check_link, budget, _link_units),
+        find_page=_metered_async(deps.find_page, budget, UNITS_FIND_PAGE),
+        check_page=_metered_async(deps.check_page, budget, UNITS_PAGE_FETCH),
+        fetch_workday_detail=_metered_async(deps.fetch_workday_detail, budget, 1),
+        page_description=_metered_async(deps.page_description, budget, UNITS_PAGE_FETCH),
+    )
 
 
 def default_deps() -> LinkDeps:
@@ -373,9 +621,18 @@ def default_deps() -> LinkDeps:
     )
 
 
-async def resolve_link(company: str, title: str, region: str, deps: LinkDeps) -> Link | None:
+@dataclass(frozen=True)
+class Match:
+    """A resolved employer posting: the link to store and, for a board match,
+    the posting as the board listed it (a page link carries none)."""
+
+    link: Link
+    posting: RawPosting | None
+
+
+async def resolve_match(company: str, title: str, region: str, deps: LinkDeps) -> Match | None:
     """Resolve the company's boards, fetch each one that is really this
-    company's, and link only if exactly one posting across them matches.
+    company's, and match only if exactly one posting across them matches.
     Only when the boards found NOTHING (not when they were ambiguous) and a
     Jina key is set, fall back to the employer's own careers page."""
     hits = list(await asyncio.to_thread(deps.probe_company, company))
@@ -394,8 +651,72 @@ async def resolve_link(company: str, title: str, region: str, deps: LinkDeps) ->
         else:
             ambiguous = ambiguous or any(match_posting(title, [p], region) for p in postings)
     if not found and not ambiguous and deps.jina_api_key:
-        return await deps.find_page(company, title, region, deps.jina_api_key)
+        page = await deps.find_page(company, title, region, deps.jina_api_key)
+        return Match(page, None) if page is not None else None
     if len(found) != 1:
         return None
     (m,) = found.values()
-    return Link(m.source, m.external_id, m.url)
+    return Match(Link(m.source, m.external_id, m.url), m)
+
+
+async def resolve_link(company: str, title: str, region: str, deps: LinkDeps) -> Link | None:
+    """`resolve_match`, link only."""
+    match = await resolve_match(company, title, region, deps)
+    return match.link if match is not None else None
+
+
+# --- the employer's description, revalidated -----------------------------------------
+
+
+async def verified_description(
+    link: Link, company: str, title: str, region: str, deps: LinkDeps
+) -> tuple[str | None, str]:
+    """(text, reason) for an employer link, after FRESH trust revalidation: the
+    board still belongs to the company and exactly this posting is still the one
+    confident match for the title and region on CURRENT data. Reasons: 'ok',
+    'title_drift' (the id now names another role, or the match is no longer
+    unique), 'gone', 'company_mismatch', 'manual', 'no_text', 'error:<Type>'.
+    A manual link is never fetched. BudgetExhausted propagates. The text is NOT
+    normalized; the caller uses `normalize_employer_jd`."""
+    from blastjob.web.apply_link import MANUAL_LINK  # late: it imports this module
+
+    if link.source == MANUAL_LINK:
+        return None, "manual"
+    try:
+        if link.source.startswith("page:"):
+            return await deps.page_description(link, company, title, region)
+        return await _board_description(link, company, title, region, deps)
+    except BudgetExhausted:
+        raise
+    except Exception as e:  # noqa: BLE001 -- a failed fetch is no evidence either way
+        return None, f"error:{type(e).__name__}"
+
+
+async def _board_description(
+    link: Link, company: str, title: str, region: str, deps: LinkDeps
+) -> tuple[str | None, str]:
+    bt = board_token(link)
+    if bt is None:
+        return None, "no_text"
+    ats, token = bt
+    if not board_matches_company(ats, token, company):
+        return None, "company_mismatch"
+    if ats == "workday":
+        posting = await deps.fetch_workday_detail(token, link.url)
+        if posting is None:
+            return None, "gone"
+        if match_posting(title, [posting], region) is None:
+            return None, "title_drift"
+        return _text_of(posting)
+    postings = await deps.fetch_board(ats, token, title)
+    if not any(p.external_id == link.external_id for p in postings):
+        return None, "gone"
+    match = match_posting(title, postings, region)
+    if match is None or match.external_id != link.external_id:
+        return None, "title_drift"
+    return _text_of(match)
+
+
+def _text_of(posting: RawPosting) -> tuple[str | None, str]:
+    text = posting.description or ""
+    return (text, "ok") if text.strip() else (None, "no_text")

@@ -525,4 +525,16 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    # 45-52: employer-sourced job description provenance (issue #17). One ALTER
+    # per version, as above. jd_source is 'employer:<link source>'; jd_prior holds
+    # the aggregator text an adoption replaced (for undo); jd_lookup_* drive the
+    # retry backoff; score_stale marks a kept row whose JD changed under its score.
+    (45, "ALTER TABLE jobs ADD COLUMN jd_source TEXT DEFAULT '';"),
+    (46, "ALTER TABLE jobs ADD COLUMN jd_source_ref TEXT DEFAULT '';"),
+    (47, "ALTER TABLE jobs ADD COLUMN jd_fetched_at TEXT DEFAULT '';"),
+    (48, "ALTER TABLE jobs ADD COLUMN jd_prior TEXT DEFAULT '';"),
+    (49, "ALTER TABLE jobs ADD COLUMN jd_lookup_at TEXT DEFAULT '';"),
+    (50, "ALTER TABLE jobs ADD COLUMN jd_lookup_status TEXT DEFAULT '';"),
+    (51, "ALTER TABLE jobs ADD COLUMN jd_lookup_failures INTEGER DEFAULT 0;"),
+    (52, "ALTER TABLE jobs ADD COLUMN score_stale INTEGER DEFAULT 0;"),
 ]

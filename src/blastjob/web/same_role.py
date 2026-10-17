@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse
 from blastjob.core import role_clusters as rc
 from blastjob.core import same_role as sr
 from blastjob.core.agencies import is_agency
-from blastjob.models.config import DiscoveryConfig
+from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.web import stages as st
 from blastjob.web.apply_link import MANUAL_LINK, best_apply_link
 from blastjob.web.security import require_csrf
@@ -218,6 +218,7 @@ def register(
     radius: Callable[[], float],
     render: Render,
     geo: Callable[[], DiscoveryConfig] = DiscoveryConfig,
+    load_config: Callable[[], BlastJobConfig] | None = None,
 ) -> None:
     """POST /jobs/{id}/same-role/{other}/{same|different}: the user's verdict.
     Answers the re-rendered block for job `id`."""
@@ -238,9 +239,21 @@ def register(
             other = c.execute("SELECT id FROM jobs WHERE id=?", (other_id,)).fetchone()
             if job is None or other is None:
                 return HTMLResponse("Not found", status_code=404)
-            error = decide(c, job_id, other_id, decision, radius(), geo())
+            started: list[int] = []
+            error = decide(
+                c, job_id, other_id, decision, radius(), geo(),
+                rescore=started.extend if load_config is not None else None,
+            )  # fmt: skip
+            if started and load_config is not None:
+                from blastjob.web.employer_jd import start_rescore_jobs
+
+                start_rescore_jobs(load_config, started)
             ctx = detail_context(c, job, radius(), geo())
-            return render(request, PARTIAL, **{**ctx, "sr_error": error})
+            resp = render(request, PARTIAL, **{**ctx, "sr_error": error})
+            if started:
+                # base.html's #run-status re-reads /runs/active on this.
+                resp.headers["HX-Trigger"] = "refresh-run-status"
+            return resp
         finally:
             c.close()
 
@@ -252,13 +265,18 @@ def decide(
     decision: str,
     radius: float,
     geo: DiscoveryConfig,
+    rescore: Callable[[list[int]], object] | None = None,
 ) -> str:
     """Apply one verdict. 'same' joins the two clusters (refused, with the
     reason, if it would cross a 'different' pair or put two reqs from one
     board together) and reconciles their applications into one; 'different'
-    records it and splits them apart."""
+    records it and splits them apart. A split reverts any description adopted
+    from the other posting; `rescore(ids)` is then called (after the split has
+    committed) so those rows are scored against the snippet they hold again."""
     if decision == rc.DIFFERENT:
-        rc.split_pair(conn, job_id, other_id, radius, geo)
+        reverted = rc.split_pair(conn, job_id, other_id, radius, geo)
+        if reverted and rescore is not None:
+            rescore(reverted)
         return ""
     return _decide_same(conn, job_id, other_id)
 

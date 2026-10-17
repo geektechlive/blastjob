@@ -16,13 +16,80 @@ is conditioned on the JD that was scored, so a later paste wins a race.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
+from dataclasses import dataclass, field
 
 from blastjob.db.client import UNDECIDED_STATES
 from blastjob.llm.cost import CostTracker
 from blastjob.matching import pipeline
 from blastjob.matching.scorer import reuse_key, score_candidates
 from blastjob.models.config import BlastJobConfig
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class RescoreCounts:
+    undecided: int = 0  # undecided rows the scoped matching pass scored
+    kept: int = 0  # kept rows whose new score landed
+    failed: list[int] = field(default_factory=list)  # kept rows left score_stale=1
+
+
+async def rescore_jobs(
+    cfg: BlastJobConfig, conn: sqlite3.Connection, cost_tracker: CostTracker, job_ids: list[int]
+) -> RescoreCounts:
+    """Re-score many jobs: undecided in ONE batched matching pass, kept one by one.
+
+    A kept row that fails to score (provider error, no score returned, or the JD
+    changed mid-flight) keeps `score_stale=1`, is listed in `failed`, and never
+    stops the rest. Archived and missing rows are skipped.
+    """
+    undecided: list[int] = []
+    kept: list[sqlite3.Row] = []
+    for jid in dict.fromkeys(job_ids):
+        row = conn.execute(
+            "SELECT id, title, company, raw_jd, review_state FROM jobs WHERE id=?", (jid,)
+        ).fetchone()
+        if row is None:
+            continue
+        if row["review_state"] in UNDECIDED_STATES:
+            undecided.append(jid)
+        elif row["review_state"] == "kept":
+            kept.append(row)
+    counts = RescoreCounts()
+    if undecided:
+        res = await pipeline.run_matching(cfg, conn, cost_tracker, job_ids=undecided)
+        counts.undecided = res.scored
+    if not cfg.candidate.is_configured():
+        return counts
+    for row in kept:
+        try:
+            landed = await score_kept(cfg, conn, cost_tracker, row)
+        except Exception:
+            log.warning("kept re-score failed for job %s", row["id"], exc_info=True)
+            landed = 0
+        if landed:
+            counts.kept += 1
+        else:
+            counts.failed.append(int(row["id"]))
+    return counts
+
+
+def stale_kept_ids(conn: sqlite3.Connection, limit: int = 10) -> list[int]:
+    """Kept rows whose JD changed under their score, at most `limit`, the OLDEST
+    text change first (blank stamp, a paste, before any dated one), then id.
+
+    Ordering by id alone starved: the lowest ids were retried first forever. This
+    is only a partial rotation: a re-score that keeps failing leaves the row's
+    stamp unchanged, so `limit` or more permanently failing rows would still crowd
+    out the rest. A durable fix needs an attempt marker column (a migration)."""
+    rows = conn.execute(
+        "SELECT id FROM jobs WHERE review_state='kept' AND score_stale=1 "
+        "ORDER BY COALESCE(jd_fetched_at,'') ASC, id LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [int(r["id"]) for r in rows]
 
 
 async def rescore_job(
@@ -39,10 +106,10 @@ async def rescore_job(
         return res.scored
     if row["review_state"] != "kept" or not cfg.candidate.is_configured():
         return 0
-    return await _score_kept(cfg, conn, cost_tracker, row)
+    return await score_kept(cfg, conn, cost_tracker, row)
 
 
-async def _score_kept(
+async def score_kept(
     cfg: BlastJobConfig, conn: sqlite3.Connection, cost_tracker: CostTracker, row: sqlite3.Row
 ) -> int:
     job_id = int(row["id"])
@@ -61,7 +128,8 @@ async def _score_kept(
     if sc is None:
         return 0
     cur = conn.execute(
-        "UPDATE jobs SET alignment_score=?, rationale=?, match_strengths=?, match_gaps=? "
+        "UPDATE jobs SET alignment_score=?, rationale=?, match_strengths=?, match_gaps=?, "
+        "score_stale=0 "
         "WHERE id=? AND review_state='kept' AND raw_jd IS ?",
         (
             sc["alignment"],
@@ -74,3 +142,6 @@ async def _score_kept(
     )
     conn.commit()
     return cur.rowcount
+
+
+_score_kept = score_kept  # old private name, kept for existing callers

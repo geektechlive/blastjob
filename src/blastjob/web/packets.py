@@ -265,8 +265,11 @@ def history_job_ids(conn, entries: list) -> dict[tuple[Path, str], int]:
 def jd_staleness(conn, job_id: int, built_at: str) -> tuple[bool, str]:
     """Whether the packet was tailored to less than the real job description:
     built from a snippet we still hold, or built before the user pasted the full
-    description in. Either way it reads as tailored when it was not."""
-    job = conn.execute("SELECT raw_jd, jd_pasted_at FROM jobs WHERE id=?", (job_id,)).fetchone()
+    description in (or the employer's own posting was fetched). Either way it reads as
+    tailored when it was not."""
+    job = conn.execute(
+        "SELECT raw_jd, jd_pasted_at, jd_fetched_at FROM jobs WHERE id=?", (job_id,)
+    ).fetchone()
     if job is None:
         return False, ""
     if dbc.is_jd_snippet(job["raw_jd"], job["jd_pasted_at"]):
@@ -276,6 +279,10 @@ def jd_staleness(conn, job_id: int, built_at: str) -> tuple[bool, str]:
         )
     if job["jd_pasted_at"] and job["jd_pasted_at"] > (built_at or ""):
         return True, "the full job description was pasted after this packet was built"
+    if job["jd_fetched_at"] and job["jd_fetched_at"] > (built_at or ""):
+        return True, (
+            "the employer's full description arrived after this packet was built; re-tailor"
+        )
     return False, ""
 
 

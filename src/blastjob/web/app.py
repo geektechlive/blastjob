@@ -29,6 +29,7 @@ from blastjob.llm.cost import CostTracker
 from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.models.job import ARCHIVE_REASON_LABELS, ARCHIVE_REASONS, ReviewState
 from blastjob.models.tracking import STATUSES
+from blastjob.web import employer_jd as web_employer_jd
 from blastjob.web import (
     fitscore,
     packet_view,
@@ -78,6 +79,10 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 templates.env.filters["safe_url"] = safe_external_url
 # One rule for "we only hold a snippet", shared by the page and the tailor build.
 templates.env.globals["is_jd_snippet"] = dbc.is_jd_snippet
+# Employer-JD lookup (web/employer_jd.py): provenance label + whether the button may show.
+templates.env.globals["jd_provenance"] = web_employer_jd.jd_provenance
+templates.env.globals["jd_provenance_url"] = web_employer_jd.jd_provenance_url
+templates.env.globals["ejd_refusal"] = web_employer_jd.refusal
 # Row actions depend on the stage a job is in (one rule, web/stages.py).
 templates.env.globals["stage_of"] = st.stage_of
 templates.env.globals["next_stage"] = st.next_stage
@@ -247,7 +252,7 @@ def create_app(
         radius=_radius,
     )
 
-    srv.register(app, conn, _radius, render, _geo)
+    srv.register(app, conn, _radius, render, _geo, load_config)
     mj.register(app, conn, load_config, render)
     routes_stages.register(app, deps)
     routes_network.register(app, deps)
@@ -255,6 +260,7 @@ def create_app(
     routes_settings.register(app, deps, save_config)
     routes_outcomes.register(app, deps)
     employer_link.register(app, deps)
+    web_employer_jd.register(app, deps)
     routes_activity.register(app, deps)
 
     def _packet_role_slug(packet, title: str) -> str | None:

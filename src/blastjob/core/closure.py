@@ -38,6 +38,7 @@ from blastjob.core import closure_links
 from blastjob.core import events as app_events
 from blastjob.core.closure_links import Link, LinkDeps
 from blastjob.core.company import company_key
+from blastjob.db import client as dbc
 from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.web.apply_link import MANUAL_LINK
 from blastjob.web.compare import is_agency
@@ -85,6 +86,14 @@ class ClosureResult:
     # Kept jobs whose posting became closed THIS run (for the digest line).
     closed_kept: list[dict] = field(default_factory=list)
     errors: dict[str, str] = field(default_factory=dict)
+    # Rows whose link SEARCH closure ran this run (so the employer-JD step does
+    # not search them again) and rows whose adopted description was reverted
+    # because the link behind it was dropped (they need a re-score).
+    searched: set[int] = field(default_factory=set)
+    reverted_jd: list[int] = field(default_factory=list)
+    # A shadow run (dry run, --closure-report) moves nothing, so a description it
+    # WOULD have reverted is listed here instead and left in place.
+    would_revert_jd: list[int] = field(default_factory=list)
 
 
 def _stamp(now: datetime) -> str:
@@ -268,6 +277,7 @@ class _Pass:
     index: dict
     radius_miles: float = closure_links.DEFAULT_RADIUS_MILES
     geo: DiscoveryConfig = field(default_factory=DiscoveryConfig)
+    shadow: bool = False  # distinct from `not auto`: closure_auto off still reverts
     searches: int = 0
     probes: int = 0
 
@@ -314,13 +324,7 @@ def _apply(ctx: _Pass, row: sqlite3.Row, verdict: str, *, checked: bool = False)
 
 def _save_link(ctx: _Pass, job_id: int, link: Link) -> None:
     """Never overwrites the user's manual link (see MANUAL_LINK)."""
-    cur = ctx.conn.execute(
-        "UPDATE jobs SET employer_link_source=?, employer_link_external_id=?, "
-        f"employer_link_url=? WHERE id=?{_NOT_MANUAL}"
-        f" AND COALESCE(employer_link_source,'') <> '{MANUAL_LINK}'",
-        (link.source, link.external_id, link.url, job_id),
-    )
-    ctx.result.linked += cur.rowcount
+    ctx.result.linked += closure_links.save_link(ctx.conn, job_id, link)
 
 
 def _networked(row: sqlite3.Row) -> bool:
@@ -375,48 +379,45 @@ async def _check_existing_link(ctx: _Pass, row: sqlite3.Row) -> None:
 
 
 def _still_proof(ctx: _Pass, row: sqlite3.Row, held: sqlite3.Row) -> bool:
-    """A stored link to a posting we hold must still be justified. A link made
-    through a cluster sibling stands only while `sibling_is_proof` does: the user
-    may have said 'not the same role' since (or the cluster moved). A link to a
-    posting outside the cluster with no decision between them was not a sibling
-    link (it came from a board match) and is judged by the network path alone."""
-    from blastjob.core import role_clusters as rc
-
-    a, b = rc.pair_of(row["id"], held["id"])
-    decided = ctx.conn.execute(
-        "SELECT 1 FROM same_role_decisions WHERE job_a=? AND job_b=?", (a, b)
-    ).fetchone()
-    sibling = row["cluster_id"] is not None and row["cluster_id"] == held["cluster_id"]
-    if decided is None and not sibling:
-        return True
-    return rc.sibling_is_proof(ctx.conn, row["id"], held["id"], ctx.radius_miles, ctx.geo)
+    return closure_links.link_still_proof(ctx.conn, row, held["id"], ctx.radius_miles, ctx.geo)
 
 
 def _rejected(ctx: _Pass, job_id: int, link: Link) -> bool:
-    """Is `link` a posting the user marked 'not the same role' for this job?"""
-    from blastjob.core import role_clusters as rc
-
-    other = ctx.conn.execute(
-        "SELECT id FROM jobs WHERE source=? AND external_id=?", (link.source, link.external_id)
-    ).fetchone()
-    if other is None:
-        return False
-    a, b = rc.pair_of(job_id, other["id"])
-    decided = ctx.conn.execute(
-        "SELECT decision FROM same_role_decisions WHERE job_a=? AND job_b=?", (a, b)
-    ).fetchone()
-    return decided is not None and decided["decision"] == rc.DIFFERENT
+    return closure_links.rejected_link(ctx.conn, job_id, link)
 
 
 def _drop_link(ctx: _Pass, row: sqlite3.Row) -> None:
     """The proof behind the link is gone: forget the link and fall back to
-    unverifiable. Never a state move; a manual verdict still wins."""
-    ctx.conn.execute(
+    unverifiable. Never a state move; a manual verdict still wins. A description
+    adopted from that very link goes with it (restored to what it replaced)."""
+    cur = ctx.conn.execute(
         "UPDATE jobs SET employer_link_source='', employer_link_external_id='', "
         f"employer_link_url='' WHERE id=?{_NOT_MANUAL}",
         (row["id"],),
     )
+    if cur.rowcount == 1:
+        _revert_adopted_text(ctx, row)
     _apply(ctx, row, "unverifiable", checked=True)
+
+
+def _revert_adopted_text(ctx: _Pass, row: sqlite3.Row) -> None:
+    """Undo a description adopted over the link just dropped. A shadow run only
+    reports it (`would_revert_jd`): the employer-JD step's own revalidation reverts
+    it in a real run, once the link no longer proves it."""
+    ref = closure_links.employer_jd_ref(
+        Link(row["employer_link_source"], row["employer_link_external_id"], "")
+    )
+    if ctx.shadow:
+        adopted = ctx.conn.execute(
+            "SELECT 1 FROM jobs WHERE id=? AND jd_source=? AND jd_source_ref=? "
+            "AND COALESCE(jd_pasted_at,'')=''",
+            (row["id"], ref[0], ref[1]),
+        ).fetchone()
+        if adopted is not None:
+            ctx.result.would_revert_jd.append(row["id"])
+        return
+    if dbc.revert_employer_jd(ctx.conn, row["id"], ref=ref):
+        ctx.result.reverted_jd.append(row["id"])
 
 
 async def _probe(ctx: _Pass, row: sqlite3.Row, link: Link) -> bool | None:
@@ -443,6 +444,7 @@ async def _link_and_check(ctx: _Pass, row: sqlite3.Row) -> None:
     if ctx.searches >= MAX_LINK_SEARCHES_PER_RUN:
         return  # not stamped, so it sorts first next run
     ctx.searches += 1
+    ctx.result.searched.add(row["id"])
     try:
         link = await closure_links.resolve_link(
             row["company"] or "", row["title"] or "", row["geo_region"] or "", ctx.deps
@@ -496,6 +498,7 @@ async def run_closure(
         deps=deps or closure_links.default_deps(),
         now=now or datetime.now(),
         auto=cfg.discovery.closure_auto and not shadow,
+        shadow=shadow,
         result=ClosureResult(),
         index=closure_links.authoritative_index(conn),
         radius_miles=cfg.discovery.commute_radius_miles,

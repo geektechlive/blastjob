@@ -156,7 +156,11 @@ def collapse_clusters(
 
 def job_detail(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
     return conn.execute(
-        f"SELECT {_COLS}, raw_jd, jd_pasted_at FROM jobs WHERE id=?", (job_id,)
+        f"SELECT {_COLS}, raw_jd, jd_pasted_at, jd_source, jd_fetched_at, jd_source_ref, "
+        "jd_lookup_at, (SELECT h.url FROM jobs h WHERE jobs.jd_source LIKE 'employer:%' "
+        "AND h.source = substr(jobs.jd_source, 10) AND h.external_id = jobs.jd_source_ref "
+        "LIMIT 1) AS jd_link_url FROM jobs WHERE id=?",
+        (job_id,),
     ).fetchone()
 
 

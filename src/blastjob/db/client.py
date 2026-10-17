@@ -11,11 +11,13 @@ from __future__ import annotations
 import os
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from blastjob import config as cfg_mod
 from blastjob.db.schema import MIGRATIONS
+from blastjob.discovery.textutil import html_to_text
 from blastjob.models.config import BlastJobConfig
 from blastjob.models.job import BuildState
 
@@ -201,7 +203,8 @@ def upsert_job(
     """
     now = _now()
     existing = conn.execute(
-        "SELECT id, jd_pasted_at, raw_jd, review_state FROM jobs WHERE source=? AND external_id=?",
+        "SELECT id, jd_pasted_at, raw_jd, review_state, jd_source FROM jobs "
+        "WHERE source=? AND external_id=?",
         (source, external_id),
     ).fetchone()
 
@@ -246,13 +249,22 @@ def upsert_job(
 # The score belongs to the JD it was computed from (see `set_pasted_jd`).
 _CLEAR_SCORE_SQL = "alignment_score=NULL, rationale='', match_strengths='', match_gaps=''"
 
-JD_STUB, JD_SNIPPET, JD_FULL, JD_PASTED = range(4)
+# Provenance of an employer-sourced JD; a paste or an undo wipes it.
+_CLEAR_EMPLOYER_SQL = "jd_source='', jd_source_ref='', jd_fetched_at='', jd_prior=''"
+
+EMPLOYER_JD_PREFIX = "employer:"
+JD_STUB, JD_SNIPPET, JD_FULL, JD_EMPLOYER, JD_PASTED = range(5)
 
 
-def jd_class(raw_jd: str | None, jd_pasted_at: str | None = None) -> int:
-    """Quality class of a description: stub (empty) < snippet < full < pasted."""
+def jd_class(
+    raw_jd: str | None, jd_pasted_at: str | None = None, jd_source: str | None = None
+) -> int:
+    """Quality class of a description: stub (empty) < snippet < full < employer
+    (adopted from the employer's own posting, `jd_source` 'employer:...') < pasted."""
     if jd_pasted_at:
         return JD_PASTED
+    if (jd_source or "").startswith(EMPLOYER_JD_PREFIX):
+        return JD_EMPLOYER
     n = len((raw_jd or "").strip())
     if n == 0:
         return JD_STUB
@@ -271,9 +283,12 @@ def _guard_jd(source_owned: dict, existing: sqlite3.Row) -> bool:
     if "raw_jd" not in source_owned:
         return False
     incoming = source_owned["raw_jd"] or ""
-    stored_class = jd_class(existing["raw_jd"], existing["jd_pasted_at"])
+    stored_class = jd_class(existing["raw_jd"], existing["jd_pasted_at"], existing["jd_source"])
     if jd_class(incoming) < stored_class or stored_class == JD_PASTED:
         source_owned.pop("raw_jd")
+        if stored_class == JD_EMPLOYER and incoming.strip():
+            # Keep the latest aggregator text so an undo restores it, not a stale one.
+            source_owned["jd_prior"] = incoming
         return False
     if incoming.strip() == (existing["raw_jd"] or "").strip():
         source_owned.pop("raw_jd")  # unchanged: leave the stored text byte-for-byte
@@ -353,16 +368,177 @@ def set_pasted_jd(conn: sqlite3.Connection, job_id: int, text: str) -> bool:
     if prev is None:
         return False
     if _pasted_body(prev[0]) == body:
-        conn.execute("UPDATE jobs SET jd_pasted_at=? WHERE id=?", (_now(), job_id))
+        conn.execute(
+            f"UPDATE jobs SET jd_pasted_at=?, {_CLEAR_EMPLOYER_SQL} WHERE id=?", (_now(), job_id)
+        )
     elif prev[1] in UNDECIDED_STATES:
         conn.execute(
-            f"UPDATE jobs SET raw_jd=?, jd_pasted_at=?, {_CLEAR_SCORE_SQL} WHERE id=?",
+            f"UPDATE jobs SET raw_jd=?, jd_pasted_at=?, {_CLEAR_EMPLOYER_SQL}, "
+            f"{_CLEAR_SCORE_SQL} WHERE id=?",
             (body, _now(), job_id),
         )
     else:
-        conn.execute("UPDATE jobs SET raw_jd=?, jd_pasted_at=? WHERE id=?", (body, _now(), job_id))
+        conn.execute(
+            f"UPDATE jobs SET raw_jd=?, jd_pasted_at=?, {_CLEAR_EMPLOYER_SQL} WHERE id=?",
+            (body, _now(), job_id),
+        )
     conn.commit()
     return True
+
+
+def normalize_employer_jd(text: str) -> str | None:
+    """Plain-text form of an employer posting as `set_employer_jd` stores it, or
+    None when it is too short to be the real description (an error or blocked
+    page, a stub). Capped like a paste."""
+    body = html_to_text(text or "").strip()
+    if len(body) < MIN_FULL_JD_CHARS:
+        return None
+    return body[:MAX_PASTED_JD_CHARS]
+
+
+@dataclass(frozen=True)
+class JdSnapshot:
+    """Everything `set_employer_jd` proved its match against, read BEFORE the
+    network await; the write only lands if none of it moved."""
+
+    job_id: int
+    raw_jd: str | None
+    company: str | None
+    title: str | None
+    review_state: str | None
+    source_state: str | None
+    employer_link_source: str | None
+    employer_link_external_id: str | None
+
+
+def jd_snapshot(conn: sqlite3.Connection, job_id: int) -> JdSnapshot | None:
+    row = conn.execute(
+        "SELECT raw_jd, company, title, review_state, source_state, employer_link_source, "
+        "employer_link_external_id FROM jobs WHERE id=?",
+        (job_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return JdSnapshot(job_id, *tuple(row))
+
+
+def _score_follows_jd_sql(review_state: str | None) -> str:
+    """How a changed JD treats the score: an undecided row's goes with the old
+    text (cleared); a kept row keeps it but is flagged for a durable re-score."""
+    if review_state in UNDECIDED_STATES:
+        return _CLEAR_SCORE_SQL
+    return "score_stale=1" if review_state == "kept" else "score_stale=score_stale"
+
+
+def set_employer_jd(
+    conn: sqlite3.Connection,
+    snap: JdSnapshot,
+    *,
+    text: str,
+    jd_source: str,
+    jd_source_ref: str,
+    now: str,
+) -> bool:
+    """Adopt the employer's own posting text as this job's description.
+
+    NEVER commits: the caller owns the transaction. One UPDATE compare-and-sets
+    over every field of `snap` (the state the match was proven against), no
+    paste, and either no employer text yet (first adoption: the replaced text
+    moves to `jd_prior` for undo) or the same `jd_source`/`jd_source_ref` (a
+    revision: the original `jd_prior` stays). False = refused text or lost race;
+    nothing written."""
+    body = normalize_employer_jd(text)
+    if body is None or not jd_source.startswith(EMPLOYER_JD_PREFIX):
+        return False
+    cur = conn.execute(
+        "UPDATE jobs SET raw_jd=?, jd_source=?, jd_source_ref=?, jd_fetched_at=?, "
+        "jd_prior=CASE WHEN COALESCE(jd_source,'')='' THEN COALESCE(raw_jd,'') ELSE jd_prior END, "
+        f"{_score_follows_jd_sql(snap.review_state)} "
+        "WHERE id=? AND raw_jd IS ? AND company IS ? AND title IS ? AND review_state IS ? "
+        "AND source_state IS ? AND employer_link_source IS ? AND employer_link_external_id IS ? "
+        "AND COALESCE(jd_pasted_at,'')='' "
+        "AND (COALESCE(jd_source,'')='' OR (jd_source=? AND jd_source_ref=?))",
+        (
+            body,
+            jd_source,
+            jd_source_ref,
+            now,
+            snap.job_id,
+            snap.raw_jd,
+            snap.company,
+            snap.title,
+            snap.review_state,
+            snap.source_state,
+            snap.employer_link_source,
+            snap.employer_link_external_id,
+            jd_source,
+            jd_source_ref,
+        ),
+    )
+    return cur.rowcount == 1
+
+
+def revert_employer_jd(
+    conn: sqlite3.Connection, job_id: int, *, ref: tuple[str, str] | None = None
+) -> bool:
+    """Undo an employer-text adoption: restore `jd_prior`, wipe the provenance.
+
+    NEVER commits. `ref` = (jd_source, jd_source_ref) limits it to that exact
+    adoption (the link being dropped), so another link's text is left alone.
+    A pasted row is never touched: the paste already cleared the provenance."""
+    row = conn.execute("SELECT review_state FROM jobs WHERE id=?", (job_id,)).fetchone()
+    if row is None:
+        return False
+    where = "id=? AND jd_source LIKE ? AND COALESCE(jd_pasted_at,'')=''"
+    params: list[object] = [job_id, EMPLOYER_JD_PREFIX + "%"]
+    if ref is not None:
+        where += " AND jd_source=? AND jd_source_ref=?"
+        params += [ref[0], ref[1]]
+    cur = conn.execute(
+        f"UPDATE jobs SET raw_jd=COALESCE(jd_prior,''), {_CLEAR_EMPLOYER_SQL}, "
+        f"{_score_follows_jd_sql(row[0])} WHERE {where}",
+        params,
+    )
+    return cur.rowcount == 1
+
+
+JD_LOOKUP_STATUSES = ("found", "no_match", "transient")
+NO_MATCH_RETRY_DAYS = 14
+TRANSIENT_RETRY_BASE_DAYS = 1
+RETRY_CAP_DAYS = 14
+
+
+def record_jd_lookup(conn: sqlite3.Connection, job_id: int, status: str, now: str) -> None:
+    """Record the outcome of an employer-JD lookup (NEVER commits). A transient
+    failure counts toward the backoff; any other outcome resets the count."""
+    if status not in JD_LOOKUP_STATUSES:
+        raise ValueError(f"unknown jd lookup status: {status!r}")
+    failures = "COALESCE(jd_lookup_failures,0)+1" if status == "transient" else "0"
+    conn.execute(
+        f"UPDATE jobs SET jd_lookup_at=?, jd_lookup_status=?, jd_lookup_failures={failures} "
+        "WHERE id=?",
+        (now, status, job_id),
+    )
+
+
+def jd_lookup_due(row: sqlite3.Row, now: str) -> bool:
+    """May this job be looked up again? found: never; no_match: after 14 days;
+    transient: 1, 2, 4, 8 days (doubling per failure), capped at 14."""
+    status = row["jd_lookup_status"] or ""
+    if status == "found":
+        return False
+    last = row["jd_lookup_at"] or ""
+    if not status or not last:
+        return True
+    if status == "no_match":
+        wait = NO_MATCH_RETRY_DAYS
+    else:
+        failures = max(int(row["jd_lookup_failures"] or 0), 1)
+        wait = min(TRANSIENT_RETRY_BASE_DAYS * 2 ** (failures - 1), RETRY_CAP_DAYS)
+    try:
+        return datetime.fromisoformat(now) >= datetime.fromisoformat(last) + timedelta(days=wait)
+    except ValueError:
+        return True
 
 
 def claim_for_build(conn: sqlite3.Connection, job_id: int, run_id: str) -> bool:

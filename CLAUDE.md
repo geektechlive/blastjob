@@ -127,6 +127,8 @@ uv run blastjob-daily --backfill-artifacts         # index them (idempotent; mis
 uv run blastjob-daily --closure-report      # shadow closure run: moves nothing, sends nothing
 uv run blastjob-daily --refetch-workday-locations-report  # geo-rejected Workday rows with extra locations; writes nothing
 uv run blastjob-daily --refetch-workday-locations         # store them, re-score the changed rows
+uv run blastjob-daily --employer-jd-report [--min-score 60] [--max-requests 200]  # employer descriptions it would store; writes nothing
+uv run blastjob-daily --employer-jd [--min-score 60] [--max-requests 200]         # store them, re-score the changed rows
 uv run python -m blastjob.core.prep <job_id>   # interview prep pack for one job
 uv run python -m blastjob.discovery.resolve "<Company>" [...]  # probe Workday/Dayforce/GH-Lever-Ashby, print confirmed boards
 touch "${BLASTJOB_DATA_DIR:-$HOME/.blastjob}/PAUSE"   # kill switch: the daily run exits immediately
@@ -275,7 +277,8 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
   `(source, external_id)`. A refresh touches only source-owned columns, never the
   user's review/build state (and never blanks a stored JD: an empty description means
   "presence only"). A JD refresh compares quality classes, never lengths:
-  presence stub < snippet (`is_jd_snippet`) < full < pasted; a lower class never
+  presence stub < snippet (`is_jd_snippet`) < full < employer < pasted (see "Employer
+  descriptions" below); a lower class never
   replaces a higher one, a full JD replaces a full one (a real revision), and a
   changed JD clears an undecided row's score so `only_unscored` re-scores it. An
   empty company never overwrites a stored one, and a whole-card alert row never
@@ -662,6 +665,56 @@ trusted 404/410 moves a kept, unapplied job straight to `posting_closed`. A fals
 from an employer's own ATS is unlikely, the move is reversible, and a later
 `verified_open` restores it (`reopen_transition`); applied jobs only get a badge and
 wait 21 days; screen/interview/offer never move.
+
+### Employer descriptions for aggregator jobs (`core/employer_jd.py`, `daily_employer_jd.py`, `web/employer_jd.py`)
+
+Aggregator jobs (`adzuna`, `indeed`, `linkedin`) usually arrive with a ~500-char
+snippet; Adzuna's API only ever returns one and its pages sit behind a human check we
+never try to pass. So the FULL description is taken from the employer's own posting,
+and only from a match the closure trust rules already accept: a held authoritative
+board row that passes `link_still_proof` (free, no network), a stored employer link,
+or a fresh `closure_links.resolve_match`. Before adopting, `verified_description`
+re-checks company binding + a unique title/region match on CURRENT data for every
+ATS (a posting id reused for another role is `title_drift`); a `page:` link uses that
+trusted posting's own text (`page_links.page_description`), never the first posting on
+the page. Text goes through `dbc.normalize_employer_jd` (HTML to text, >= 600 chars,
+capped) and must name the job title early (`not_a_jd` otherwise).
+
+- **Provenance** (migrations 45-52): `jd_source` ('employer:<link source>'),
+  `jd_source_ref`, `jd_fetched_at`, `jd_prior` (the replaced aggregator text, kept
+  current by refused refreshes, for undo), `jd_lookup_*` (found / no_match = 14-day
+  backoff / transient = 1,2,4,8 days), `score_stale` (a kept row whose JD changed;
+  retried daily until scored). Class `JD_EMPLOYER` sits above full and below pasted:
+  no aggregator refresh replaces it, a user paste always does.
+- **Writes are CAS over the whole proof** (`set_employer_jd(JdSnapshot)`: text, company,
+  title, review/source state, link fields, no paste), with local proof re-checked in the
+  same transaction; a split, archive or edit during the fetch is `lost_race`. Neither
+  `set_employer_jd` nor `revert_employer_jd` commits: callers own the transaction.
+- **Undo:** a 'not the same role' split (`clear_links_between`) and closure's
+  `_drop_link` revert a description adopted over that link (a shadow closure run, i.e.
+  `--dry-run` / `--closure-report`, only reports it as `would_revert_jd`). Each run's
+  local revalidation re-runs the proof the adoption used (same held posting via
+  `db_link` or a stored link that still passes `link_still_proof`, plus the title/company
+  check) and reverts a copy whose proof is gone; a held posting retitled or reused for
+  another role is reverted, never "revised". Network-proven adoptions (page links,
+  unheld boards) are re-verified in the network step, oldest first, capped.
+- **Cost is metered in request units** (`RequestBudget` charges each outbound `LinkDeps`
+  call its worst-case HTTP fan-out, e.g. a Jina-backed lookup is about 31 units): daily
+  `discovery.employer_jd_daily_requests` (300, about 10 lookups), backfill
+  `--max-requests` (1000), cockpit button 40 (one lookup; 10-minute cooldown per job,
+  at most 2 at once). For text adoption a careers-page ATS tenant must BE the company
+  key (optionally plus digits); closure's own page links keep the looser prefix rule.
+  Network lookups only for kept rows and undecided rows scoring
+  >= `discovery.employer_jd_min_score` (60); agencies and empty company keys never.
+- **Daily:** free copies run after discovery and BEFORE matching (scored once, on the
+  full text); the network step runs after closure with the same `default_deps()` (board
+  fetches shared) and skips rows closure searched; changed rows are re-scored in one
+  batch (`rescore.rescore_jobs`). Network lookups are off until
+  `blastjob setup set discovery.employer_jd_lookup true`. A dry run writes nothing.
+- **Cockpit:** the JD block shows "full description from the employer's posting
+  (<board>, fetched <date>)" and, on an eligible snippet job, a "Find the employer's
+  posting" button (`POST /jobs/{id}/employer-jd`, CSRF, single-flight per job). A packet
+  built before the employer text arrived is flagged stale.
 
 ### Company profiles + comp signals (`core/company.py`, `web/research.py`)
 
