@@ -718,8 +718,8 @@ def is_alumni_company(key: str, candidate: CandidateConfig | None = None) -> boo
     already-normalized company_key; company_key() is idempotent either way.
     `candidate` is `CandidateConfig`. Callers should pass the loaded config's
     `.candidate` explicitly; omitting it is treated as "no former employers
-    configured" rather than reading `~/Library/Application Support/blastjob`
-    off disk here, which would make this read real machine state as a side
+    configured" rather than loading the settings from the database here,
+    which would make this read real machine state as a side
     effect of an innocuous-looking default argument."""
     if candidate is None:
         candidate = CandidateConfig()
