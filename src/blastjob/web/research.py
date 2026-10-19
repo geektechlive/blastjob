@@ -6,35 +6,50 @@ recall and the output carries a sources list), and each single value (founded,
 hq, employees, revenue...) is kept only if it appears in the text of the page it
 cites (`core/cited_values.py`). Anything the model can't find is null, not
 guessed. Runs as a background Run so the cockpit streams progress.
+
+Companies share names, so a page is used only if it is anchored to THIS employer
+(issue #60, same rules as packet research: `core/research_match.py`, shared
+through `core/packet_research.match_pages`). The anchors come from the company's
+live postings in the database. With no anchor at all an isolated model judgment
+decides and the profile records `identity_basis = judged`; with no usable page
+the run says it could not confirm which company and saves nothing. See
+docs/how-it-works/employer-data.md.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
 
 from blastjob import config as cfg_mod
-from blastjob.core import cited_values
+from blastjob.core import cited_values, packet_research, research_match
 from blastjob.core import company as co
 from blastjob.core.cited_values import coerce_int as _coerce_int
 from blastjob.core.jina import _PREFER as _PREFER
-from blastjob.core.jina import JINA_KEY_ENV, is_linkedin_url, jina_search
+from blastjob.core.jina import JINA_KEY_ENV, jina_search
 from blastjob.core.jina import MAX_PAGES as MAX_PAGES
 from blastjob.core.jina import PAGE_CHARS as PAGE_CHARS
 from blastjob.core.jina import READER_URL as READER_URL
 from blastjob.core.jina import company_search_queries as search_queries
 from blastjob.core.jina import pick_pages as pick_pages
 from blastjob.core.jina import read_page as read_page
+from blastjob.core.packet_research import FetchedPage
+from blastjob.core.research_facts import strip_instructions
+from blastjob.core.research_match import JobContext
 from blastjob.db import client as dbc
 from blastjob.llm import caching
+from blastjob.llm.cost import CostTracker
 from blastjob.llm.providers import make_stream
 from blastjob.matching.scorer import _extract_json
 from blastjob.models.config import BlastJobConfig
 from blastjob.secrets import secrets_file_hint
+from blastjob.web.research_context import company_job_contexts
 from blastjob.web.runtime import Run
 from blastjob.web.urls import safe_external_url
 
@@ -105,6 +120,9 @@ def parse_profile(text: str, company: str, allowed_urls: set[str]) -> co.Company
         return None
     d = dict(items[0])
     d["company"] = company  # never let the model rename the row
+    d["identity_basis"] = (
+        ""  # set by research_company from how pages were matched, never by the model
+    )
     for k in (
         "founded",
         "employees",
@@ -164,42 +182,88 @@ def parse_profile(text: str, company: str, allowed_urls: set[str]) -> co.Company
         return None
 
 
+class IdentityNotConfirmed(Exception):
+    """No page the search found could be tied to this employer."""
+
+
+def anchored_queries(company: str, candidate, anchors: research_match.Anchors) -> list[str]:
+    """The search queries with the employer's own site first (when known) and
+    its location in every company query, so a same-named company elsewhere ranks
+    lower. Ranking only: the anchor match is what guarantees the right company."""
+    loc = anchors.location_term
+    queries = [f"site:{d} about" for d in sorted(anchors.strong_domains)[:1]]
+    if loc:
+        queries.append(f'"{company}" {loc}')
+    queries += [f"{q} {loc}".strip() for q in search_queries(company, candidate)]
+    return [" ".join(q.split()) for q in dict.fromkeys(queries)]
+
+
 async def research_company(
-    cfg: BlastJobConfig, company: str, *, emit=lambda kind, data: None
+    cfg: BlastJobConfig,
+    company: str,
+    *,
+    contexts: Sequence[JobContext] = (),
+    emit=lambda kind, data: None,
 ) -> co.CompanyProfile | None:
+    """Profile `company` from pages anchored to it. `contexts` are the company's
+    postings (`web/research_context.company_job_contexts`); the first one's
+    description is what an identity judgment reads. Raises IdentityNotConfirmed
+    when no page is tied to the employer."""
     from blastjob.secrets import load_secrets_env
 
     load_secrets_env()
     key = os.environ.get(JINA_KEY_ENV, "").strip()
     if not key:
         raise RuntimeError(f"{JINA_KEY_ENV} is not set (add it to {secrets_file_hint()})")
+    ctxs = [dataclasses.replace(c, company=company) for c in contexts] or [JobContext(company)]
+    anchor_list = list(dict.fromkeys(research_match.build_anchors(c, cfg.discovery) for c in ctxs))
+    merged = research_match.merge_anchors(anchor_list)
     emit("log", f"Searching the web for {company}...")
-    results: dict[str, dict] = {}
-    for q in search_queries(company, cfg.candidate):
-        try:
-            for r in await jina_search(q, key):
-                if not is_linkedin_url(r["url"]):
-                    results.setdefault(r["url"], r)
-        except Exception as e:  # noqa: BLE001
-            log.warning("research search failed for %r: %s", q, e)
+    # Same search as packet research: usable URLs only, LinkedIn dropped. The
+    # reader is looked up at call time so a test's patch of it is honoured.
+    results = await packet_research.search_all(
+        anchored_queries(company, cfg.candidate, merged), key, jina_search
+    )
     if not results:
         emit("log", "Search returned nothing.")
         return None
-    pages_to_read = pick_pages(list(results.values()))
+    pages_to_read = packet_research.pick_own_first(results, merged)
     emit("log", f"{len(results)} results; reading {len(pages_to_read)} pages...")
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         texts = [await read_page(client, p["url"], key) for p in pages_to_read]
-    pages = list(zip([p["url"] for p in pages_to_read], texts, strict=True))
+    fetched = [
+        FetchedPage(p["url"], str(p.get("title") or ""), t, strip_instructions(t))
+        for p, t in zip(pages_to_read, texts, strict=True)
+        if t.strip()
+    ]
+    if not fetched:
+        raise IdentityNotConfirmed(company)
+    emit("log", "Checking which pages are about this company...")
+    matched, notes = await packet_research.match_pages(
+        cfg, ctxs[0], anchor_list, fetched, CostTracker()
+    )
+    if not matched:
+        raise IdentityNotConfirmed(company)
+    judged = bool(notes)
+    # Only the matched pages' results, text and URLs go further: a snippet or a
+    # citation from the other company must not reach the model or the profile.
+    kept = {p.url for p in matched}
+    results = {u: r for u, r in results.items() if u in kept}
+    pages = [(p.url, p.text) for p in matched]
+    seen = [(p.url, p.sanitized) for p in matched]  # what the model reads
     emit("log", "Distilling into the profile...")
     system = [caching.cached_text(RESEARCH_SYSTEM)]
-    user = [caching.plain_text(material_block(company, list(results.values()), pages))]
+    user = [caching.plain_text(material_block(company, list(results.values()), seen))]
     text = ""
     stream = await make_stream(cfg, system, [{"role": "user", "content": user}], max_tokens=4000)
     async with stream:
         async for chunk in stream.text_stream:
             text += chunk
     profile = parse_profile(text, company, set(results))
-    return keep_cited_values(profile, text, pages) if profile is not None else None
+    if profile is None:
+        return None
+    basis = co.IDENTITY_JUDGED if judged else co.IDENTITY_ANCHORED
+    return keep_cited_values(profile, text, pages).model_copy(update={"identity_basis": basis})
 
 
 def _value_sources(text: str) -> dict[str, Any]:
@@ -231,7 +295,7 @@ def keep_cited_values(
     return profile.model_copy(update=kept)
 
 
-def make_research_work(company: str, load_config=cfg_mod.load_config):
+def make_research_work(company: str, load_config=cfg_mod.load_config, *, job_id: int | None = None):
     async def work(run: Run):
         cfg = load_config()
         conn = dbc.init_db(cfg)
@@ -240,7 +304,17 @@ def make_research_work(company: str, load_config=cfg_mod.load_config):
             # while the (minutes-long) research runs must win, not be overwritten.
             before = co.get_profile(conn, company)
             expected = before["updated_at"] if before else None
-            profile = await research_company(cfg, company, emit=run.emit)
+            contexts = company_job_contexts(conn, company, first_job_id=job_id)
+            try:
+                profile = await research_company(cfg, company, contexts=contexts, emit=run.emit)
+            except IdentityNotConfirmed:
+                run.emit(
+                    "error",
+                    f"Could not confirm which company {company} is, so nothing was saved. "
+                    "No page the search found matched its website or the places it hires. "
+                    "Add its website under discovery.employer_domains and run research again.",
+                )
+                return None
             if profile is None:
                 run.emit("error", "Could not build a profile from what the web returned.")
                 return None

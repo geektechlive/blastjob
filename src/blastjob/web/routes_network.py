@@ -322,7 +322,7 @@ def register(app: FastAPI, deps: Deps) -> None:
             return HTMLResponse("Not found", status_code=404)
         run = RUNTIME.start(
             "research",
-            make_research_work(job["company"], deps.load_config),
+            make_research_work(job["company"], deps.load_config, job_id=job_id),
             key=co.company_key(job["company"]),
         )
         return deps.render(

@@ -537,4 +537,7 @@ MIGRATIONS: list[tuple[int, str]] = [
     (50, "ALTER TABLE jobs ADD COLUMN jd_lookup_status TEXT DEFAULT '';"),
     (51, "ALTER TABLE jobs ADD COLUMN jd_lookup_failures INTEGER DEFAULT 0;"),
     (52, "ALTER TABLE jobs ADD COLUMN score_stale INTEGER DEFAULT 0;"),
+    # How a research run tied its pages to the employer: 'anchored' (domain or
+    # location match), 'judged' (model judgment, not confirmed), '' (not recorded).
+    (53, "ALTER TABLE company_profiles ADD COLUMN identity_basis TEXT DEFAULT '';"),
 ]

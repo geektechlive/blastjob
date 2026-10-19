@@ -317,7 +317,7 @@ async def test_research_stores_a_workup_path_in_root_form(cfg, monkeypatch) -> N
     jid, folder = _packet(cfg)
     filed = _file(cfg, folder)
 
-    async def fake_research(cfg_, company, emit=None):
+    async def fake_research(cfg_, company, emit=None, **_kw):
         return co.CompanyProfile(company=COMPANY, workup_path=str(filed / "company_workup.md"))
 
     monkeypatch.setattr(research, "research_company", fake_research)

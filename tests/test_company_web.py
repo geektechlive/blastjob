@@ -186,7 +186,7 @@ def test_pick_pages_prefers_primary_sources():
 async def test_research_work_upserts_profile(env, monkeypatch):
     client, cfg, jid = env
 
-    async def fake_research(cfg_, company, *, emit):
+    async def fake_research(cfg_, company, *, emit, **_kw):
         emit("log", "stub")
         return co.CompanyProfile(company=company, employees=5, summary="fresh")
 

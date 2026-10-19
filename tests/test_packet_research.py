@@ -531,7 +531,11 @@ async def test_research_button_keeps_only_values_found_in_their_cited_page(monke
     monkeypatch.setattr(research, "read_page", fake_read)
     monkeypatch.setattr(research, "make_stream", fake_stream)
 
-    profile = await research.research_company(BlastJobConfig(), "Northwind Fabrication")
+    profile = await research.research_company(
+        BlastJobConfig(),
+        "Northwind Fabrication",
+        contexts=[JobContext("Northwind Fabrication", city="Fairhaven", region="OH")],
+    )
 
     assert profile is not None
     assert profile.founded == 1951

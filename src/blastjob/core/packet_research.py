@@ -52,7 +52,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -121,6 +121,9 @@ __all__ = [
     "JobContext",
     "PageRead",
     "ResearchResult",
+    "match_pages",
+    "pick_own_first",
+    "search_all",
     "research_from_pages",
     "value_lines",
 ]
@@ -201,26 +204,26 @@ def search_queries(ctx: JobContext, anchors: Anchors, cfg: BlastJobConfig) -> li
     return [" ".join(q.split())[:MAX_QUERY_CHARS] for q in queries[:MAX_SEARCHES]]
 
 
-def _usable_url(url: str) -> bool:
+def usable_url(url: str) -> bool:
     """http(s), no spaces or quotes, and nothing the sanitizer would rewrite: the
     URL is rendered into the prompt and must come back from the model unchanged."""
     return bool(_SAFE_URL.match(url)) and strip_instructions(url) == url
 
 
-async def _search_all(queries: list[str], api_key: str, search: Search) -> dict[str, dict]:
+async def search_all(queries: list[str], api_key: str, search: Search) -> dict[str, dict]:
     results: dict[str, dict] = {}
     for query in queries:
         try:
             for r in await search(query, api_key):
                 url = str(r.get("url", "")).strip()
-                if _usable_url(url) and not jina.is_linkedin_url(url):
+                if usable_url(url) and not jina.is_linkedin_url(url):
                     results.setdefault(url, {**r, "url": url})
         except Exception as e:  # noqa: BLE001 — one failed query is not the end of research
             log.warning("packet research search failed for %r: %s", query, e)
     return results
 
 
-def _pick(results: dict[str, dict], anchors: Anchors) -> list[dict]:
+def pick_own_first(results: dict[str, dict], anchors: Anchors) -> list[dict]:
     """The employer's own-domain results first, then the Research button's pick."""
     own = [
         r
@@ -242,8 +245,8 @@ async def gather_pages(
 ) -> list[FetchedPage]:
     """Search, pick, read concurrently. A failed search or read is skipped; a
     page that reads empty is dropped."""
-    results = await _search_all(search_queries(ctx, anchors, cfg), api_key, search)
-    picked = _pick(results, anchors)
+    results = await search_all(search_queries(ctx, anchors, cfg), api_key, search)
+    picked = pick_own_first(results, anchors)
     texts = await asyncio.gather(*(read(r["url"], api_key) for r in picked), return_exceptions=True)
     pages: list[FetchedPage] = []
     for r, got in zip(picked, texts, strict=True):
@@ -478,17 +481,20 @@ async def _judged_pages(
     return [p for p in pages if p.url in same]
 
 
-async def _matched_pages(
+async def match_pages(
     cfg: BlastJobConfig,
     ctx: JobContext,
-    anchors: Anchors,
+    anchors: Sequence[Anchors],
     pages: list[FetchedPage],
     cost_tracker: CostTracker,
 ) -> tuple[list[FetchedPage], tuple[str, ...]]:
-    """The pages about THIS employer, and the note their admission earned."""
-    if anchors.any:
+    """The pages about THIS employer, and the note their admission earned. One
+    Anchors per job location (a packet has one job; the Research button, which
+    is per company, has one per distinct place); a page needs to match any one.
+    Shared with `web/research.py` (issue #60)."""
+    if any(a.any for a in anchors):
         kept = [
-            p for p in pages if research_match.page_matches(p.url, p.text, ctx.company, anchors)
+            p for p in pages if research_match.page_matches_any(p.url, p.text, ctx.company, anchors)
         ]
         dropped = len(pages) - len(kept)
         if dropped:
@@ -520,7 +526,7 @@ async def research_from_pages(
         if not pages:
             log.info("packet research: no readable pages for %s", ctx.company)
             return ResearchResult(None)
-        matched, notes = await _matched_pages(cfg, ctx, anchors, pages, cost_tracker)
+        matched, notes = await match_pages(cfg, ctx, [anchors], pages, cost_tracker)
         if not matched:
             log.info("packet research: no page confirmed as %s", ctx.company)
             return ResearchResult(None, (SKIPPED_COMPANY_UNCONFIRMED,))

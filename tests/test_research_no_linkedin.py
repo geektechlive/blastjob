@@ -148,7 +148,11 @@ async def test_research_button_never_reads_or_cites_a_linkedin_page(monkeypatch)
     monkeypatch.setattr(research, "read_page", fake_read)
     monkeypatch.setattr(research, "make_stream", fake_stream)
 
-    profile = await research.research_company(BlastJobConfig(), "Northwind Fabrication")
+    profile = await research.research_company(
+        BlastJobConfig(),
+        "Northwind Fabrication",
+        contexts=[JobContext("Northwind Fabrication", city="Fairhaven", region="OH")],
+    )
 
     assert sorted(reads) == sorted([ABOUT, LOOKALIKE])
     assert all("linkedin.com" not in p and "lnkd.in" not in p for p in prompts)

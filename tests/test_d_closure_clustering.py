@@ -421,7 +421,7 @@ async def _run_work(monkeypatch, cfg, profile, *, on_research=None):
         def emit(self, kind, data):
             events.append((kind, data))
 
-    async def fake_research(_cfg, _company, *, emit=None):
+    async def fake_research(_cfg, _company, *, emit=None, **_kw):
         if on_research:
             on_research()
         return profile

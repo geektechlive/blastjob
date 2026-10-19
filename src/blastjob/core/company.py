@@ -262,6 +262,10 @@ class CompanyProfile(BaseModel):
     sources: list[dict[str, Any]] = Field(default_factory=list)
     workup_path: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
+    # How research tied its pages to this employer (IDENTITY_*). Stored by
+    # `refresh_research_facts` only: it is not in PROFILE_COLUMNS, so a manual
+    # `upsert_profile` never resets it.
+    identity_basis: str = ""
 
 
 def _now() -> str:
@@ -322,6 +326,9 @@ RESEARCH_OWNED = (
     "customers", "locations", "fiscal_period", "ceo", "ceo_since", "it_leadership",
     "tech_stack", "recent_events", "sources",
 )  # fmt: skip
+# How research tied its pages to the employer (`CompanyProfile.identity_basis`).
+IDENTITY_ANCHORED = "anchored"
+IDENTITY_JUDGED = "judged"
 # Prose the owner may have rewritten: research fills it only while it is empty.
 FILL_IF_EMPTY = ("strategy", "summary")
 # Curated by the owner (ratings, notes, risks, questions, the workup pointer, extra).
@@ -350,16 +357,16 @@ def refresh_research_facts(
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
     row = conn.execute(
-        "SELECT id, updated_at, strategy, summary FROM company_profiles WHERE company_key=?",
+        "SELECT * FROM company_profiles WHERE company_key=?",
         (key,),
     ).fetchone()
     now = _now()
     if row is None and expected_updated_at is None:
-        cols = ["company_key", *PROFILE_COLUMNS, "created_at", "updated_at"]
+        cols = ["company_key", *PROFILE_COLUMNS, "identity_basis", "created_at", "updated_at"]
         cur = conn.execute(
             f"INSERT INTO company_profiles ({', '.join(cols)}) "
             f"VALUES ({', '.join('?' for _ in cols)})",
-            [key, *(data[c] for c in PROFILE_COLUMNS), now, now],
+            [key, *(data[c] for c in PROFILE_COLUMNS), profile.identity_basis, now, now],
         )
         conn.commit()
         return int(cur.lastrowid or 0)
@@ -373,12 +380,30 @@ def refresh_research_facts(
         conn.rollback()
         return int(row["id"])
     assignments = ", ".join(f"{c}=?" for c in columns)
+    # Stored facts are never purged, so a "judged" run taints the row for good: a
+    # later anchored run does not turn those facts into confirmed ones.
+    basis = _merged_identity_basis(row, profile, fresh)
     conn.execute(
-        f"UPDATE company_profiles SET {assignments}, updated_at=? WHERE id=?",
-        [*(data[c] for c in columns), now, row["id"]],
+        f"UPDATE company_profiles SET {assignments}, identity_basis=?, updated_at=? WHERE id=?",
+        [*(data[c] for c in columns), basis, now, row["id"]],
     )
     conn.commit()
     return int(row["id"])
+
+
+def _merged_identity_basis(row: sqlite3.Row, profile: CompanyProfile, fresh: list[str]) -> str:
+    """The basis a refreshed row carries. "judged" is sticky. A row with no
+    recorded basis (saved before it existed, possibly from name-only research)
+    is promoted only when this run overwrote every research-owned value it
+    holds; otherwise its old, unverified values would be relabelled."""
+    stored = row["identity_basis"] or ""
+    if IDENTITY_JUDGED in (profile.identity_basis, stored):
+        return IDENTITY_JUDGED
+    if not stored:
+        kept_old = any(row[c] not in (None, "", "[]") for c in RESEARCH_OWNED if c not in fresh)
+        if kept_old:
+            return ""
+    return profile.identity_basis or stored
 
 
 def get_profile(conn: sqlite3.Connection, company: str) -> dict | None:

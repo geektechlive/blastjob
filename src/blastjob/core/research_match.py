@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -214,6 +214,28 @@ def page_matches(url: str, text: str, company: str, anchors: Anchors) -> bool:
     if on_domain(host, anchors.weak_domains) and names_company(text, company):
         return True
     return located_mention(text, company, anchors)
+
+
+def merge_anchors(anchors: Sequence[Anchors]) -> Anchors:
+    """One Anchors for search and ranking only: every domain, and the first
+    location. Matching a page uses each Anchors on its own (`page_matches_any`),
+    never this merge, so a state from one job never pairs with another's city."""
+    first = next((a for a in anchors if a.state_code), None) or Anchors(
+        frozenset(), frozenset(), "", "", ""
+    )
+    return Anchors(
+        strong_domains=frozenset().union(*(a.strong_domains for a in anchors)),
+        weak_domains=frozenset().union(*(a.weak_domains for a in anchors)),
+        city=first.city,
+        state_code=first.state_code,
+        state_name=first.state_name,
+    )
+
+
+def page_matches_any(url: str, text: str, company: str, anchors: Sequence[Anchors]) -> bool:
+    """A company with jobs in several places: the page is its own if it matches
+    the anchors of any one of them."""
+    return any(page_matches(url, text, company, a) for a in anchors)
 
 
 JUDGE_SYSTEM = """You decide, for each web page, whether it describes the SAME \

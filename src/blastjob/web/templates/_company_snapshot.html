@@ -2,6 +2,7 @@
   <h3>Company{% if profile %} &mdash; <a href="/companies/{{ profile.company_key }}">{{ profile.company }} workup &rarr;</a>{% endif %}</h3>
   {% if profile %}
     <p>{{ profile.summary }}</p>
+    {% if profile.identity_basis == 'judged' %}<p class="dim">Identity judged by the model, not confirmed.</p>{% endif %}
     <p class="dim">
       {% if profile.employees %}{{ "{:,}".format(profile.employees) }} employees ·{% endif %}
       {% if profile.revenue_usd %}${{ (profile.revenue_usd / 1e6) | round | int }}M revenue ·{% endif %}

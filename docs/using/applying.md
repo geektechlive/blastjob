@@ -65,6 +65,6 @@ Click **Interview prep** on a kept role. It builds a pack in the panel: the role
 
 ## Research the company
 
-The **Company** section on a kept job has **Research company** (or **Refresh research** once there is a workup). It reads a few pages about the employer and fills a profile with facts such as size, revenue and leadership, each with its source. **Companies** under **More** lists all profiles.
+The **Company** section on a kept job has **Research company** (or **Refresh research** once there is a workup). It reads a few pages about the employer and fills a profile with facts such as size, revenue and leadership, each with its source. Companies share names, so it uses only pages tied to this employer by its website or by its name beside the job's state. If a company has no website or location on file to check against, the model judges the pages and the profile says "Identity judged by the model, not confirmed"; check its sources. If no page can be tied to the employer, the button says it could not confirm which company and saves nothing: add the company's website under `discovery.employer_domains` and try again. **Companies** under **More** lists all profiles.
 
 Under **Compensation signals**, record every pay figure you learn: a recruiter's range, a number from a site, what you asked for, what they answered. Choose a kind, fill in low and high, a source and a date, and click **Add signal**. The highest minimum you stated that drew no pushback shows as the "negotiated floor".
