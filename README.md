@@ -1,3 +1,4 @@
+![blastjob: a local, private job-search cockpit](docs/banner.png)
 # blastjob
 
 A local, private job-search cockpit. It **finds** roles, **scores** them against
