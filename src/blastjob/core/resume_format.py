@@ -73,8 +73,43 @@ class _Role:
     bullets: tuple[tuple[str, int], ...]
 
 
+_EXPERIENCE_SECTION_RE = re.compile(r"experience|employment|career history", re.IGNORECASE)
+_BULLET_MARKERS = ("- ", "* ", "\u2022 ")
+
+
+def _experience_spans(lines: list[str]) -> list[tuple[int, int]]:
+    """Line ranges of the `## ` experience-ish sections; the whole document if none.
+
+    Only roles inside Experience are checked: `### Selected Projects` or
+    `### Technical Skills` under other sections are not jobs. A resume with no
+    such section at all keeps the old whole-document behaviour.
+    """
+    n = len(lines)
+    spans: list[tuple[int, int]] = []
+    start: int | None = None
+    for idx, line in enumerate(lines):
+        if not (line.startswith("## ") or line.startswith("# ")):
+            continue
+        if start is not None:
+            spans.append((start, idx))
+            start = None
+        if line.startswith("## ") and _EXPERIENCE_SECTION_RE.search(line[3:]):
+            start = idx + 1
+    if start is not None:
+        spans.append((start, n))
+    return spans or [(0, n)]
+
+
 def _parse_roles(lines: list[str]) -> list[_Role]:
-    """Every `### ` heading, its employer/date line (if any), and its bullets.
+    """Roles from every experience section (see `_experience_spans`)."""
+    roles: list[_Role] = []
+    for lo, hi in _experience_spans(lines):
+        roles.extend(_parse_role_span(lines, lo, hi))
+    return roles
+
+
+def _parse_role_span(lines: list[str], lo: int, hi: int) -> list[_Role]:
+    """Every `### ` heading in `lines[lo:hi]`, its employer/date line (if any), and its bullets.
 
     A role's block runs from its heading to the next line starting with `#`
     (or end of file). The line right after the heading is treated as the
@@ -84,8 +119,8 @@ def _parse_roles(lines: list[str]) -> list[_Role]:
     start immediately.
     """
     roles: list[_Role] = []
-    i = 0
-    n = len(lines)
+    i = lo
+    n = hi
     while i < n:
         line = lines[i]
         if not line.startswith("### "):
@@ -110,7 +145,7 @@ def _parse_roles(lines: list[str]) -> list[_Role]:
         k = bullets_start
         while k < n and not lines[k].startswith("#"):
             stripped = lines[k].strip()
-            if stripped.startswith("- "):
+            if stripped.startswith(_BULLET_MARKERS):
                 bullets.append((stripped[2:].strip(), k + 1))
             k += 1
 

@@ -573,3 +573,85 @@ def test_extract_lines_tags_a_plain_export_as_body_only(tmp_path):
     tagged = extract_lines(path)
     assert tagged
     assert all(line.region is DocxRegion.BODY for line in tagged)
+
+
+# ---------------------------------------------------------------------------
+# empty_recent_role scoping (issue #39): only roles inside Experience count
+# ---------------------------------------------------------------------------
+
+
+def test_headings_outside_experience_are_not_roles():
+    resume_md = dedent("""\
+        # Alex J. Rivera
+
+        ## Professional Experience
+
+        ### Director of Business Operations
+        **Northwind Logistics** | Fairhaven, OH | Jan 2029 - Present
+        - Run technology strategy and delivery.
+
+        ## Selected Projects
+
+        ### Selected Projects
+        Built an internal automation framework used company-wide.
+
+        ## Skills
+
+        ### Technical Skills
+        * Python, SQL
+        * Cloud platforms
+        """)
+    findings = check_structure(resume_md, work_history_md=WORK_HISTORY_MD, today=TODAY)
+    assert not _codes(findings, "empty_recent_role")
+
+
+def test_bullet_markers_star_and_dot_count_as_bullets_in_experience():
+    resume_md = dedent("""\
+        # Alex J. Rivera
+
+        ## Work Experience
+
+        ### Director of Business Operations
+        **Northwind Logistics** | Fairhaven, OH | Jan 2029 - Present
+        • Run technology strategy and delivery.
+
+        ### Director of Operations
+        **Contoso Health Analytics** | Oakbrook, OH | Nov 2024 - Dec 2027
+        * Led a team of 19 specialists.
+        """)
+    findings = check_structure(resume_md, work_history_md=WORK_HISTORY_MD, today=TODAY)
+    assert not _codes(findings, "empty_recent_role")
+
+
+def test_empty_recent_role_inside_experience_is_still_fatal_with_other_sections():
+    resume_md = dedent("""\
+        # Alex J. Rivera
+
+        ## Experience
+
+        ### Operations Manager
+        **Contoso Health Analytics** | Oakbrook, OH | Jan 2021 - Oct 2024
+
+        ## Skills
+
+        ### Technical Skills
+        * Python, SQL
+        """)
+    findings = check_structure(resume_md, work_history_md=WORK_HISTORY_MD, today=TODAY)
+    empty = _codes(findings, "empty_recent_role")
+    assert len(empty) == 1
+    assert empty[0].severity is Severity.FATAL
+    assert "Operations Manager" in empty[0].evidence
+
+
+def test_no_experience_section_falls_back_to_whole_document():
+    resume_md = dedent("""\
+        # Alex J. Rivera
+
+        ## Roles
+
+        ### Operations Manager
+        **Contoso Health Analytics** | Oakbrook, OH | Jan 2021 - Oct 2024
+        """)
+    findings = check_structure(resume_md, work_history_md=WORK_HISTORY_MD, today=TODAY)
+    assert len(_codes(findings, "empty_recent_role")) == 1
