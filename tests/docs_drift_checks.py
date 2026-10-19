@@ -32,7 +32,7 @@ PRIVATE_TREES = frozenset(
 DRIFT_FILES = ("tests/test_docs_drift.py", "tests/docs_drift_checks.py")
 REVERSE_EXCLUDED = ("local/", "CLAUDE.local.md")
 
-AGENTS_MAX_LINES = 150
+AGENTS_MAX_LINES = 110
 AGENTS_MAX_BYTES = 12 * 1024
 
 # Backticked text a doc may cite that the code-reference check cannot see:
