@@ -5,6 +5,7 @@ alongside background discovery/matching writes)."""
 from __future__ import annotations
 
 import datetime
+import hashlib
 import sqlite3
 
 from blastjob.core import events
@@ -396,11 +397,31 @@ def _insert_state_event(
     events.insert_event(conn, job_id, kind, stamp, source="state")
 
 
-def set_app_notes(conn: sqlite3.Connection, job_id: int, notes: str) -> bool:
-    """Set the free-text application notes on a kept job."""
+def notes_version(notes: str | None) -> str:
+    """A fingerprint of the notes text a form was loaded with. The form carries this
+    (not the text, which can be long) so a save can tell the notes changed underneath it."""
+    return hashlib.sha256((notes or "").encode()).hexdigest()
+
+
+def set_app_notes(
+    conn: sqlite3.Connection, job_id: int, notes: str, loaded_version: str | None
+) -> bool:
+    """Set the free-text application notes on a kept job, only if they are still the
+    text the form was loaded with (`loaded_version`, from `notes_version`). Returns
+    False, writing nothing, when the notes changed since (a same-role merge appended
+    a record, or another tab saved), when no version came with the save, or when the
+    job is not kept. The UPDATE compares the exact text it read, so a write landing
+    between the check and the update is also a miss."""
+    row = conn.execute(
+        "SELECT COALESCE(app_notes,'') AS app_notes FROM jobs WHERE id=? AND review_state='kept'",
+        (job_id,),
+    ).fetchone()
+    if row is None or loaded_version != notes_version(row["app_notes"]):
+        return False
     cur = conn.execute(
-        "UPDATE jobs SET app_notes=? WHERE id=? AND review_state='kept'",
-        (notes, job_id),
+        "UPDATE jobs SET app_notes=? WHERE id=? AND review_state='kept' "
+        "AND COALESCE(app_notes,'')=?",
+        (notes, job_id, row["app_notes"]),
     )
     conn.commit()
     return cur.rowcount == 1

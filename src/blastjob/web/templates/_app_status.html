@@ -29,7 +29,12 @@
   </form>
   <form class="app-notes-form" hx-post="/jobs/{{ job.id }}/notes"
         hx-target="#app-status" hx-swap="outerHTML">
-    <textarea name="notes" rows="3" placeholder="Notes (recruiter, referral, next step)…">{{ job.app_notes }}</textarea>
+    {% set draft_shown = notes_draft is defined and notes_draft is not none %}{% if draft_shown %}
+      <div class="followup-nudge">These notes changed since this page loaded (a merge or another tab), so your save was not applied. The saved notes are shown here, and your unsaved text is in the box below. Combine them, then save again.</div>
+      <pre class="notes-current">{{ job.app_notes }}</pre>
+    {% endif %}
+    <input type="hidden" name="notes_version" value="{{ job.app_notes | notes_version }}">
+    <textarea name="notes" rows="3" placeholder="Notes (recruiter, referral, next step)…">{% if draft_shown %}{{ notes_draft }}{% else %}{{ job.app_notes }}{% endif %}</textarea>
     <button type="submit">Save notes</button>
   </form>
 </div>

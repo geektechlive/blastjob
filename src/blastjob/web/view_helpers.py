@@ -94,17 +94,25 @@ def app_status_context(
 
 
 def render_app_status(
-    deps: Deps, request: Request, c: sqlite3.Connection, job_id: int, send_note: str = ""
+    deps: Deps,
+    request: Request,
+    c: sqlite3.Connection,
+    job_id: int,
+    send_note: str = "",
+    notes_draft: str | None = None,
 ) -> HTMLResponse:
     """`send_note` is non-empty when a state change could NOT snapshot which
     documents went out. It is rendered, not swallowed: an as-sent record that
-    silently did not happen is the failure that feature exists to prevent."""
+    silently did not happen is the failure that feature exists to prevent.
+    `notes_draft` is set (even to "") only when a notes save was refused because the
+    stored notes changed: the template then shows the stored text and keeps the draft."""
     job = service.job_detail(c, job_id)
     return deps.render(
         request,
         "_app_status.html",
         job=job,
         send_note=send_note,
+        notes_draft=notes_draft,
         **app_status_context(deps, c, job_id, job),
     )
 

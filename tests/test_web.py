@@ -230,11 +230,63 @@ def test_set_status_only_applies_to_kept(client_cfg):
     assert state == ""
 
 
+def _stored_notes(cfg, jid):
+    conn = dbc.init_db(cfg)
+    try:
+        return conn.execute("SELECT app_notes FROM jobs WHERE id=?", (jid,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _post_notes(client, jid, notes, loaded):
+    return client.post(
+        f"/jobs/{jid}/notes",
+        headers=_tok(),
+        data={"notes": notes, "notes_version": service.notes_version(loaded)},
+    )
+
+
 def test_set_notes(client_cfg):
     client, cfg, _, ids = client_cfg
     jid = _kept_job(client, cfg, ids)
-    r = client.post(f"/jobs/{jid}/notes", headers=_tok(), data={"notes": "referral via Jane"})
+    r = _post_notes(client, jid, "referral via Jane", loaded="")  # empty initial save
     assert r.status_code == 200 and "referral via Jane" in r.text
+    assert _stored_notes(cfg, jid) == "referral via Jane"
+    assert service.notes_version("referral via Jane") in r.text  # next save is fresh
+
+
+def test_set_notes_fresh_second_save_works(client_cfg):
+    client, cfg, _, ids = client_cfg
+    jid = _kept_job(client, cfg, ids)
+    _post_notes(client, jid, "one", loaded="")
+    r = _post_notes(client, jid, "two", loaded="one")
+    assert r.status_code == 200 and _stored_notes(cfg, jid) == "two"
+
+
+def test_set_notes_stale_save_is_refused_and_shows_both_texts(client_cfg):
+    client, cfg, _, ids = client_cfg
+    jid = _kept_job(client, cfg, ids)
+    # The page loaded with empty notes, then a merge appended a record.
+    conn = dbc.init_db(cfg)
+    conn.execute("UPDATE jobs SET app_notes='Merged #9 as a duplicate' WHERE id=?", (jid,))
+    conn.commit()
+    conn.close()
+    r = _post_notes(client, jid, "my unsaved thoughts", loaded="")
+    assert r.status_code == 200
+    assert _stored_notes(cfg, jid) == "Merged #9 as a duplicate"  # untouched
+    assert "Merged #9 as a duplicate" in r.text  # current stored text
+    assert "my unsaved thoughts" in r.text  # the user's text is kept
+    assert "changed since" in r.text  # plain error
+    # Re-saving from the conflict form (now based on the current text) works.
+    r2 = _post_notes(client, jid, "my unsaved thoughts", loaded="Merged #9 as a duplicate")
+    assert r2.status_code == 200 and _stored_notes(cfg, jid) == "my unsaved thoughts"
+
+
+def test_set_notes_without_version_is_refused(client_cfg):
+    client, cfg, _, ids = client_cfg
+    jid = _kept_job(client, cfg, ids)
+    r = client.post(f"/jobs/{jid}/notes", headers=_tok(), data={"notes": "blind"})
+    assert r.status_code == 200 and _stored_notes(cfg, jid) in ("", None)
 
 
 def test_pipeline_board_places_applied_job(client_cfg):
@@ -1292,3 +1344,12 @@ def test_silent_search_firms_are_reported(client_cfg):
     assert "never produced" in reported[0]["state"]
     conn.close()
     assert client.get("/funnel").status_code == 200
+
+
+def test_job_page_notes_form_carries_the_loaded_version(client_cfg):
+    client, cfg, _, ids = client_cfg
+    jid = _kept_job(client, cfg, ids)
+    _post_notes(client, jid, "call Tuesday", loaded="")
+    r = client.get(f"/jobs/{jid}")
+    assert r.status_code == 200
+    assert f'name="notes_version" value="{service.notes_version("call Tuesday")}"' in r.text

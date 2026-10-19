@@ -31,7 +31,7 @@ You also get a nudge without setting anything. An applied role with no update an
 
 To write the message, click **Draft follow-up** on the job's page. The draft streams into a panel, is saved to a file (the path is shown), and shows an **Open in mail** link that opens your mail app with the text filled in. Read it, edit it and send it yourself.
 
-Use **Save notes** to keep anything worth remembering: a recruiter's name, a referral, the next step.
+Use **Save notes** to keep anything worth remembering: a recruiter's name, a referral, the next step. If the notes changed after the page loaded (linking duplicate postings adds a line, or you saved from another tab), the save is refused rather than overwriting them. The page then shows the saved notes above the box and keeps your unsaved text in it, with a message saying so. Combine the two and save again.
 
 ## The Activity list
 

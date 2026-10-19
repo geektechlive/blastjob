@@ -79,6 +79,7 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 # Jinja escapes quotes but not URL schemes, and base.html carries the CSRF token
 # on <body>, so a javascript: href would be a full takeover on a page served to the network.
 templates.env.filters["safe_url"] = safe_external_url
+templates.env.filters["notes_version"] = service.notes_version
 # The employer link to show: a limited-trust careers page shows its ATS root (#23).
 templates.env.filters["employer_href"] = page_links.employer_href
 templates.env.filters["employer_label"] = page_links.employer_label
@@ -276,9 +277,13 @@ def create_app(
         return vh.list_page(deps, request, view, rows, c, sort)
 
     def _render_app_status(
-        request: Request, c: sqlite3.Connection, job_id: int, send_note: str = ""
+        request: Request,
+        c: sqlite3.Connection,
+        job_id: int,
+        send_note: str = "",
+        notes_draft: str | None = None,
     ) -> HTMLResponse:
-        return vh.render_app_status(deps, request, c, job_id, send_note)
+        return vh.render_app_status(deps, request, c, job_id, send_note, notes_draft)
 
     def _stage_page(request: Request, view: str, sort: str = "fit") -> HTMLResponse:
         return vh.stage_page(deps, request, view, sort)
@@ -557,12 +562,16 @@ def create_app(
         request: Request,
         job_id: int,
         notes: str = Form(""),
+        notes_version: str | None = Form(None),
         _: None = Depends(require_csrf),
     ):
         c = conn()
         try:
-            service.set_app_notes(c, job_id, notes)
-            return _render_app_status(request, c, job_id)
+            if service.set_app_notes(c, job_id, notes, notes_version):
+                return _render_app_status(request, c, job_id)
+            # Refused: nothing was written. Show the stored text and keep the typed
+            # text in the box so neither is lost (docs/using/applying.md).
+            return _render_app_status(request, c, job_id, notes_draft=notes)
         finally:
             c.close()
 
