@@ -22,7 +22,7 @@ from blastjob.core import cited_values
 from blastjob.core import company as co
 from blastjob.core.cited_values import coerce_int as _coerce_int
 from blastjob.core.jina import _PREFER as _PREFER
-from blastjob.core.jina import JINA_KEY_ENV, jina_search
+from blastjob.core.jina import JINA_KEY_ENV, is_linkedin_url, jina_search
 from blastjob.core.jina import MAX_PAGES as MAX_PAGES
 from blastjob.core.jina import PAGE_CHARS as PAGE_CHARS
 from blastjob.core.jina import READER_URL as READER_URL
@@ -178,7 +178,8 @@ async def research_company(
     for q in search_queries(company, cfg.candidate):
         try:
             for r in await jina_search(q, key):
-                results.setdefault(r["url"], r)
+                if not is_linkedin_url(r["url"]):
+                    results.setdefault(r["url"], r)
         except Exception as e:  # noqa: BLE001
             log.warning("research search failed for %r: %s", q, e)
     if not results:

@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 
+from blastjob.core.page_fetch import LINKEDIN_HOSTS, _in_hosts, host_of
 from blastjob.models.config import CandidateConfig
 
 log = logging.getLogger(__name__)
@@ -105,10 +106,18 @@ def company_search_queries(company: str, candidate: CandidateConfig | None = Non
     ]
 
 
+def is_linkedin_url(url: str) -> bool:
+    """True when the URL's parsed host is LinkedIn or a subdomain of it. Never a
+    substring test: notlinkedin.example is not LinkedIn."""
+    return _in_hosts(host_of(url), LINKEDIN_HOSTS)
+
+
 def pick_pages(results: list[dict], limit: int = MAX_PAGES) -> list[dict]:
-    """Official/primary-looking URLs first, then the rest, deduped by host+path."""
+    """Official/primary-looking URLs first, then the rest, deduped by host+path.
+    LinkedIn pages are never picked: company research does not read them."""
     seen: set[str] = set()
-    ranked = sorted(results, key=lambda r: 0 if _PREFER.search(r["url"]) else 1)
+    kept = [r for r in results if not is_linkedin_url(r["url"])]
+    ranked = sorted(kept, key=lambda r: 0 if _PREFER.search(r["url"]) else 1)
     out = []
     for r in ranked:
         key = re.sub(r"[?#].*$", "", r["url"].lower())

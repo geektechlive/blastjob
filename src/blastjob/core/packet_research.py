@@ -212,7 +212,7 @@ async def _search_all(queries: list[str], api_key: str, search: Search) -> dict[
         try:
             for r in await search(query, api_key):
                 url = str(r.get("url", "")).strip()
-                if _usable_url(url):
+                if _usable_url(url) and not jina.is_linkedin_url(url):
                     results.setdefault(url, {**r, "url": url})
         except Exception as e:  # noqa: BLE001 — one failed query is not the end of research
             log.warning("packet research search failed for %r: %s", query, e)
