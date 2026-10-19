@@ -78,6 +78,21 @@ def list_page(
     )
 
 
+def app_status_context(
+    deps: Deps, c: sqlite3.Connection, job_id: int, job: sqlite3.Row | None
+) -> dict[str, str]:
+    """The `_app_status.html` inputs beyond `job`, in ONE place: the normal render and
+    the out-of-band refresh after a posting verdict must not drift (the latter once
+    lost the Mark applied hx-confirm)."""
+    if not job:
+        return {"followup_reason": "", "apply_confirm": ""}
+    cands = sr.possible_same_role(c, job_id, deps.radius(), deps.load_config().discovery)
+    return {
+        "followup_reason": sl.followup_reason(job),
+        "apply_confirm": srv.apply_confirm(cands),
+    }
+
+
 def render_app_status(
     deps: Deps, request: Request, c: sqlite3.Connection, job_id: int, send_note: str = ""
 ) -> HTMLResponse:
@@ -85,21 +100,12 @@ def render_app_status(
     documents went out. It is rendered, not swallowed: an as-sent record that
     silently did not happen is the failure that feature exists to prevent."""
     job = service.job_detail(c, job_id)
-    reason = sl.followup_reason(job) if job is not None else ""
-    confirm = (
-        srv.apply_confirm(
-            sr.possible_same_role(c, job_id, deps.radius(), deps.load_config().discovery)
-        )
-        if job
-        else ""
-    )
     return deps.render(
         request,
         "_app_status.html",
         job=job,
-        followup_reason=reason,
-        apply_confirm=confirm,
         send_note=send_note,
+        **app_status_context(deps, c, job_id, job),
     )
 
 

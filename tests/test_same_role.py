@@ -694,3 +694,30 @@ def test_retire_duplicate_refuses_a_row_whose_application_moved(conn):
 
     assert srv.retire_duplicate(conn, stale, survivor) is False
     assert _state(conn, dup)[:2] == ("kept", "applied")
+
+
+def test_posting_verdict_oob_status_keeps_the_apply_confirm(conn, cfg):
+    agency, _employer = _northwind_pair(conn)
+
+    r = _client(cfg).post(f"/jobs/{agency}/posting/open", headers=TOKEN)
+
+    assert r.status_code == 200
+    status = r.text[r.text.index('id="app-status"') :]
+    assert 'hx-confirm="You already applied to Northwind Services' in status
+
+
+def test_posting_verdict_oob_status_has_no_confirm_without_a_match(conn, cfg):
+    jid = _job(
+        conn,
+        company="Solo Works",
+        title="Chief Widget Officer",
+        city="Fairhaven",
+        review_state="kept",
+        alignment_score=80,
+    )
+
+    r = _client(cfg).post(f"/jobs/{jid}/posting/open", headers=TOKEN)
+
+    assert r.status_code == 200
+    assert 'id="app-status"' in r.text
+    assert "hx-confirm" not in r.text

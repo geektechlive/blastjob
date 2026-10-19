@@ -534,11 +534,14 @@ def create_app(
             job = service.job_detail(c, job_id) if ok else None
             if job is None:
                 return HTMLResponse("Not found", status_code=404)
-            reason = sl.followup_reason(job)
             # The verdict can move application_state, so the status panel is
             # refreshed out-of-band alongside the badge.
             return render(
-                request, "_posting_status.html", job=job, followup_reason=reason, oob=True
+                request,
+                "_posting_status.html",
+                job=job,
+                oob=True,
+                **vh.app_status_context(deps, c, job_id, job),
             )
         finally:
             c.close()
