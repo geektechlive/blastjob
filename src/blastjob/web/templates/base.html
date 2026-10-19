@@ -36,7 +36,9 @@
       <button hx-post="/run/discovery" hx-target="#run-status" hx-swap="innerHTML"
               title="Fetch new jobs and score them">Find + Score</button>
       <button hx-post="/run/matching" hx-target="#run-status" hx-swap="innerHTML"
-              title="Re-score existing jobs (after changing the threshold or settings)">Re-score</button>
+              title="Re-score the jobs whose score predates your last profile, work-history or rubric change, plus any unscored jobs. The rest keep their score and only have the threshold and location rules applied again, with no model call.">Re-score changed</button>
+      <button hx-get="/run/matching/all/confirm" hx-target="#run-status" hx-swap="innerHTML"
+              title="Send every active job to the model again, ignoring saved scores. Asks you to confirm first.">Re-score all</button>
       <span id="stale-scores" class="stale-scores" hx-get="/scores/stale"
             hx-trigger="load, refresh-run-status from:body" hx-swap="innerHTML"></span>
     </div>

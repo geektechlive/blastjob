@@ -111,7 +111,7 @@ def load_prior_scores(conn: sqlite3.Connection, fingerprint: str) -> dict[str, d
     """Scores already held for an unchanged posting, keyed by `reuse_key`, and
     computed from the CURRENT scoring inputs (`fingerprint`, see
     `matching/fingerprint.py`). A score from an older profile, work history,
-    prompt or model is not replayed: it is what the Match button exists to redo.
+    prompt or model is not replayed: it is what the Re-score changed button exists to redo.
 
     Without this, a repost is re-judged every run. The live evidence: one job-board
     reseller's listing scored 90, 89, 88 and 84 on four consecutive mornings and crossed the
@@ -146,12 +146,12 @@ def load_prior_scores(conn: sqlite3.Connection, fingerprint: str) -> dict[str, d
 
 def stale_score_count(conn: sqlite3.Connection, fingerprint: str) -> int:
     """Visible (surfaced/queued), active scores that predate `fingerprint`
-    (empty = before #29): the ones the Match button redoes.
+    (empty = before #29): the ones the Re-score changed button redoes.
 
     Not every machine state: a 'new' row that geo or the prefilter now skips is
     reset without a model call, so its old score is never re-stamped and would
-    keep this count above zero after Match, for rows on no stage page. A gate
-    reject Match did score lands in 'new' already stamped."""
+    keep this count above zero after Re-score changed, for rows on no stage page.
+    A gate reject Re-score changed did score lands in 'new' already stamped."""
     row = conn.execute(
         "SELECT COUNT(*) FROM jobs WHERE source_state='active' "
         "AND review_state IN ('surfaced','queued') AND alignment_score IS NOT NULL "
@@ -214,9 +214,10 @@ def _load_candidates(
 ) -> list[sqlite3.Row]:
     """Machine-state jobs to (re)consider. `only_unscored` limits the LLM spend
     to jobs that have never been scored — the daily run's mode, which never
-    treats an old score fingerprint as unscored (#29). The cockpit's Match
-    button passes False: a score whose fingerprint is current is replayed, any
-    other is redone, so a profile, work-history or rubric change takes effect.
+    treats an old score fingerprint as unscored (#29). The cockpit's Re-score
+    changed button passes False: a score whose fingerprint is current is
+    replayed, any other is redone, so a profile, work-history or rubric change
+    takes effect. Re-score all loads the same rows and replays none of them.
 
     `job_ids`, when given, scopes the pass to those ids only (e.g. a single
     manually-added job) instead of the whole backlog. An explicit empty
@@ -237,6 +238,13 @@ def _load_candidates(
         f"AND review_state IN ({MACHINE_STATES}){extra}{id_clause}",
         params,
     ).fetchall()
+
+
+def count_candidates(conn: sqlite3.Connection) -> int:
+    """How many jobs a full (`only_unscored=False`) pass loads: what the cockpit's
+    Re-score all confirm names. An upper bound on model calls, since geo and the
+    title prefilter still drop some of them first."""
+    return len(_load_candidates(conn, only_unscored=False))
 
 
 def _set_geo(conn: sqlite3.Connection, job_id: int, status: GeoStatus, dist: float | None) -> None:
@@ -306,7 +314,13 @@ async def run_matching(
     *,
     only_unscored: bool = False,
     job_ids: Collection[int] | None = None,
+    rescore_all: bool = False,
 ) -> MatchResult:
+    """Geo, scope prefilter, then model scoring of the machine-state jobs.
+
+    By default a score stamped with the current fingerprint is replayed (free).
+    `rescore_all` replays none, so every candidate that passes geo and the
+    prefilter goes to the model (the cockpit's Re-score all)."""
     res = MatchResult()
     wh = work_history_text(cfg)
     # Computed from the same `wh` the scorer is given, once per run.
@@ -384,7 +398,7 @@ async def run_matching(
         cost_tracker,
         on_progress=on_progress,
         rejections=rejections,
-        prior_scores=load_prior_scores(conn, fingerprint),
+        prior_scores={} if rescore_all else load_prior_scores(conn, fingerprint),
     )
     scores = scoring.scores
     res.scoring_failures = scoring.failed_batches

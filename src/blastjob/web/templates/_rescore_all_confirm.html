@@ -1,0 +1,5 @@
+<div class="run-status run-confirm">
+  <span class="run-label">Re-score all {{ "{:,}".format(n) }} job{{ "" if n == 1 else "s" }}? Every one that passes your location and title rules goes to the model again.</span>
+  <button hx-post="/run/matching/all" hx-target="#run-status" hx-swap="innerHTML">Start</button>
+  <button type="button" hx-get="/runs/active" hx-target="#run-status" hx-swap="innerHTML">Cancel</button>
+</div>

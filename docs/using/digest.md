@@ -51,7 +51,7 @@ By default the cockpit links in the digest point at `http://127.0.0.1:<web.port>
 
 The daily run scores only jobs that have never been scored. It does not redo old scores. If you change your target titles, threshold, profile or work history, the existing scores were made under the old settings.
 
-When that happens, a note appears beside the buttons at the top of every page: "N scores predate your last profile or work-history change". It counts what **Re-score** would redo. Click **Re-score** to score them again. It can take a while for a large list, and the run banner shows its progress.
+When that happens, a note appears beside the buttons at the top of every page: "N scores predate your last profile or work-history change". It counts what **Re-score changed** would redo. Click **Re-score changed** to score them again. It can take a while for a large list, and the run banner shows its progress. **Re-score all** goes further and redoes every job, so it asks you to confirm the job count first.
 
 **Find + Score** is the manual version of the morning run's first half: it fetches new postings and scores the new ones. It does not redo old scores either.
 

@@ -1,9 +1,9 @@
 """The "N scores predate your last profile or work-history change" note (#29).
 
-`base.html` lazy-loads it beside the Re-score (Match) button, the only action
+`base.html` lazy-loads it beside the Re-score changed button, the only action
 that redoes an old-fingerprint score; the daily run never does. Counted against
-the fingerprint THIS process would score with, so it answers "what would Match
-re-score", including a provider difference between the cockpit and the daily
+the fingerprint THIS process would score with, so it answers "what would Re-score
+changed redo", including a provider difference between the cockpit and the daily
 run. Empty when nothing is stale.
 """
 

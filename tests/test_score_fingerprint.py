@@ -3,7 +3,7 @@
 A stored score is replayed for an unchanged posting only while everything that
 shaped it is unchanged too: the scorer schema version, the scoring system
 prompt, the candidate profile, `work_history.md`, the provider and its model.
-Before this, the Match button replayed every old score after a profile or
+Before this, the Re-score button replayed every old score after a profile or
 work-history edit, so no band ever moved. The archive-reason calibration block
 is deliberately NOT part of the fingerprint, and the daily run never treats an
 old fingerprint as unscored.

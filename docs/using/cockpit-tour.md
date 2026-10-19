@@ -27,19 +27,20 @@ Everything else is under **More**:
 - **Research**: **Companies** (company workups, plus the companies you have excluded) and **Network** (your own LinkedIn export, matched to employers).
 - **Setup**: **Work history**, **Ingest** (upload old resumes to build the work history) and **Settings**.
 
-On the right of the bar are three buttons:
+On the right of the bar are four buttons:
 
 - **+ Add job** opens a form for a posting no source picked up. See [Add a job by hand](reviewing-matches.md#add-a-job-by-hand).
 - **Find + Score** fetches new postings from your sources, then scores the new ones.
-- **Re-score** scores existing jobs again. Use it after you change your threshold, profile or work history.
+- **Re-score changed** scores again the jobs whose score predates your last profile, work-history or rubric change, plus any job never scored. Every other job keeps its score, and only your threshold and location rules are applied to it again, with no model call. Use it after you change your threshold, profile or work history.
+- **Re-score all** sends every active job to the model again and ignores saved scores. It does not start on the first click: it asks "Re-score all N jobs?" with the exact count, and only **Start** begins the run (**Cancel** backs out). Jobs your location or title rules drop are still skipped before the model. Use it when you want a fresh opinion on everything, knowing it can take a long time on a big list.
 
-Next to them, a small note may read "N scores predate your last profile or work-history change". That count is what **Re-score** would redo. The daily run does not redo those scores. See [the digest](digest.md).
+Next to them, a small note may read "N scores predate your last profile or work-history change". That count is what **Re-score changed** would redo. The daily run does not redo those scores. See [the digest](digest.md).
 
 ## The run banner
 
-When **Find + Score** or **Re-score** is running, a banner under the bar shows its name, a progress bar and the latest message. It follows you from page to page, so you can leave and come back. When it finishes it reads "done" with a **refresh →** link that reloads the page with the new results.
+When **Find + Score**, **Re-score changed** or **Re-score all** is running, a banner under the bar shows its name, a progress bar and the latest message. It follows you from page to page, so you can leave and come back. When it finishes it reads "done" with a **refresh →** link that reloads the page with the new results.
 
-**Find + Score** and **Re-score** share one slot. If you click one while the other is running, you see the run already in progress instead of a second one starting.
+**Find + Score**, **Re-score changed** and **Re-score all** share one slot. If you click one while another is running, you see the run already in progress instead of a second one starting. The run log's first line says which one ran.
 
 ## The first-run banner
 

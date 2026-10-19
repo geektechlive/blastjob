@@ -2,7 +2,7 @@
 
 Every score write stamps `jobs.score_model_version` with this fingerprint, and
 `pipeline.load_prior_scores` replays a stored score only when its fingerprint
-equals the current one. Without it, the Match button replayed every unchanged
+equals the current one. Without it, the Re-score button replayed every unchanged
 posting's old score after a profile, work-history or rubric edit, so no band
 ever moved.
 
@@ -23,7 +23,7 @@ Deliberately EXCLUDED:
   * the claude-cli backend: it runs with no explicit model, so a change of the
     model behind `claude -p` is invisible here. Accepted.
 
-Only the cockpit's Match button re-scores old-fingerprint rows across the backlog
+Only the cockpit's Re-score changed button re-scores old-fingerprint rows across the backlog
 (job_ids-scoped passes, e.g. a pasted JD or a manual job, redo just their rows).
 The daily run and Find + Score keep `only_unscored` and never treat an old
 fingerprint as unscored (a full re-score of a live backlog is ~2 s/job on

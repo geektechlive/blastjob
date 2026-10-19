@@ -178,8 +178,8 @@ def create_app(
 
     async def _discovery_work(run: Run):
         # Discover THEN score in one action — fetching without scoring leaves new
-        # jobs invisible, which is pointless friction. "Match" stays separate for
-        # re-scoring existing jobs after tuning the threshold/rubric.
+        # jobs invisible, which is pointless friction. "Re-score changed" and
+        # "Re-score all" stay separate for re-scoring existing jobs.
         from blastjob.discovery.pipeline import run_discovery
         from blastjob.matching.pipeline import run_matching
 
@@ -219,18 +219,26 @@ def create_app(
         finally:
             c.close()
 
-    async def _matching_work(run: Run):
+    async def _matching_work(run: Run, *, rescore_all: bool = False):
         from blastjob.matching.pipeline import run_matching
 
         cfg = load_config()
         c = dbc.init_db(cfg)
         try:
-            run.emit("log", "Scoring candidates (geo + prefilter + LLM)...")
+            run.emit(
+                "log",
+                "Re-score all: every job goes to the model (geo + prefilter first)..."
+                if rescore_all
+                else "Re-score changed: old scores and unscored jobs go to the model; "
+                "the rest are replayed (geo + prefilter + LLM)...",
+            )
 
             def prog(i: int, n: int) -> None:
                 run.emit("progress", progress.format_payload(i, n, label="Scoring batch"))
 
-            res = await run_matching(cfg, c, CostTracker(), on_progress=prog)
+            res = await run_matching(
+                cfg, c, CostTracker(), on_progress=prog, rescore_all=rescore_all
+            )
             run.emit(
                 "log",
                 f"Considered {res.considered}, scored {res.scored} -> surfaced "
@@ -614,6 +622,30 @@ def create_app(
     @app.post("/run/matching", response_class=HTMLResponse)
     async def run_matching_route(request: Request, _: None = Depends(require_csrf)):
         run = RUNTIME.start("matching", _matching_work)
+        return render(request, "_run_status.html", run=run)
+
+    async def _matching_all_work(run: Run):
+        return await _matching_work(run, rescore_all=True)
+
+    @app.get("/run/matching/all/confirm", response_class=HTMLResponse)
+    async def rescore_all_confirm(request: Request):
+        """The confirm step for Re-score all: nothing starts here. A pass already
+        running is shown instead, as for any other click."""
+        from blastjob.matching.pipeline import count_candidates
+
+        running = RUNTIME.active(("discovery", "matching"))
+        if running is not None and running.status == "running":
+            return render(request, "_run_status.html", run=running)
+        c = conn()
+        try:
+            n = count_candidates(c)
+        finally:
+            c.close()
+        return render(request, "_rescore_all_confirm.html", n=n)
+
+    @app.post("/run/matching/all", response_class=HTMLResponse)
+    async def run_matching_all_route(request: Request, _: None = Depends(require_csrf)):
+        run = RUNTIME.start("matching", _matching_all_work)
         return render(request, "_run_status.html", run=run)
 
     @app.get("/runs/active", response_class=HTMLResponse)

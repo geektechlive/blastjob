@@ -16,7 +16,7 @@ Matching reads what [discovery](discovery.md) stored and decides which review st
 
 Matching makes no LLM call until `candidate.target_titles` is set (`is_configured` in `models/config.py`), so a fresh install cannot spend money scoring against nobody. Geo and the prefilter still run; every survivor stays unscored, and the run reports a note that no candidate profile is set.
 
-The daily run scores only unscored rows (`only_unscored`). The cockpit's **Find + Score** does the same, while **Re-score** also redoes scores whose fingerprint is old (see [score fingerprint](#score-fingerprint)).
+The daily run scores only unscored rows (`only_unscored`). The cockpit's **Find + Score** does the same, while **Re-score changed** also redoes scores whose fingerprint is old (see [score fingerprint](#score-fingerprint)). **Re-score all** is `run_matching(rescore_all=True)`: no prior score is replayed, so every candidate that passes geo and the prefilter goes to the model (byte-identical postings still share one call). The cockpit asks for confirmation first, naming `pipeline.count_candidates` jobs, and the POST (`/run/matching/all`) is CSRF-checked. Both buttons share the one `matching` run slot, and the run log's first line names the mode.
 
 ## Geo
 
@@ -99,10 +99,10 @@ Two scores stay distinct. The pre-generation **alignment score** says whether th
 
 Every alignment score is stamped in `score_model_version` with a fingerprint (`matching/fingerprint.py`, #29): a hash of `SCORER_SCHEMA_VERSION`, the exact scoring system prompt, the candidate profile, the `work_history.md` text and the provider and model. A single writer, `pipeline.score_columns` (also used by `rescore.score_kept`), stamps it, so no path can land a score without the fingerprint it came from. A stored score is reused only when its fingerprint matches the current one.
 
-Without it, **Re-score** replayed every unchanged posting's old score after a profile, work-history or rubric edit, so no band ever moved.
+Without it, the old single Re-score button replayed every unchanged posting's old score after a profile, work-history or rubric edit, so no band ever moved.
 
 - **Excluded on purpose:** the archive-reason calibration block (it changes on every archive, which would invalidate every score) and batch peers. The model behind the `claude` CLI is invisible to the fingerprint; that is accepted.
-- **Who redoes old scores:** only the cockpit's **Re-score** button redoes old-fingerprint scores. The daily run scores unscored rows only. The cockpit shows how many surfaced and queued scores predate the last change (`web/routes_scores.py`, `/scores/stale`).
+- **Who redoes old scores:** only the cockpit's **Re-score changed** and **Re-score all** buttons redo old-fingerprint scores. The daily run scores unscored rows only. The cockpit shows how many surfaced and queued scores predate the last change (`web/routes_scores.py`, `/scores/stale`).
 - **When to bump:** bump `SCORER_SCHEMA_VERSION` by hand when the scoring user-content template, JD excerpting or score normalization changes. A bump makes every stored score old.
 
 ## Pasted descriptions
