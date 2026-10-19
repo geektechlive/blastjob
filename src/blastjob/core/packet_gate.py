@@ -45,6 +45,7 @@ from blastjob.core.packet_report import (
     Severity,
     artifacts_to_quarantine,
 )
+from blastjob.core.percent_figures import PERCENT, percent_key
 from blastjob.core.scoring import GROUNDEDNESS_FLOOR_DEFAULT
 from blastjob.models.config import BlastJobConfig
 
@@ -63,7 +64,7 @@ from blastjob.models.config import BlastJobConfig
 # claims this check should police.
 _SCALE = r"(?:[KMBTkmbt]|(?i:thousand|million|billion|trillion))\b"
 _MONEY = rf"\$\d[\d,]*(?:\.\d+)?(?:\s?{_SCALE})?"
-_PERCENT = r"\d+(?:\.\d+)?\s?%"
+_PERCENT = PERCENT
 # The percent branch gets a lookbehind guard (money already starts with an
 # unambiguous '$') so a match cannot start mid-number, and the shared
 # lookahead guard stops it from ending mid-number.
@@ -87,12 +88,15 @@ def _normalize(token: str) -> str:
     removes was always a false alarm, never a caught fabrication. Before this,
     a model that reformatted a true figure quarantined the packet.
     """
+    percent = percent_key(token)
+    if percent is not None:
+        return percent
     text = token.strip().lower().replace(",", "")
     for word, letter in _SCALE_WORDS.items():
         text = text.replace(word, letter)
     text = text.replace(" ", "")
-    unit = "%" if text.endswith("%") else "$"
-    digits = text.lstrip("$").rstrip("%")
+    unit = "$"
+    digits = text.lstrip("$")
     factor = 1
     if digits and digits[-1] in _SCALE_FACTOR:
         factor = _SCALE_FACTOR[digits[-1]]

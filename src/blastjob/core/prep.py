@@ -30,6 +30,7 @@ from blastjob import config as cfg_mod
 from blastjob.core import artifacts, filing_lock
 from blastjob.core import company as co
 from blastjob.core.paths import application_dir, locate, resolve_role_slug, slugify
+from blastjob.core.percent_figures import PERCENT, percent_key
 from blastjob.llm import caching
 from blastjob.llm.providers import make_stream
 from blastjob.models.config import BlastJobConfig
@@ -230,7 +231,7 @@ def write_prep_pack(
 # the whole optional group collapses to empty rather than swallowing the space.
 _SCALE = r"(?:[KMBTkmbt]|(?i:thousand|million|billion|trillion))\b"
 _MONEY = rf"\$\d[\d,]*(?:\.\d+)?(?:\s?{_SCALE})?"
-_PERCENT = r"\d+(?:\.\d+)?\s?%"
+_PERCENT = PERCENT
 _MAGNITUDE = rf"\d+(?:\.\d+)?\s?{_SCALE}"
 # Headcount-shaped: comma-grouped, or four digits and up (which also covers
 # years). Two- and three-digit bare integers stay unmatched on purpose, so a
@@ -248,6 +249,9 @@ _SCALE_WORDS = {"thousand": "k", "million": "m", "billion": "b", "trillion": "t"
 def _normalize_number(token: str) -> str:
     """One comparable key per figure, so `$3.5 billion`, `$3.5B` and `$3.5 B` are
     the same figure while `$240` and `$240,000` stay different ones."""
+    percent = percent_key(token)
+    if percent is not None:
+        return percent
     text = token.strip().lower()
     for word, letter in _SCALE_WORDS.items():
         text = text.replace(word, letter)

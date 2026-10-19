@@ -193,3 +193,27 @@ def test_figures_on_file_survive_a_round_trip_through_the_trusted_text():
     assert CONFIRM not in marked.split("$9M")[0]
     assert "$9M [confirm]" in marked
     assert count == 1
+
+
+@pytest.mark.parametrize(
+    "form",
+    ["30%", "30 %", "30 percent", "30 per cent", "30 pct", "30 Percent", "thirty percent"],
+)
+def test_percent_forms_unverified_when_absent(form: str) -> None:
+    out, n = mark(f"Grew revenue {form} last year.", "Led the team.")
+    assert n == 1
+    assert out == f"Grew revenue {form} {CONFIRM} last year."
+
+
+@pytest.mark.parametrize("trusted", ["30%", "30 percent", "thirty percent", "30 pct"])
+@pytest.mark.parametrize("body", ["30%", "30 percent", "30 per cent", "thirty percent"])
+def test_percent_forms_verify_each_other(body: str, trusted: str) -> None:
+    out, n = mark(f"Grew {body}.", f"Grew {trusted} at Acme.")
+    assert n == 0
+    assert CONFIRM not in out
+
+
+def test_three_percent_not_verified_by_thirty() -> None:
+    assert mark("Cut 3 percent.", "Cut 30%.")[1] == 1
+    assert mark("Cut three percent.", "Cut 13 percent.")[1] == 1
+    assert mark("Cut 30 percent.", "Cut 3%.")[1] == 1

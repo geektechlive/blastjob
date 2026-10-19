@@ -418,3 +418,44 @@ def test_a_fatal_with_an_unmapped_artifact_quarantines_everything(monkeypatch):
 
 def test_a_ready_packet_quarantines_nothing():
     assert gate(PacketReport(groundedness=97)).quarantined_artifacts == frozenset()
+
+
+_PERCENT_FORMS = [
+    "30%",
+    "30 %",
+    "30 percent",
+    "30 per cent",
+    "30 pct",
+    "30 Percent",
+    "thirty percent",
+    "Thirty percent",
+    "thirty-five percent",
+]
+
+
+def test_arithmetic_invented_percent_flagged_in_every_spelling():
+    for form in _PERCENT_FORMS:
+        findings = check_arithmetic(f"Grew revenue {form} in a year.", "Led the team.")
+        assert len(findings) == 1, form
+        assert findings[0].evidence == form
+
+
+def test_arithmetic_percent_forms_verify_each_other():
+    for trusted_form in ("30%", "30 percent", "thirty percent", "30 per cent", "30 pct"):
+        for text_form in ("30%", "30 %", "30 percent", "thirty percent", "30 pct"):
+            findings = check_arithmetic(
+                f"Grew revenue {text_form}.", f"Grew sales {trusted_form} at Acme."
+            )
+            assert findings == [], (trusted_form, text_form)
+
+
+def test_arithmetic_three_percent_not_verified_by_thirty_or_thirteen():
+    assert len(check_arithmetic("Cut cost 3 percent.", "Cut cost 30%.")) == 1
+    assert len(check_arithmetic("Cut cost three percent.", "Cut cost 13 percent.")) == 1
+    assert len(check_arithmetic("Cut cost 30 percent.", "Cut cost thirteen percent.")) == 1
+
+
+def test_arithmetic_spelled_hundred_and_compound_words():
+    assert check_arithmetic("Hit a hundred percent.", "Hit 100%.") == []
+    assert check_arithmetic("Up forty two percent.", "Up 42%.") == []
+    assert len(check_arithmetic("Up forty-two percent.", "Up 24%.")) == 1
