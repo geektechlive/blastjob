@@ -31,7 +31,7 @@ from blastjob.web import people, service
 from blastjob.web.deps import Deps
 from blastjob.web.runtime import RUNTIME
 from blastjob.web.security import require_csrf
-from blastjob.web.upload_guard import MAX_NETWORK_UPLOAD_BYTES
+from blastjob.web.upload_guard import MAX_NETWORK_UPLOAD_BYTES, parse_content_length
 
 log = logging.getLogger(__name__)
 
@@ -210,8 +210,8 @@ def register(app: FastAPI, deps: Deps) -> None:
             )
 
         too_big = f"File too large ({MAX_NETWORK_UPLOAD_BYTES // (1024 * 1024)}MB max)."
-        content_length = request.headers.get("content-length")
-        if content_length is not None and int(content_length) > MAX_NETWORK_UPLOAD_BYTES:
+        content_length = parse_content_length(request.headers.get("content-length"))
+        if content_length is not None and content_length > MAX_NETWORK_UPLOAD_BYTES:
             c = deps.conn()
             try:
                 return _page(c, error=too_big)

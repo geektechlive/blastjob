@@ -212,3 +212,26 @@ async def test_make_ingest_work_cleans_spool_dir_even_on_error(monkeypatch):
         await routes_settings._make_ingest_work(spool_dir, lambda: cfg)(run)
 
     assert not spool_dir.exists()
+
+
+def test_ingest_malformed_content_length_does_not_500(client_cfg):
+    client, *_ = client_cfg
+    for malformed in ("abc", "-1", "none"):
+        r = client.post(
+            "/work-history/ingest",
+            files={"files": ("resume.txt", b"hello", "text/plain")},
+            headers={**_tok(), "content-length": malformed},
+        )
+        assert r.status_code == 200
+        assert "500" not in r.text
+
+
+def test_ingest_oversized_content_length_rejected(client_cfg):
+    client, *_ = client_cfg
+    r = client.post(
+        "/work-history/ingest",
+        files={"files": ("resume.txt", b"hello", "text/plain")},
+        headers={**_tok(), "content-length": str(MAX_NETWORK_UPLOAD_BYTES + 1)},
+    )
+    assert r.status_code == 413
+    assert "too large" in r.text.lower()

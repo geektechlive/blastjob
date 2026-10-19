@@ -16,6 +16,7 @@ from blastjob.models.config import BlastJobConfig
 from blastjob.web import service, stage_lists
 from blastjob.web.app import create_app
 from blastjob.web.security import CSRF_HEADER, LAUNCH_TOKEN
+from blastjob.web.upload_guard import MAX_NETWORK_UPLOAD_BYTES
 
 
 @pytest.fixture
@@ -924,6 +925,41 @@ def test_network_import_with_form_token_succeeds(client_cfg):
     )
     assert r.status_code == 200
     assert "1 added" in r.text
+
+
+def test_network_import_malformed_content_length_does_not_500(client_cfg):
+    client, *_ = client_cfg
+    for i, malformed in enumerate(("abc", "-1", "none")):
+        url = f"https://linkedin.com/in/example-person{i}"
+        csv_bytes = (
+            "First Name,Last Name,URL,Email Address,Company,Position,Connected On\n"
+            f"Person{i},Doe,{url},,Acme Corp,VP Engineering,05 Jun 2023\n"
+        ).encode()
+        r = client.post(
+            "/network/import",
+            files={"file": ("Connections.csv", csv_bytes, "text/csv")},
+            data={"_token": LAUNCH_TOKEN},
+            headers={"content-length": malformed},
+        )
+        assert r.status_code == 200
+        assert "1 added" in r.text
+
+
+def test_network_import_oversized_content_length_rejected(client_cfg):
+    client, *_ = client_cfg
+    csv_bytes = (
+        b"First Name,Last Name,URL,Email Address,Company,Position,Connected On\n"
+        b"Jane,Doe,https://linkedin.com/in/example-janedoe,,Acme Corp,VP Engineering,05 Jun 2023\n"
+    )
+    r = client.post(
+        "/network/import",
+        files={"file": ("Connections.csv", csv_bytes, "text/csv")},
+        data={"_token": LAUNCH_TOKEN},
+        headers={"content-length": str(MAX_NETWORK_UPLOAD_BYTES + 1)},
+    )
+    # Blocked by MaxBodySizeMiddleware (413) or route check
+    assert r.status_code in (413, 200)
+    assert "too large" in r.text.lower()
 
 
 def test_keep_preserves_network_badge(client_cfg):

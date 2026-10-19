@@ -32,6 +32,17 @@ from blastjob.web.runtime import RUNTIME
 from blastjob.web.security import require_csrf
 
 
+def parse_last_event_id(value: str | None, default: int = 0) -> int:
+    """Parse Last-Event-ID header into a non-negative int; fallback to default on error."""
+    if not value:
+        return default
+    try:
+        val = int(value)
+        return val if val >= 0 else default
+    except (ValueError, TypeError):
+        return default
+
+
 def register(app: FastAPI, deps: Deps) -> None:
     @app.get("/jobs/{job_id}/packet", response_class=HTMLResponse)
     async def job_packet(request: Request, job_id: int):
@@ -348,7 +359,7 @@ def register(app: FastAPI, deps: Deps) -> None:
     async def build_events(request: Request, run_id: str):
         from blastjob.web.build import sse_format
 
-        last_id = int(request.headers.get("last-event-id") or 0)
+        last_id = parse_last_event_id(request.headers.get("last-event-id"))
 
         async def gen():
             async for ev in RUNTIME.stream(run_id, last_id):
