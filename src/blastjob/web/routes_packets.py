@@ -21,6 +21,7 @@ from blastjob import config as cfg_mod
 from blastjob.core.artifacts import stored_path
 from blastjob.core.history import scan_history
 from blastjob.db import client as dbc
+from blastjob.llm.child_env import child_env
 from blastjob.web import fitscore, packet_view, packets, service
 from blastjob.web import funnel as fn
 from blastjob.web import stage_moves as sm
@@ -78,7 +79,11 @@ def register(app: FastAPI, deps: Deps) -> None:
             target = packets.safe_output_path(cfg, packet["dir"])
             if target is None or not target.is_dir():
                 return HTMLResponse("No packet folder to open", status_code=404)
-            subprocess.run(["open", str(target)], check=False)  # noqa: S603,S607
+            subprocess.run(  # noqa: S603
+                ["open", str(target)],  # noqa: S607
+                check=False,
+                env=child_env(),
+            )
             return deps.render(
                 request,
                 "_packet.html",

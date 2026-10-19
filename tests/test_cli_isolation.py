@@ -11,6 +11,7 @@ the app. Draft-only must hold for the model too.
 from __future__ import annotations
 
 import asyncio
+import os
 
 from blastjob.llm import providers
 
@@ -78,3 +79,31 @@ def test_cli_enables_no_builtin_tools(monkeypatch):
 def test_cli_ignores_user_and_project_settings(monkeypatch):
     # User settings carry permission allowlists and hooks; neither belongs here.
     assert _value_after(_argv(monkeypatch), "--setting-sources") == ""
+
+
+def test_cli_child_env_omits_blastjob_secrets(monkeypatch, tmp_path):
+    """The child sees no secrets-file key and no API key, but PATH/HOME to log in."""
+    from blastjob import secrets as secrets_mod
+
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text("DISCORD_BOT_TOKEN=tok-secret\n")
+    monkeypatch.setattr(secrets_mod, "_configured", secrets_file)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key-secret")
+    seen: dict = {}
+
+    async def fake_exec(*args, **kwargs):
+        seen.update(kwargs)
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async def drain() -> None:
+        stream = await providers.claudecli_stream("sys", "prompt", providers._CLIUsageBox())
+        async for _ in stream:
+            pass
+
+    asyncio.run(drain())
+    env = seen["env"]
+    assert "DISCORD_BOT_TOKEN" not in env and "ANTHROPIC_API_KEY" not in env
+    assert env["PATH"] == os.environ["PATH"] and env["HOME"] == os.environ["HOME"]

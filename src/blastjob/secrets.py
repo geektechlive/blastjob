@@ -42,21 +42,38 @@ def secrets_file_hint() -> str:
         return str(path)
 
 
-def load_secrets_env(path: Path | None = None) -> int:
-    """Parse KEY=VALUE lines into os.environ (without overriding). Returns how
-    many new keys were set. Missing file is fine (returns 0)."""
-    path = secrets_path() if path is None else path
+def _parse(path: Path) -> list[tuple[str, str]]:
+    """KEY=VALUE pairs from the file, in order. Missing file -> empty."""
     if not path.exists():
-        return 0
-    added = 0
+        return []
+    pairs: list[tuple[str, str]] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+        if key:
+            pairs.append((key, value.strip().strip('"').strip("'")))
+    return pairs
+
+
+def secret_names(path: Path | None = None) -> frozenset[str]:
+    """Every key NAMED in the secrets file, whether or not it was already in
+    the environment when the file was loaded. Read fresh each call (the file is
+    tiny), so it never goes stale. Unreadable file -> empty."""
+    try:
+        return frozenset(k for k, _ in _parse(secrets_path() if path is None else path))
+    except (OSError, UnicodeDecodeError):
+        return frozenset()
+
+
+def load_secrets_env(path: Path | None = None) -> int:
+    """Parse KEY=VALUE lines into os.environ (without overriding). Returns how
+    many new keys were set. Missing file is fine (returns 0)."""
+    added = 0
+    for key, value in _parse(secrets_path() if path is None else path):
+        if key not in os.environ:
             os.environ[key] = value
             added += 1
     return added

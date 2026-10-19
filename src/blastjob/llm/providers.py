@@ -22,6 +22,7 @@ import tempfile
 from collections.abc import AsyncIterator, Awaitable
 from typing import TYPE_CHECKING, TypeVar, cast
 
+from blastjob.llm.child_env import child_env
 from blastjob.llm.cost import CostTracker, cost_from_usage
 from blastjob.models.config import BlastJobConfig, LLMConfig
 
@@ -417,6 +418,7 @@ async def _run_cli(args: list[str], prompt: str, usage_box: _CLIUsageBox) -> Asy
         proc = await asyncio.create_subprocess_exec(
             *args,
             cwd=_neutral_cwd(),
+            env=child_env(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

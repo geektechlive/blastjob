@@ -242,6 +242,32 @@ def test_reveal_refuses_a_path_that_is_a_file(env, monkeypatch, tmp_path):
     assert r.status_code == 404 and opened == []
 
 
+def test_reveal_runs_open_with_a_secret_free_env(env, monkeypatch, tmp_path):
+    client, cfg, conn = env
+    from blastjob import secrets as secrets_mod
+    from blastjob.web import routes_packets
+
+    secrets_file = tmp_path / "secrets.env"
+    secrets_file.write_text("DISCORD_BOT_TOKEN=tok-secret\n")
+    monkeypatch.setattr(secrets_mod, "_configured", secrets_file)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok-secret")
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        routes_packets.subprocess, "run", lambda a, **k: calls.append({"argv": a, **k})
+    )
+    out = tmp_path / "out"
+    folder = out / "acme-2026-10-16"
+    folder.mkdir(parents=True)
+    cfg.paths.output_dir = str(out)
+    jid = _job(conn, "rv2", "kept")
+    packet = {"dir": str(folder), "built_at": "", "stale": False, "files": []}
+    monkeypatch.setattr(packets, "packet_for_job", lambda *a, **k: packet)
+    monkeypatch.setattr(packets, "is_local_request", lambda r: True)
+    client.post(f"/jobs/{jid}/reveal", headers=TOK)
+    assert calls and calls[0]["argv"][0] == "open"
+    assert "DISCORD_BOT_TOKEN" not in calls[0]["env"]
+
+
 def test_packet_file_path_refuses_a_symlink_that_leaves_the_folder(tmp_path):
     cfg = BlastJobConfig()
     cfg.paths.output_dir = str(tmp_path / "out")

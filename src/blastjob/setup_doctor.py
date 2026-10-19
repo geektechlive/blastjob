@@ -14,6 +14,7 @@ from pathlib import Path
 from blastjob import config as cfg_mod
 from blastjob import settings_store as ss
 from blastjob.db.schema import MIGRATIONS
+from blastjob.llm.child_env import child_env
 from blastjob.mail_names import MAIL_FIELDS, name_problem
 from blastjob.models.config import BlastJobConfig
 
@@ -35,7 +36,9 @@ class Check:
 
 def _run(argv: list[str]) -> tuple[int, str]:
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=CLI_TIMEOUT_S)
+        r = subprocess.run(
+            argv, capture_output=True, text=True, timeout=CLI_TIMEOUT_S, env=child_env()
+        )
     except (OSError, subprocess.TimeoutExpired) as e:
         return 1, str(e)
     return r.returncode, (r.stdout or r.stderr).strip()
