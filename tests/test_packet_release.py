@@ -132,3 +132,39 @@ def test_release_transitions_the_sidecar_to_acknowledged_override(cfg, conn):
     assert after["override"]["reason"] == "the flagged character is in the company's own name"
     # Why it was held stays on the record.
     assert after["reasons"] == ["banned characters"]
+
+
+def test_release_runs_under_the_shared_filing_lock_on_a_filed_packet(cfg, conn, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from blastjob.core import filing_lock
+
+    jid, out = _job_with_packet(conn, cfg)
+    filed = out.parent / "Submitted" / out.name
+    filed.parent.mkdir()
+    out.rename(filed)
+    state = {"held": False, "released_in_lock": None}
+    real_shared = filing_lock.shared_async
+    real_release = quarantine.release
+
+    @asynccontextmanager
+    async def spy_shared(root):
+        async with real_shared(root):
+            state["held"] = True
+            try:
+                yield
+            finally:
+                state["held"] = False
+
+    def spy_release(target, **kw):
+        state["released_in_lock"] = (state["held"], target)
+        return real_release(target, **kw)
+
+    monkeypatch.setattr(filing_lock, "shared_async", spy_shared)
+    monkeypatch.setattr(quarantine, "release", spy_release)
+    r = _client(cfg).post(
+        f"/jobs/{jid}/packet/release", data={"reason": "sending anyway"}, headers=TOKEN
+    )
+    assert r.status_code == 200
+    held, target = state["released_in_lock"]
+    assert held and target == filed.resolve()

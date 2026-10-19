@@ -19,6 +19,7 @@ Draft-only, like everything else in this app. blastjob never sends mail; the
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -28,7 +29,8 @@ from typing import Any
 from urllib.parse import quote
 
 from blastjob import config as cfg_mod
-from blastjob.core.paths import slugify
+from blastjob.core import filing_lock
+from blastjob.core.paths import locate, slugify
 from blastjob.llm import caching
 from blastjob.llm.providers import make_stream
 from blastjob.models.config import BlastJobConfig
@@ -122,14 +124,33 @@ def fallback_dir(output_root: Path | str) -> Path:
     return d
 
 
-def write_followup(artifact_dir: Path | str, role: str, text: str, *, job_id: int) -> Path:
+def write_followup(
+    artifact_dir: Path | str,
+    role: str,
+    text: str,
+    *,
+    job_id: int,
+    output_root: Path | str | None = None,
+    lock: bool = True,
+) -> Path:
     """Write the draft into the ALREADY-RESOLVED packet directory.
 
     Deliberately does not create the directory: a missing packet folder means the
     caller resolved the wrong place, and silently creating it is how a draft ends
     up somewhere nobody looks. Callers use `fallback_dir` when there is no packet.
+
+    With `output_root`, the folder is re-located at WRITE time under the shared
+    filing lock (`core/filing_lock.py`): the draft streams for a while, and the
+    packet may have been filed into a bucket since the caller resolved it.
+    `lock=False` when the caller already holds it (`generate_followup`).
     """
-    directory = Path(artifact_dir)
+    if output_root is None:
+        return _write_into(Path(artifact_dir), role, text, job_id)
+    with filing_lock.shared(output_root) if lock else contextlib.nullcontext():
+        return _write_into(locate(artifact_dir, output_root), role, text, job_id)
+
+
+def _write_into(directory: Path, role: str, text: str, job_id: int) -> Path:
     if not directory.is_dir():
         raise FileNotFoundError(
             f"follow-up target directory does not exist: {directory} "
@@ -290,6 +311,9 @@ async def generate_followup(
     # metadata for the saved file and would read as nonsense in an inbox.
     mailto = mailto_url(to, subject, body)
     text = render_header(job, subject, to, today) + body
-    path = write_followup(artifact_dir, role, text, job_id=job_id)
+    root = cfg_mod.output_dir(cfg)
+    # Async wait for the lock, so a filing pass never stalls the event loop.
+    async with filing_lock.shared_async(root):
+        path = write_followup(artifact_dir, role, text, job_id=job_id, output_root=root, lock=False)
     log.info("followup draft written job_id=%s path=%s", job_id, path)
     return FollowupDraft(path=path, body=body, subject=subject, to=to, mailto=mailto)

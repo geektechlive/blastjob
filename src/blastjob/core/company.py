@@ -20,9 +20,12 @@ import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from blastjob.core.paths import canonical
 
 _NORM = re.compile(r"[^a-z0-9]+")
 # "co" is deliberately guarded with a negative lookahead: "\bco\b" alone also
@@ -265,12 +268,28 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def upsert_profile(conn: sqlite3.Connection, profile: CompanyProfile) -> int:
-    """Insert or fully refresh the profile for this company. Returns the row id."""
-    key = company_key(profile.company)
+def _profile_data(profile: CompanyProfile, output_root: str | Path | None) -> dict[str, Any]:
+    """The profile as column values: JSON columns encoded and, given the output
+    dir, `workup_path` in ROOT form (`paths.canonical`). Its entry may later be
+    filed into a bucket; readers find it with `paths.locate` (issue #20). Every
+    profile write goes through this."""
     data = profile.model_dump()
+    if output_root is not None and data.get("workup_path"):
+        data["workup_path"] = str(canonical(data["workup_path"], output_root))
     for col in JSON_COLUMNS:
         data[col] = json.dumps(data[col], ensure_ascii=False)
+    return data
+
+
+def upsert_profile(
+    conn: sqlite3.Connection, profile: CompanyProfile, output_root: str | Path | None = None
+) -> int:
+    """Insert or fully refresh the profile for this company. Returns the row id.
+
+    With `output_root`, a `workup_path` inside the output dir is stored in ROOT
+    form (`_profile_data`)."""
+    key = company_key(profile.company)
+    data = _profile_data(profile, output_root)
     now = _now()
     existing = conn.execute(
         "SELECT id FROM company_profiles WHERE company_key=?", (key,)
@@ -312,7 +331,11 @@ USER_OWNED = (
 
 
 def refresh_research_facts(
-    conn: sqlite3.Connection, profile: CompanyProfile, *, expected_updated_at: str | None
+    conn: sqlite3.Connection,
+    profile: CompanyProfile,
+    *,
+    expected_updated_at: str | None,
+    output_root: str | Path | None = None,
 ) -> int | None:
     """Save a research result without overwriting curated data. Returns the row
     id, or None (nothing written) when the profile changed since `expected_updated_at`
@@ -320,11 +343,10 @@ def refresh_research_facts(
 
     A new company is inserted whole; an existing one gets only the
     RESEARCH_OWNED columns, plus FILL_IF_EMPTY prose that is still empty.
-    Compare-and-set on `updated_at` under one write lock."""
+    Compare-and-set on `updated_at` under one write lock. Pass `output_root`
+    so a `workup_path` is stored in root form."""
     key = company_key(profile.company)
-    data = profile.model_dump()
-    for col in JSON_COLUMNS:
-        data[col] = json.dumps(data[col], ensure_ascii=False)
+    data = _profile_data(profile, output_root)
     if not conn.in_transaction:
         conn.execute("BEGIN IMMEDIATE")
     row = conn.execute(

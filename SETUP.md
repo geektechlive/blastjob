@@ -50,14 +50,18 @@ uv run blastjob setup doctor                      # expect failures: nothing is 
 uv run blastjob-web                               # cockpit at http://127.0.0.1:8765
 ```
 
-Where things go:
+Where things go (the full list of what each place holds, and what leaves the
+machine, is README.md's "Where your data lives"; tell the user about it):
 
 | What | Where |
 |---|---|
-| Data dir (DB, work history, templates, logs, backups) | `BLASTJOB_DATA_DIR`, default `~/.blastjob` |
-| Settings | the `settings` table in `<data_dir>/blastjob.db` |
+| Data dir (DB with settings and every job, work history, templates, logs, backups) | `BLASTJOB_DATA_DIR`, default `~/.blastjob` |
 | Secrets (API keys, app passwords) | the file at `paths.secrets_file`, default `<data_dir>/secrets.env` |
-| Generated resumes, cover letters, prep packs | `paths.output_dir`, default `~/Documents/blastjob` |
+| Generated resumes, cover letters, prep packs (filed into `Submitted/`, `Closed before applying/`, `Archive/` as jobs move) | `paths.output_dir`, default `~/Documents/blastjob` |
+
+None of these is inside the repository. **Ask the user where their documents
+should go.** On a Mac with iCloud "Desktop & Documents" on, the default syncs to
+iCloud; if they don't want that, `uv run blastjob setup set paths.output_dir <path>`.
 
 Create the secrets file now, private to the user:
 

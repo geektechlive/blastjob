@@ -261,7 +261,9 @@ def make_research_work(company: str, load_config=cfg_mod.load_config):
             if profile is None:
                 run.emit("error", "Could not build a profile from what the web returned.")
                 return None
-            pid = co.refresh_research_facts(conn, profile, expected_updated_at=expected)
+            pid = co.refresh_research_facts(
+                conn, profile, expected_updated_at=expected, output_root=cfg_mod.output_dir(cfg)
+            )
             if pid is None:
                 run.emit(
                     "error",

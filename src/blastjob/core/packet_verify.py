@@ -223,7 +223,6 @@ def verify_packet(
     skipped.extend(name for name in carried_checks_skipped if name not in skipped)
 
     return PacketReport(
-        artifact_dir=str(out_dir),
         groundedness=fit_score.groundedness_score if fit_score else None,
         jd_phrasing=fit_score.jd_alignment_score if fit_score else None,
         # An unscored letter is None, never 0: a call that did not happen is not
@@ -446,7 +445,8 @@ def report_json(report: PacketReport, verdict) -> dict:
         "state": verdict.state.value,
         "sendable": verdict.sendable,
         "reasons": list(verdict.reasons),
-        "artifact_dir": report.artifact_dir,
+        # No `artifact_dir`: nothing read it, and a filed packet (issue #20)
+        # must not carry an absolute path that names its old folder.
         # Which documents are unsafe, so the panel can say "the letter is held,
         # the resume is clear" instead of leaving the user to guess.
         "quarantined_artifacts": sorted(a.value for a in verdict.quarantined_artifacts),

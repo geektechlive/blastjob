@@ -18,6 +18,7 @@ from pathlib import Path
 
 from blastjob import config as cfg_mod
 from blastjob.core import followup as core_followup
+from blastjob.core.paths import locate
 from blastjob.db import client as dbc
 from blastjob.web import service, stage_lists
 from blastjob.web.runtime import Run
@@ -27,7 +28,7 @@ log = logging.getLogger(__name__)
 
 def _resolve_dir(artifact_dir: str | Path | None, cfg, run: Run) -> Path:
     if artifact_dir:
-        directory = Path(artifact_dir)
+        directory = locate(artifact_dir, cfg_mod.output_dir(cfg))
         if directory.is_dir():
             return directory
     directory = core_followup.fallback_dir(cfg_mod.output_dir(cfg))
@@ -35,14 +36,18 @@ def _resolve_dir(artifact_dir: str | Path | None, cfg, run: Run) -> Path:
     return directory
 
 
-def _register(conn, job_id: int, path: Path, directory: Path) -> None:
+def _register(conn, cfg, job_id: int, path: Path) -> None:
     """Index the draft against this job (`core/artifacts`), and against the
-    build whose folder it landed in, if any. Best-effort: never fails the draft."""
+    build whose folder it landed in, if any (compared in root form: the folder
+    may be filed). Best-effort: never fails the draft."""
     from blastjob.core import artifacts
 
     try:
-        run_pk = artifacts.run_for_dir(conn, job_id, directory)
-        artifacts.register_paths(conn, [Path(path)], job_id=job_id, build_run_id=run_pk)
+        root = cfg_mod.output_dir(cfg)
+        run_pk = artifacts.run_for_dir(conn, job_id, Path(path).parent, root)
+        artifacts.register_paths(
+            conn, [Path(path)], job_id=job_id, build_run_id=run_pk, output_root=root
+        )
     except Exception:  # noqa: BLE001
         log.warning("artifact registration failed for follow-up %s", path, exc_info=True)
 
@@ -88,7 +93,7 @@ def make_followup_work(
                 to=to,
                 on_text=lambda t: run.emit("output", t),
             )
-            _register(conn, job_id, draft.path, directory)
+            _register(conn, cfg, job_id, draft.path)
             run.emit("log", f"Saved {draft.path}")
             run.emit("log", "Draft only. Read it, edit it, then send it from your mail app.")
             return {

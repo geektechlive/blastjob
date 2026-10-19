@@ -12,14 +12,13 @@ slugs. That shared rule is why these routes belong together.
 
 from __future__ import annotations
 
-import os
 import subprocess
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from blastjob import config as cfg_mod
+from blastjob.core.artifacts import stored_path
 from blastjob.core.history import scan_history
 from blastjob.db import client as dbc
 from blastjob.web import fitscore, packet_view, packets, service
@@ -160,6 +159,7 @@ def register(app: FastAPI, deps: Deps) -> None:
             moved = sm.unkeep(c, job_id, deps.load_config().discovery.alignment_threshold)
             if moved:
                 dbc.reset_build_state(c, job_id)
+                sm.file_after_move(c, job_id, deps.load_config)
             return vh.row_response(deps, request, c, job_id, moved=moved, from_list=from_list)
         finally:
             c.close()
@@ -174,6 +174,8 @@ def register(app: FastAPI, deps: Deps) -> None:
         c = deps.conn()
         try:
             moved = service.unarchive_job(c, job_id)
+            if moved:
+                sm.file_after_move(c, job_id, deps.load_config)
             return vh.row_response(deps, request, c, job_id, moved=moved, from_list=from_list)
         finally:
             c.close()
@@ -225,11 +227,13 @@ def register(app: FastAPI, deps: Deps) -> None:
         """Every packet ever built. Reachable at last: scan_history matched a
         filename no build had written since the output layout changed."""
         cfg = deps.load_config()
-        entries = scan_history(cfg_mod.output_dir(cfg))
+        out_dir = cfg_mod.output_dir(cfg)
+        # rglob: this also finds packets filed into the bucket folders.
+        entries = scan_history(out_dir)
         entries.sort(key=lambda e: e.timestamp or "", reverse=True)
         c = deps.conn()
         try:
-            job_ids = packets.history_job_ids(c, entries)
+            job_ids = packets.history_job_ids(c, entries, output_root=out_dir)
             # Reveal opens a job's LATEST packet, so offer it only on that row.
             latest = {
                 jid: dirs[0]
@@ -247,8 +251,9 @@ def register(app: FastAPI, deps: Deps) -> None:
                     "entry": e,
                     "job_id": jid,
                     "docs": packets.role_documents(packets.packet_files(e.path), e.role),
+                    # Root form on both sides: the folder may have been filed.
                     "is_latest": bool(latest_dir)
-                    and Path(os.path.expanduser(latest_dir or "")).resolve() == e.path.resolve(),
+                    and stored_path(latest_dir or "", out_dir) == stored_path(e.path, out_dir),
                 }
             )
         return deps.render(

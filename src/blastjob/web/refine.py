@@ -15,23 +15,27 @@ day.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from blastjob import config as cfg_mod
+from blastjob.core import filing_lock
+from blastjob.core.paths import locate
 from blastjob.llm.cost import CostTracker
 from blastjob.web.runtime import Run
 
 log = logging.getLogger(__name__)
 
 
-def _register(cfg, job_id: int, run_dir: Path, artifact_dir: str) -> None:
+def _register(cfg, job_id: int, artifact_dir: str) -> None:
     """Index this job's files in the packet folder after a revision. A re-scan
     by the role's naming rules, not refine's own pick of "newest resume", so
-    another role's files in a shared folder are never attributed here.
-    Best-effort: never fails the revision."""
+    another role's files in a shared folder are never attributed here. The
+    folder is located afresh: the caller holds the shared filing lock (the
+    refine's claim is already released). Best-effort: never fails the
+    revision."""
     from blastjob.core import artifacts
     from blastjob.db import client as dbc
 
+    root = cfg_mod.output_dir(cfg)
     try:
         conn = dbc.init_db(cfg)
     except Exception:  # noqa: BLE001
@@ -41,15 +45,32 @@ def _register(cfg, job_id: int, run_dir: Path, artifact_dir: str) -> None:
         job = conn.execute("SELECT company, title FROM jobs WHERE id=?", (job_id,)).fetchone()
         if job is None:
             return
+        run_dir = locate(artifact_dir, root)
         files = artifacts.role_files(
             run_dir, company=job["company"] or "", role=job["title"] or "", job_id=job_id
         )
         if not files:
             log.warning("refine: no files matched job %s's role in %s", job_id, run_dir)
-        run_pk = artifacts.run_for_dir(conn, job_id, artifact_dir)
-        artifacts.register_paths(conn, files, job_id=job_id, build_run_id=run_pk)
+        run_pk = artifacts.run_for_dir(conn, job_id, artifact_dir, root)
+        artifacts.register_paths(conn, files, job_id=job_id, build_run_id=run_pk, output_root=root)
     except Exception:  # noqa: BLE001
         log.warning("artifact registration failed for job %s", job_id, exc_info=True)
+    finally:
+        conn.close()
+
+
+def _refile(cfg, job_id: int) -> None:
+    """Re-file the job's packets after a revision (issue #20). Best-effort."""
+    from blastjob.core import packet_filing
+    from blastjob.db import client as dbc
+
+    try:
+        conn = dbc.init_db(cfg)
+    except Exception:  # noqa: BLE001
+        log.warning("refine: filing skipped for job %s", job_id, exc_info=True)
+        return
+    try:
+        packet_filing.file_after_change(conn, cfg_mod.output_dir(cfg), job_id)
     finally:
         conn.close()
 
@@ -126,12 +147,14 @@ def make_refine_work(
         if not artifact_dir:
             run.emit("error", "No packet to revise — tailor this role first.")
             return None
-        run_dir = Path(artifact_dir).expanduser()
+        cfg = load_config()
+        root = cfg_mod.output_dir(cfg)
+        # Where the packet is now: filing may have moved it into a bucket.
+        run_dir = locate(artifact_dir, root)
         if not run_dir.is_dir():
             run.emit("error", f"Packet folder is gone: {run_dir}")
             return None
 
-        cfg = load_config()
         identity = _job_identity(cfg, job_id)
         if job_id is not None and identity is None:
             # Without the job's own company and role the only way to pick a resume
@@ -149,6 +172,11 @@ def make_refine_work(
                 "error", "A tailor or another revision holds this job; try again after it ends."
             )
             return None
+        # Located again, under the shared lock, now that the claim exists: its
+        # running build_runs row keeps the filer off this job's entries while
+        # the model streams, so the lock is never held across an LLM call.
+        async with filing_lock.shared_async(root):
+            run_dir = locate(artifact_dir, root)
         run.emit("log", f"Revising the resume in {run_dir.name}...")
         try:
             new_path, fit = await run_refine(
@@ -169,7 +197,9 @@ def make_refine_work(
             if job_id is not None:
                 _release(cfg, run.id)
         if job_id is not None:
-            _register(cfg, job_id, run_dir, artifact_dir)
+            async with filing_lock.shared_async(root):
+                _register(cfg, job_id, artifact_dir)
+            _refile(cfg, job_id)
         score = getattr(fit, "groundedness_score", None)
         run.emit(
             "log",

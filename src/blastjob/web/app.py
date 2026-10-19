@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from blastjob import config as cfg_mod
-from blastjob.core import closure
+from blastjob.core import closure, filing_lock
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
@@ -361,7 +361,8 @@ def create_app(
             return HTMLResponse("Invalid action", status_code=400)
         c = conn()
         try:
-            moved = sm.run_action(c, job_id, action)
+            # A move that took also re-files the job's packets (best-effort).
+            moved = sm.run_action(c, job_id, action, load_config=load_config)
             if moved and action == "advance":
                 # Advance keeps the row on Applied (only its stage changes), so
                 # the empty-200 outerHTML swap would delete a row that is still
@@ -391,6 +392,8 @@ def create_app(
                 reason=reason,
                 note=note,
             )
+            if moved:
+                sm.file_after_move(c, job_id, load_config)
             return vh.row_response(deps, request, c, job_id, moved=moved, from_list=from_list)
         finally:
             c.close()
@@ -428,11 +431,12 @@ def create_app(
                 # Only the move that first stamps applied_at is a send; a move
                 # back into applied (screen -> applied) is the same attempt.
                 if first_send:
-                    send_note = sm.record_send_for_job(c, job_id)
+                    send_note = sm.record_send_for_job(c, job_id, load_config=load_config)
                 try:
                     ps.record_outcome_for_job(c, job_id, status)
                 except Exception:  # noqa: BLE001 — a missing send is not an error
                     pass
+                sm.file_after_move(c, job_id, load_config)
             return _render_app_status(request, c, job_id, send_note=send_note)
         finally:
             c.close()
@@ -465,43 +469,46 @@ def create_app(
             packet = packets.packet_for_job(c, job_id, load_config=load_config)
             if not packet or not packet.get("dir"):
                 return HTMLResponse("No packet for this job", status_code=404)
-            target = packets.safe_output_path(load_config(), packet["dir"])
-            if target is None or not target.exists():
-                return HTMLResponse("No packet folder", status_code=404)
-            row = service.job_detail(c, job_id)
-            title = row["title"] if row is not None else ""
-            # The folder is shared by every role tailored for this company that
-            # day: release only this job's documents, or another role's held
-            # files come back public under a report that still says held.
-            try:
-                found = locate_resume(target, row["company"] if row else "", title)
-            except FileNotFoundError:
-                return HTMLResponse("No resume for this role in the packet", status_code=404)
-            # A legacy per-role folder (no slug) belongs to this role whole.
-            stems = [found.stem, found.cover_stem] if found.slug else None
-            moved = qz.release(target, reason=stated, stems=stems)
-            if not moved:
-                return HTMLResponse("Nothing is quarantined", status_code=400)
-            # The folder and the sidecar must agree. Without this the documents
-            # come back but the report still says "quarantined", so the page
-            # keeps showing the held badge and offers Release again.
-            if not packet_view.record_override(
-                packet["dir"], reason=stated, role_slug=_packet_role_slug(packet, title) or ""
-            ):
-                # Public files under a report that still says "quarantined" would be
-                # refused by every download with no explanation. Put them back and say so.
-                log.warning("released job %s but could not record the override", job_id)
-                stuck = qz.undo_release(target, moved, why="override could not be recorded")
-                suffix = (
-                    f" {len(stuck)} file(s) could not be re-held and are still in the folder."
-                    if stuck
-                    else " Nothing was released; try again."
-                )
-                return HTMLResponse(
-                    "The release could not be recorded in the packet report." + suffix,
-                    status_code=500,
-                )
-            return HTMLResponse("", headers={"HX-Refresh": "true"})
+            # Under the shared filing lock, located inside it: release, the
+            # override record and an undo all write into the packet folder.
+            async with filing_lock.shared_async(cfg_mod.output_dir(load_config())):
+                target = packets.safe_output_path(load_config(), packet["dir"])
+                if target is None or not target.exists():
+                    return HTMLResponse("No packet folder", status_code=404)
+                row = service.job_detail(c, job_id)
+                title = row["title"] if row is not None else ""
+                # The folder is shared by every role tailored for this company that
+                # day: release only this job's documents, or another role's held
+                # files come back public under a report that still says held.
+                try:
+                    found = locate_resume(target, row["company"] if row else "", title)
+                except FileNotFoundError:
+                    return HTMLResponse("No resume for this role in the packet", status_code=404)
+                # A legacy per-role folder (no slug) belongs to this role whole.
+                stems = [found.stem, found.cover_stem] if found.slug else None
+                moved = qz.release(target, reason=stated, stems=stems)
+                if not moved:
+                    return HTMLResponse("Nothing is quarantined", status_code=400)
+                # The folder and the sidecar must agree. Without this the documents
+                # come back but the report still says "quarantined", so the page
+                # keeps showing the held badge and offers Release again.
+                if not packet_view.record_override(
+                    str(target), reason=stated, role_slug=_packet_role_slug(packet, title) or ""
+                ):
+                    # Public files under a report that still says "quarantined" would be
+                    # refused by every download with no explanation. Put them back and say so.
+                    log.warning("released job %s but could not record the override", job_id)
+                    stuck = qz.undo_release(target, moved, why="override could not be recorded")
+                    suffix = (
+                        f" {len(stuck)} file(s) could not be re-held and are still in the folder."
+                        if stuck
+                        else " Nothing was released; try again."
+                    )
+                    return HTMLResponse(
+                        "The release could not be recorded in the packet report." + suffix,
+                        status_code=500,
+                    )
+                return HTMLResponse("", headers={"HX-Refresh": "true"})
         finally:
             c.close()
 
@@ -521,6 +528,9 @@ def create_app(
             ok = closure.set_manual_verdict(
                 c, job_id, is_open=verdict == "open", now=datetime.now()
             )
+            if ok:
+                # The verdict can move application_state, so re-file its packets.
+                sm.file_after_move(c, job_id, load_config)
             job = service.job_detail(c, job_id) if ok else None
             if job is None:
                 return HTMLResponse("Not found", status_code=404)

@@ -46,7 +46,7 @@ def _job(conn: sqlite3.Connection, ext: str, review: str, app_state: str = "", a
 def test_status_dropdown_records_send_only_when_first_stamping_applied_at(env, monkeypatch):
     client, _, conn = env
     sends: list[int] = []
-    monkeypatch.setattr(sm, "record_send_for_job", lambda c, j: sends.append(j) or "")
+    monkeypatch.setattr(sm, "record_send_for_job", lambda c, j, **_k: sends.append(j) or "")
     first = _job(conn, "a", "kept")
     again = _job(conn, "b", "kept", "screen", "2026-10-01")
 

@@ -472,7 +472,6 @@ async def _refine_locked(
         )
         report = dataclasses.replace(
             report,
-            artifact_dir=str(run_dir),
             cover_letter_groundedness=_carried_letter_score(report, old_report, carried),
         )
 

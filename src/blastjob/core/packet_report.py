@@ -96,7 +96,6 @@ class PacketReport:
     as one). `cover_letter_groundedness` is None when the packet has no letter.
     """
 
-    artifact_dir: str = ""
     groundedness: int | None = None
     jd_phrasing: int | None = None
     cover_letter_groundedness: int | None = None

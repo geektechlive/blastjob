@@ -12,6 +12,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from blastjob import config as cfg_mod
+from blastjob.core.artifacts import stored_path
 from blastjob.core.quarantine import held_names
 from blastjob.models.config import BlastJobConfig
 from blastjob.web import packets
@@ -42,7 +44,11 @@ def resolve_download(
 def is_downloadable(
     conn: sqlite3.Connection, cfg: BlastJobConfig, job_id: int, path: str | Path
 ) -> bool:
-    """True when the route, asked for this file's basename, serves THIS file."""
-    want = Path(path).expanduser().resolve()
+    """True when the route, asked for this file's basename, serves THIS file.
+
+    Compared entry-relative (root form, `paths.canonical`): the index stores
+    root form and the route serves the file wherever filing put its entry."""
+    root = cfg_mod.output_dir(cfg)
+    want = stored_path(path, root)
     served = resolve_download(conn, cfg, job_id, want.name)
-    return served is not None and served.resolve() == want
+    return served is not None and stored_path(served, root) == want

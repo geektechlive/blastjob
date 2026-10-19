@@ -13,12 +13,15 @@ verifies. Draft-only — nothing is ever sent.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 from pathlib import Path
 
 from blastjob import config as cfg_mod
+from blastjob.core import filing_lock, packet_filing
 from blastjob.core.packet_verify import PacketNotQuarantinedError
+from blastjob.core.paths import canonical
 from blastjob.db import client as dbc
 from blastjob.llm import caching
 from blastjob.llm.cost import CostTracker
@@ -75,11 +78,11 @@ def _job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
 
 
 def _register_outputs(
-    conn: sqlite3.Connection, job: sqlite3.Row, run_id: str, out_dir: Path
+    conn: sqlite3.Connection, job: sqlite3.Row, run_id: str, out_dir: Path, output_root: Path
 ) -> None:
-    """Index the files this build wrote for THIS role (`core/artifacts`).
-    Best-effort: the build is already recorded as done, and bookkeeping never
-    changes that or reaches the user as an error."""
+    """Index the files this build wrote for THIS role (`core/artifacts`), in
+    root form. Best-effort: the build is already recorded as done, and
+    bookkeeping never changes that or reaches the user as an error."""
     from blastjob.core import artifacts
 
     try:
@@ -94,7 +97,11 @@ def _register_outputs(
         if apply_page is not None:
             files = [*files, apply_page]
         artifacts.register_paths(
-            conn, files, job_id=job["id"], build_run_id=artifacts.build_run_pk(conn, run_id)
+            conn,
+            files,
+            job_id=job["id"],
+            build_run_id=artifacts.build_run_pk(conn, run_id),
+            output_root=output_root,
         )
     except Exception:  # noqa: BLE001 -- see docstring
         log.warning("artifact registration failed for build %s", run_id, exc_info=True)
@@ -128,6 +135,10 @@ def make_tailor_work(job_id: int, load_config=cfg_mod.load_config):
             ct = CostTracker()
             ok = False
             out_dir = None
+            root = cfg_mod.output_dir(cfg)
+            # No filing lock while the model streams: the claim's running
+            # build_runs row makes the filer skip this job's entries and
+            # today's, and `run_build` takes the lock only to pick the folder.
             try:
                 out_dir, _fit = await run_build(
                     company=job["company"],
@@ -148,12 +159,26 @@ def make_tailor_work(job_id: int, load_config=cfg_mod.load_config):
                 run.emit("error", f"{type(e).__name__}: {e}")
             except Exception as e:  # noqa: BLE001 — record on the run, mark build failed
                 run.emit("error", f"{type(e).__name__}: {e}")
-            dbc.finish_build(conn, run.id, artifact_dir=str(out_dir or ""), ok=ok)
-            if ok:
-                run.emit("log", f"Saved bundle to {out_dir}")
-                if out_dir is not None:
-                    _register_outputs(conn, job, run.id, out_dir)
-            return {"artifact_dir": str(out_dir or ""), "ok": ok}
+            # Shared lock while the build is marked done and its last file (the
+            # apply-link page) is written: once done, nothing else protects it.
+            async with contextlib.AsyncExitStack() as held:
+                try:
+                    await held.enter_async_context(filing_lock.shared_async(root))
+                except OSError:
+                    # The build must still be recorded, lock or no lock.
+                    log.warning("filing lock unavailable for build %s", run.id, exc_info=True)
+                # Stored in root form (it is at the root now; canonical is the rule).
+                stored = str(canonical(out_dir, root)) if out_dir else ""
+                dbc.finish_build(conn, run.id, artifact_dir=stored, ok=ok)
+                if ok:
+                    run.emit("log", f"Saved bundle to {out_dir}")
+                    if out_dir is not None:
+                        _register_outputs(conn, job, run.id, out_dir, root)
+            if ok and out_dir is not None:
+                # After the lock is released: a rebuild of a submitted job lands
+                # at the root, and this files it now.
+                packet_filing.file_after_change(conn, root, job_id)
+            return {"artifact_dir": stored, "ok": ok}
         finally:
             conn.close()
 

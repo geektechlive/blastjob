@@ -79,12 +79,39 @@ uv run --extra dev ruff check src tests
 
 ## Where your data lives
 
+Everything blastjob knows about you lives in three places on your own machine.
+None of them is inside this repository, so `git` cannot see them.
+
 | What | Where |
 |---|---|
-| Data dir: database, settings, work history, templates, logs, backups | `BLASTJOB_DATA_DIR`, default `~/.blastjob` |
-| Settings | the `settings` table in `<data_dir>/blastjob.db` (edit with `blastjob setup` or `/settings`) |
-| Secrets (API keys, app passwords) | `<data_dir>/secrets.env` by default (`paths.secrets_file`); settings hold only the env-var names |
-| Generated documents | `~/Documents/blastjob/` by default (`paths.output_dir`) |
+| **Data dir** | `BLASTJOB_DATA_DIR`, default `~/.blastjob` |
+| `blastjob.db` | your settings, every job and its score, applications and their history, people found for outreach, company profiles, pay data you recorded, and your LinkedIn export's connections (name, profile URL, email if shared, company, position, when you connected, message count and latest date; never message text) |
+| `work_history.md`, `templates/` | your merged work history and the resume templates built from it |
+| `backups/` | a database copy at the start of each daily run (14 kept) and a snapshot before each work-history overwrite |
+| `mail-debug/` | up to 20 job-alert emails that could not be parsed, kept so the parser can be fixed |
+| `daily.log`, `web.launchd.log` | logs from the background services, if you install them |
+| **Secrets file** | `paths.secrets_file`, default `<data_dir>/secrets.env` (make it mode 600). API keys and app passwords; settings hold only the variable *names* |
+| **Output folder** | `paths.output_dir`, default `~/Documents/blastjob` |
+| `<company>-<date>/` at the top | resumes, cover letters, prep packs and notes still to send |
+| `Submitted/` | packets for jobs you applied to |
+| `Closed before applying/` | packets for postings that closed before you applied |
+| `Archive/` | everything else: archived jobs, old or unlinked folders |
+
+The app files output folders for you as a job changes stage; a folder is moved
+whole and never copied. To put your documents somewhere else, run
+`uv run blastjob setup set paths.output_dir <path>`. **On a Mac with iCloud
+"Desktop & Documents" turned on, `~/Documents/blastjob` syncs to iCloud.** Pick
+a path outside `~/Documents` if you don't want that.
+
+**What leaves your machine:** your work history and each job description go to
+the LLM provider you chose (Anthropic, OpenAI, or the `claude` CLI). Company
+names and job titles go to Jina search if you add a Jina key. Discovery calls
+public job boards and Adzuna with your search terms. The daily digest goes to
+Discord only if you turn it on. Nothing else is sent anywhere, and nothing is
+ever submitted on your behalf.
+
+**To back up or remove everything,** copy or delete the data dir, the secrets
+file (if you moved it) and the output folder.
 
 **The privacy rule:** this repository holds code and generic docs only. Your work
 history, settings, database, documents, contacts and secrets never go into it.

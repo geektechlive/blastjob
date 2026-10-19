@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -52,6 +53,13 @@ _ROLE_ABBREVIATIONS_TIGHT = (
     ("operations", "Ops"),
     ("infrastructure", "Infra"),
     ("engineering", "Eng"),
+    ("manufacturing", "Mfg"),
+)
+# Earlier versions of the tight table, newest first. A role whose token they
+# hashed differently still names files on disk that were never renamed, and
+# `document_tokens` must keep matching them (`core/packet_renames.py`).
+_PRIOR_TIGHT_TABLES: tuple[tuple[tuple[str, str], ...], ...] = (
+    tuple(p for p in _ROLE_ABBREVIATIONS_TIGHT if p[0] != "manufacturing"),
 )
 
 
@@ -74,10 +82,12 @@ def _abbreviate(text: str, table: tuple[tuple[str, str], ...]) -> str:
     return text
 
 
-def _role_words(role: str, *, tight: bool) -> list[str]:
+def _role_words(
+    role: str, *, tight: bool, tight_table: tuple[tuple[str, str], ...] = _ROLE_ABBREVIATIONS_TIGHT
+) -> list[str]:
     text = _abbreviate(re.sub(r"\([^)]*\)", " ", role), _ROLE_ABBREVIATIONS)
     if tight:
-        text = _abbreviate(text, _ROLE_ABBREVIATIONS_TIGHT)
+        text = _abbreviate(text, tight_table)
     return [w for w in _words(text) if w.lower() not in _FILLER_WORDS]
 
 
@@ -91,12 +101,16 @@ def document_token(company: str, role: str) -> str:
     company words (safe: a packet folder holds one company). Only a cut into
     the role itself is lossy, and it carries a hash of the raw company + role
     so two roles at one company never share a name."""
+    return _document_token(company, role, _ROLE_ABBREVIATIONS_TIGHT)
+
+
+def _document_token(company: str, role: str, tight_table: tuple[tuple[str, str], ...]) -> str:
     full = f"{name_token(company)}_{name_token(role)}"
     if len(full) <= DOCUMENT_TOKEN_MAX:
         return full
     company_words = _company_words(company) or ["Unknown"]
     for tight in (False, True):
-        role_words = _role_words(role, tight=tight) or _words(role)
+        role_words = _role_words(role, tight=tight, tight_table=tight_table) or _words(role)
         for keep in range(len(company_words), 0, -1):
             token = "_".join(company_words[:keep] + role_words)
             if len(token) <= DOCUMENT_TOKEN_MAX:
@@ -111,9 +125,12 @@ def document_token(company: str, role: str) -> str:
 
 def document_tokens(company: str, role: str) -> tuple[str, ...]:
     """Every token a packet document for this company+role may carry: the
-    capped one and, for packets built before the cap, the uncapped one."""
+    current capped one first, the ones earlier abbreviation tables produced
+    (a file not yet renamed), and, for packets built before the cap, the
+    uncapped one."""
     legacy = f"{name_token(company)}_{name_token(role)}"
-    return tuple(dict.fromkeys((document_token(company, role), legacy)))
+    prior = (_document_token(company, role, table) for table in _PRIOR_TIGHT_TABLES)
+    return tuple(dict.fromkeys((document_token(company, role), *prior, legacy)))
 
 
 def document_tokens_regex(company: str, role: str) -> str:
@@ -129,17 +146,106 @@ def person_slug(full_name: str) -> str:
     return name_token(full_name) or "Candidate"
 
 
+# --- the filed layout (issue #20) ----------------------------------------------
+#
+# The output folder files itself: a top-level ENTRY (a direct child folder such
+# as `acme-2026-10-16`) sits at the root while its packet is still to send, and
+# `core/packet_filing.py` moves it whole into one of these by one rename.
+SUBMITTED = "Submitted"
+CLOSED_BEFORE_APPLYING = "Closed before applying"
+ARCHIVE = "Archive"
+BUCKETS: tuple[str, ...] = (SUBMITTED, CLOSED_BEFORE_APPLYING, ARCHIVE)
+
+
+def _norm(path: str | Path) -> Path:
+    return Path(os.path.normpath(os.path.expanduser(str(path))))
+
+
+def _under(path: Path, output_root: str | Path) -> tuple[Path, tuple[str, ...]] | None:
+    """(the root as `path` spells it, the parts below it), or None when `path`
+    is not inside the output dir. Tries the configured spelling and the
+    resolved one: `artifacts.register` stores resolved paths, `finish_build`
+    the folder as built."""
+    root = _norm(output_root)
+    for base in dict.fromkeys((root, root.resolve())):
+        try:
+            return base, path.relative_to(base).parts
+        except ValueError:
+            continue
+    return None
+
+
+def canonical(path: str | Path, output_root: str | Path) -> Path:
+    """The ROOT form of a packet path: home-expanded, with a bucket segment
+    directly under the output dir removed. Every path written to the database
+    goes through this, so a stored path never names a bucket and filing an
+    entry never has to rewrite a row. A path outside the output dir comes back
+    expanded and otherwise untouched."""
+    p = _norm(path)
+    split = _under(p, output_root)
+    if split is None:
+        return p
+    base, parts = split
+    if len(parts) >= 2 and parts[0] in BUCKETS:
+        return base.joinpath(*parts[1:])
+    return p
+
+
+def locate(path: str | Path, output_root: str | Path) -> Path:
+    """Where a stored packet path is NOW: the root or bucket form (root first)
+    where the FULL path exists; failing that, the first place its entry folder
+    exists, so a stray empty root folder never shadows the real filed entry.
+    Accepts either form. When the entry is nowhere the root form comes back (a
+    reader then reports it missing). Pure: never creates, moves or locks
+    anything, and never returns a path outside the output dir for one inside
+    it."""
+    canon = canonical(path, output_root)
+    split = _under(canon, output_root)
+    # parts[0] is a bucket only when `path` is the bucket folder itself.
+    if split is None or not split[1] or split[1][0] in BUCKETS:
+        return canon
+    base, parts = split
+    places = [base, *(base / b for b in BUCKETS)]
+    for place in places:
+        if place.joinpath(*parts).exists():
+            return place.joinpath(*parts)
+    for place in places:
+        if (place / parts[0]).exists():
+            return place.joinpath(*parts)
+    return canon
+
+
+def entry_name(path: str | Path, output_root: str | Path) -> str | None:
+    """The top-level entry a stored path lives in (`acme-2026-10-16`), or None
+    for a path outside the output dir, the dir itself, or a bucket folder."""
+    split = _under(canonical(path, output_root), output_root)
+    if split is None or not split[1] or split[1][0] in BUCKETS:
+        return None
+    return split[1][0]
+
+
 def application_dir(output_root: Path, company: str) -> Path:
     """One flat folder per company per day: {root}/{company-slug}-{date}/.
 
     Shared across roles applied to the same company that day — files inside carry
     the role in their name, so multiple postings don't collide.
+
+    A build always lands at the ROOT. When today's name is already filed in a
+    bucket (the user rebuilt a submitted job today), the next free `-2`, `-3`
+    ... is used instead, so the new packet never merges into a filed one; the
+    post-build filing hook then files it by the job's state. A name that exists
+    at the root is reused (that is the shared same-day folder).
     """
     today = date.today().isoformat()
     company_slug = slugify(company) or "unknown-company"
-    base = output_root / f"{company_slug}-{today}"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    n = 1
+    while True:
+        name = f"{company_slug}-{today}" if n == 1 else f"{company_slug}-{today}-{n}"
+        base = output_root / name
+        if base.is_dir() or not any((output_root / b / name).exists() for b in BUCKETS):
+            base.mkdir(parents=True, exist_ok=True)
+            return base
+        n += 1
 
 
 def _normalize_role(role: str) -> str:

@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import re
+import sqlite3
 from collections.abc import Mapping
 from datetime import date
 from functools import lru_cache
@@ -25,9 +27,9 @@ from pathlib import Path
 from typing import Any
 
 from blastjob import config as cfg_mod
-from blastjob.core import artifacts
+from blastjob.core import artifacts, filing_lock
 from blastjob.core import company as co
-from blastjob.core.paths import application_dir, resolve_role_slug, slugify
+from blastjob.core.paths import application_dir, locate, resolve_role_slug, slugify
 from blastjob.llm import caching
 from blastjob.llm.providers import make_stream
 from blastjob.models.config import BlastJobConfig
@@ -176,7 +178,12 @@ def build_prep_messages(
     return system, user
 
 
-def render_header(job: Mapping[str, Any], profile: dict | None, today: date) -> str:
+def render_header(
+    job: Mapping[str, Any],
+    profile: dict | None,
+    today: date,
+    output_root: Path | None = None,
+) -> str:
     """Deterministic front matter — written by us, never by the model."""
     title = str(_get(job, "title") or "Role")
     company = str(_get(job, "company") or "Unknown company")
@@ -189,6 +196,9 @@ def render_header(job: Mapping[str, Any], profile: dict | None, today: date) -> 
         f"- Generated: {today.isoformat()}",
     ]
     workup = str((profile or {}).get("workup_path") or "").strip()
+    if workup and output_root is not None:
+        # Where the workup is NOW: its entry may have been filed (issue #20).
+        workup = str(locate(workup, output_root))
     if workup:
         lines.append(f"- Company workup: {workup}")
     return "\n".join(lines)
@@ -396,16 +406,44 @@ async def generate_prep(cfg: BlastJobConfig, conn, job_id: int, *, on_text=None)
 
     body = "".join(body_parts)
     log.info("prep pack for job %s flagged %d unverified numbers", job_id, flagged)
-    header = render_header(job, profile, date.today())
-    # Next to the packet it prepares for: the job's newest successful build
-    # folder, read from build_runs (two layouts exist; never recomputed).
-    # Before 2026-10-09 the pack landed in TODAY's folder, recorded nowhere.
-    packet = artifacts.latest_packet(conn, job_id)
-    out_dir = packet[1] if packet else None
-    path = write_prep_pack(cfg, company, role, f"{header}\n\n{body}", out_dir=out_dir)
-    artifacts.register_paths(
-        conn, [path], job_id=job_id, build_run_id=packet[0] if packet else None
-    )
+    root = cfg_mod.output_dir(cfg)
+    header = render_header(job, profile, date.today(), output_root=root)
+    # Async wait for the lock, so a filing pass never stalls the event loop.
+    async with filing_lock.shared_async(root):
+        return save_prep_pack(conn, cfg, job_id, company, role, f"{header}\n\n{body}", lock=False)
+
+
+def save_prep_pack(
+    conn: sqlite3.Connection,
+    cfg: BlastJobConfig,
+    job_id: int,
+    company: str,
+    role: str,
+    text: str,
+    *,
+    lock: bool = True,
+) -> Path:
+    """Write the finished pack next to the packet it prepares for: the job's
+    newest successful build folder, read from build_runs (two layouts exist;
+    never recomputed). Before 2026-10-09 the pack landed in TODAY's folder,
+    recorded nowhere.
+
+    The folder is located at WRITE time, under the shared filing lock: the pack
+    streams for minutes and the packet may have been filed meanwhile. The
+    index row is stored in root form. `lock=False` when the caller already
+    holds the shared lock (the async path takes it with `shared_async`)."""
+    root = cfg_mod.output_dir(cfg)
+    with filing_lock.shared(root) if lock else contextlib.nullcontext():
+        packet = artifacts.latest_packet(conn, job_id, output_root=root)
+        out_dir = packet[1] if packet else None
+        path = write_prep_pack(cfg, company, role, text, out_dir=out_dir)
+        artifacts.register_paths(
+            conn,
+            [path],
+            job_id=job_id,
+            build_run_id=packet[0] if packet else None,
+            output_root=root,
+        )
     return path
 
 

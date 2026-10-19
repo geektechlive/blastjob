@@ -516,6 +516,9 @@ excluded, it runs in a neutral directory, and stdout noise is filtered.
   from a running job.
 - State: `blastjob.db` (SQLite, WAL) plus `work_history.md`, `templates/`, logs
   and `backups/`; an online backup is taken before every daily run.
-- Output: `paths.output_dir`, default `~/Documents/blastjob/`.
+- Output: `paths.output_dir`, default `~/Documents/blastjob/`. Packets still to send
+  sit at the top level; the rest are filed whole into `Submitted/`,
+  `Closed before applying/` and `Archive/` (`core/packet_filing.py`). Stored paths
+  stay in root form and readers resolve them with `paths.locate`.
 - Secrets: the file at `paths.secrets_file` (default `<data_dir>/secrets.env`),
   never in the repo and never in settings.

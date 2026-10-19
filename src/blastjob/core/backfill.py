@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from blastjob.core import artifacts, events
+from blastjob.core.paths import locate
 
 _SOURCE = "backfill"
 
@@ -31,6 +32,9 @@ _SOURCE = "backfill"
 @dataclass
 class _Tally:
     apply: bool
+    # The output dir: stored paths are root form and are located through it
+    # (a packet may be filed into a bucket, issue #20); None = read as stored.
+    root: Path | None = None
     seen: set[Path] = field(default_factory=set)
     new: int = 0
     indexed: int = 0
@@ -52,7 +56,7 @@ def _register(
     if not path.is_file():
         t.missing.append(f"{label}: {path}")
         return
-    if artifacts.is_registered(conn, path):
+    if artifacts.is_registered(conn, path, t.root):
         t.indexed += 1
         if not t.apply:
             return
@@ -62,10 +66,19 @@ def _register(
         return
     try:
         artifacts.register(
-            conn, path, artifacts.kind_for(path.name), job_id=job_id, build_run_id=run_pk
+            conn,
+            path,
+            artifacts.kind_for(path.name),
+            job_id=job_id,
+            build_run_id=run_pk,
+            output_root=t.root,
         )
     except (OSError, ValueError) as exc:
         t.missing.append(f"{label}: {path} ({type(exc).__name__})")
+
+
+def _where(raw: str, t: _Tally) -> Path:
+    return locate(raw, t.root) if t.root is not None else Path(raw).expanduser()
 
 
 def _build_outputs(conn: sqlite3.Connection, t: _Tally) -> int:
@@ -76,7 +89,7 @@ def _build_outputs(conn: sqlite3.Connection, t: _Tally) -> int:
     ).fetchall()
     for r in rows:
         label = f"build run #{r['id']} (job #{r['job_id']})"
-        folder = Path(r["artifact_dir"]).expanduser()
+        folder = _where(r["artifact_dir"], t)
         if not folder.is_dir():
             t.missing.append(f"{label}: folder {folder}")
             continue
@@ -102,8 +115,8 @@ def _sent_documents(conn: sqlite3.Connection, t: _Tally) -> int:
             if not raw:
                 continue
             count += 1
-            path = Path(raw).expanduser().resolve()
-            run_pk = artifacts.run_for_dir(conn, r["job_id"], path.parent)
+            path = _where(raw, t).resolve()
+            run_pk = artifacts.run_for_dir(conn, r["job_id"], path.parent, t.root)
             _register(conn, t, path, r["job_id"], run_pk, f"sent #{r['id']} (job #{r['job_id']})")
     return count
 
@@ -148,9 +161,10 @@ def _first_date(*candidates: str | None) -> str | None:
     return None
 
 
-def run(conn: sqlite3.Connection, *, apply: bool) -> str:
-    """The backfill report; the writes too when `apply`."""
-    t = _Tally(apply=apply)
+def run(conn: sqlite3.Connection, *, apply: bool, output_root: Path | None = None) -> str:
+    """The backfill report; the writes too when `apply`. Pass the output dir so
+    filed packets are found and rows are written in root form."""
+    t = _Tally(apply=apply, root=output_root)
     runs = _build_outputs(conn, t)
     sent = _sent_documents(conn, t)
     plan, undated = _planned_events(conn)

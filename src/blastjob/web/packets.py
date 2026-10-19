@@ -29,6 +29,8 @@ from typing import Any
 
 from blastjob import config as cfg_mod
 from blastjob.core import quarantine as qz
+from blastjob.core.artifacts import stored_path
+from blastjob.core.paths import document_tokens, locate
 from blastjob.db import client as dbc
 from blastjob.models.config import BlastJobConfig
 
@@ -42,7 +44,11 @@ _TRACKED_FILES: tuple[tuple[str, str], ...] = (
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
 
 
-def _expand(raw: str) -> Path:
+def _expand(raw: str, output_root: Path | None = None) -> Path:
+    """A stored packet path as it is on disk NOW: filing may have moved its
+    entry into a bucket folder (`paths.locate`). Without a root, only expanded."""
+    if output_root is not None:
+        return locate(raw, output_root)
     return Path(os.path.expanduser(raw))
 
 
@@ -72,6 +78,7 @@ def packet_for_job(
     if not rows:
         return None
 
+    cfg = load_config()
     latest = rows[0]
     latest_status = latest["status"]
 
@@ -101,16 +108,18 @@ def packet_for_job(
         }
 
     artifact_dir = chosen["artifact_dir"]
-    path = _expand(artifact_dir)
+    path = _expand(artifact_dir, cfg_mod.output_dir(cfg))
     exists = path.is_dir()
-    stale, stale_reason = staleness(chosen["created_at"], load_config()) if exists else (False, "")
+    stale, stale_reason = staleness(chosen["created_at"], cfg) if exists else (False, "")
     if exists:
         jd_stale, jd_reason = jd_staleness(conn, job_id, chosen["created_at"])
         if jd_stale:
             stale, stale_reason = True, jd_reason
 
     return {
-        "dir": artifact_dir,
+        # Where the folder is NOW (it may be filed); `stored_dir` is the row.
+        "dir": str(path),
+        "stored_dir": artifact_dir,
         "built_at": chosen["created_at"],
         "exists": exists,
         "status": chosen["status"],
@@ -167,14 +176,20 @@ def _compact(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (text or "").lower())
 
 
-def role_documents(files: list[dict[str, Any]], title: str) -> dict[str, str]:
+def role_documents(files: list[dict[str, Any]], title: str, *, company: str = "") -> dict[str, str]:
     """The resume and cover letter .docx that belong to `title`.
 
     A current-layout folder is shared by every role tailored for that company
     that day, so a bare "first resume in the folder" can hand over another
     role's resume. The builder puts the role in the filename, so match on it;
-    legacy per-role folders use bare names and have only one of each."""
+    legacy per-role folders use bare names and have only one of each.
+
+    With `company`, the exact document tokens (`paths.document_tokens`) are
+    tried first: a capped token abbreviates the title ("Dir", "Mfg"), so the
+    title text alone cannot find it, and "Mark applied" would then record no
+    as-sent snapshot for exactly the packets about to be sent."""
     want = _compact(title)
+    tokens = document_tokens(company, title) if company else ()
     docs: dict[str, str] = {}
     for kind in ("resume", "cover"):
         candidates = [
@@ -182,7 +197,8 @@ def role_documents(files: list[dict[str, Any]], title: str) -> dict[str, str]:
             for f in files
             if f[f"is_{kind}"] and f["name"].endswith(".docx") and not f.get("quarantined")
         ]
-        mine = [n for n in candidates if want and want in _compact(n)]
+        exact = [n for n in candidates if any(n.endswith(f"_-_{t}.docx") for t in tokens)]
+        mine = exact or [n for n in candidates if want and want in _compact(n)]
         # The builder truncates long titles in filenames, so a leading slice of
         # the title is the fallback -- long enough that two roles won't share it.
         head = want[:_TRUNCATED_TITLE_CHARS]
@@ -229,12 +245,15 @@ def job_packet_dirs(conn, job_id: int) -> list[str]:
     return list(dict.fromkeys(r["artifact_dir"] for r in rows))
 
 
-def history_job_ids(conn, entries: list) -> dict[tuple[Path, str], int]:
+def history_job_ids(
+    conn, entries: list, output_root: Path | None = None
+) -> dict[tuple[Path, str], int]:
     """Map each history entry's folder+role to the job whose build produced it.
 
     Only `build_runs.artifact_dir` is trusted (two layouts exist on disk, so a
     path is never recomputed). A shared company-day folder can hold several
-    roles; the job is chosen by title, and an ambiguous folder links nothing."""
+    roles; the job is chosen by title, and an ambiguous folder links nothing.
+    Folders are compared in root form, so a filed packet still links."""
     by_dir: dict[Path, list[tuple[int, str]]] = {}
     rows = conn.execute(
         "SELECT DISTINCT b.job_id, b.artifact_dir, j.title FROM build_runs b "
@@ -242,16 +261,17 @@ def history_job_ids(conn, entries: list) -> dict[tuple[Path, str], int]:
     ).fetchall()
     for r in rows:
         try:
-            key = _expand(r["artifact_dir"]).resolve()
+            key = stored_path(r["artifact_dir"], output_root)
         except (OSError, RuntimeError):
             continue
         by_dir.setdefault(key, []).append((int(r["job_id"]), r["title"] or ""))
     entries_per_dir: dict[Path, int] = {}
     for e in entries:
-        entries_per_dir[e.path.resolve()] = entries_per_dir.get(e.path.resolve(), 0) + 1
+        k = stored_path(e.path, output_root)
+        entries_per_dir[k] = entries_per_dir.get(k, 0) + 1
     out: dict[tuple[Path, str], int] = {}
     for e in entries:
-        folder = e.path.resolve()
+        folder = stored_path(e.path, output_root)
         jobs = dict(by_dir.get(folder, []))
         same_title = [jid for jid, title in jobs.items() if _compact(title) == _compact(e.role)]
         if len(same_title) == 1:
@@ -342,9 +362,10 @@ def safe_output_path(cfg: BlastJobConfig, raw: str) -> Path | None:
     a path that ultimately came from the database."""
     if not raw:
         return None
-    root = cfg_mod.output_dir(cfg).resolve()
+    out_dir = cfg_mod.output_dir(cfg)
+    root = out_dir.resolve()
     try:
-        candidate = _expand(raw).resolve()
+        candidate = _expand(raw, out_dir).resolve()
     except (OSError, RuntimeError):
         return None
     try:

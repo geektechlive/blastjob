@@ -87,7 +87,6 @@ class PacketReportView:
     major_count: int = 0
     minor_count: int = 0
     source_path: str = ""
-    artifact_dir: str = ""
     # Which checks ran, which crashed, which sat out. A packet whose checks
     # did not run is NOT a clean packet -- see `core/packet_report.PacketReport`.
     checks_run: tuple[str, ...] = ()
@@ -224,7 +223,6 @@ def load_packet_report(
             major_count=len(major),
             minor_count=len(minor),
             source_path=str(path),
-            artifact_dir=str(data.get("artifact_dir") or ""),
             checks_run=_str_tuple(data.get("checks_run")),
             checks_failed=_str_tuple(data.get("checks_failed")),
             checks_skipped=_str_tuple(data.get("checks_skipped")),

@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable
 
+from blastjob import config as cfg_mod
+from blastjob.models.config import BlastJobConfig
 from blastjob.web import stages as st
 from blastjob.web.service import set_application_state
 
@@ -28,7 +31,29 @@ def _state(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def mark_applied(conn: sqlite3.Connection, job_id: int) -> bool:
+LoadConfig = Callable[[], BlastJobConfig]
+
+
+def file_after_move(
+    conn: sqlite3.Connection, job_id: int, load_config: LoadConfig = cfg_mod.load_config
+) -> None:
+    """Re-file this job's packet entries after a stage move (issue #20):
+    `Submitted/` once applied, back to the root on a reopen into the Shortlist.
+    Best-effort and AFTER the state commit: a filing failure is a logged
+    warning, never a refused move."""
+    from blastjob.core import packet_filing
+
+    try:
+        root = cfg_mod.output_dir(load_config())
+    except Exception:  # noqa: BLE001 -- see docstring
+        log.warning("filing after a move of job %s: no config", job_id, exc_info=True)
+        return
+    packet_filing.file_after_change(conn, root, job_id)
+
+
+def mark_applied(
+    conn: sqlite3.Connection, job_id: int, load_config: LoadConfig = cfg_mod.load_config
+) -> bool:
     """Shortlist -> Applied. applied_at is stamped today if it was empty.
 
     Also snapshots WHICH documents went out (`core/packet_sends`). This is the
@@ -44,13 +69,15 @@ def mark_applied(conn: sqlite3.Connection, job_id: int) -> bool:
     # point: the job stays applied and the note explains the missing snapshot.
     # What must never happen is the reverse -- a send recorded against a move
     # that did not take.
-    note = record_send_for_job(conn, job_id)
+    note = record_send_for_job(conn, job_id, load_config=load_config)
     if note:
         log.info("job %s applied without an as-sent snapshot: %s", job_id, note)
     return True
 
 
-def record_send_for_job(conn: sqlite3.Connection, job_id: int) -> str:
+def record_send_for_job(
+    conn: sqlite3.Connection, job_id: int, load_config: LoadConfig = cfg_mod.load_config
+) -> str:
     """Snapshot which documents went out. Returns "" when a send was recorded,
     otherwise ONE SENTENCE saying why nothing was.
 
@@ -58,6 +85,9 @@ def record_send_for_job(conn: sqlite3.Connection, job_id: int) -> str:
     folder, `role_documents` found none, and marking the job applied recorded
     nothing with no sign of it on screen. Still best-effort: bookkeeping never
     blocks the state change.
+
+    The files are hashed where they are now (`packet["dir"]` is located), and
+    the paths are stored in root form (`record_send(output_root=...)`).
     """
     from pathlib import Path
 
@@ -65,11 +95,13 @@ def record_send_for_job(conn: sqlite3.Connection, job_id: int) -> str:
     from blastjob.web import packets as pk
 
     try:
-        packet = pk.packet_for_job(conn, job_id)
+        packet = pk.packet_for_job(conn, job_id, load_config=load_config)
         if not packet or not packet.get("exists"):
             return "No as-sent snapshot: this job has no tailored packet on disk."
-        row = conn.execute("SELECT title FROM jobs WHERE id=?", (job_id,)).fetchone()
-        docs = pk.role_documents(packet["files"], row["title"] if row else "")
+        row = conn.execute("SELECT title, company FROM jobs WHERE id=?", (job_id,)).fetchone()
+        docs = pk.role_documents(
+            packet["files"], row["title"] if row else "", company=row["company"] if row else ""
+        )
         if "resume" not in docs:
             if packet.get("quarantined"):
                 return (
@@ -92,6 +124,7 @@ def record_send_for_job(conn: sqlite3.Connection, job_id: int) -> str:
             # A packet that shipped with a known fatal must say so forever.
             # Until now this column stored "[]" on every row.
             fatal_findings=ps.fatal_findings_from_report(report),
+            output_root=cfg_mod.output_dir(load_config()),
         )
         return ""
     except Exception:  # noqa: BLE001 — never block the state change
@@ -203,8 +236,20 @@ def unkeep(conn: sqlite3.Connection, job_id: int, threshold: int) -> bool:
     return cur.rowcount == 1
 
 
-def run_action(conn: sqlite3.Connection, job_id: int, action: str) -> bool:
-    """Dispatch a list-row action by name; False for an unknown one."""
-    moves = {"apply": mark_applied, "advance": advance, "withdraw": withdraw, "reopen": reopen}
-    move = moves.get(action)
-    return move(conn, job_id) if move else False
+def run_action(
+    conn: sqlite3.Connection,
+    job_id: int,
+    action: str,
+    load_config: LoadConfig = cfg_mod.load_config,
+) -> bool:
+    """Dispatch a list-row action by name; False for an unknown one. A move
+    that took re-files the job's packets (`file_after_move`)."""
+    if action == "apply":
+        moved = mark_applied(conn, job_id, load_config=load_config)
+    else:
+        moves = {"advance": advance, "withdraw": withdraw, "reopen": reopen}
+        move = moves.get(action)
+        moved = move(conn, job_id) if move else False
+    if moved:
+        file_after_move(conn, job_id, load_config)
+    return moved

@@ -139,6 +139,29 @@ def _no_real_config(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_output_dir(tmp_path_factory, monkeypatch):
+    """No test reads or writes the owner's real packet folder. A bare
+    `BlastJobConfig()` defaults `paths.output_dir` to `~/Documents/blastjob`,
+    and the packet filer (`core/packet_filing.py`) RENAMES folders there, so a
+    daily-run or route test on a default config must land in a throwaway folder
+    instead. Every reader resolves the folder through `config.output_dir`."""
+    from pathlib import Path
+
+    from blastjob import config as cfg_mod
+    from blastjob.models.config import PathsConfig
+
+    real = cfg_mod.output_dir
+    default = Path(os.path.expanduser(PathsConfig().output_dir))
+    fake = tmp_path_factory.mktemp("output")
+
+    def guarded(cfg):
+        got = real(cfg)
+        return fake if got == default else got
+
+    monkeypatch.setattr(cfg_mod, "output_dir", guarded)
+
+
+@pytest.fixture(autouse=True)
 def _reset_runtime_settings():
     """The config-load registries (aliases, agencies, keywords, alert words)
     are process-global; every test starts and ends with them empty."""

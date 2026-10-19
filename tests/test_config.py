@@ -83,14 +83,16 @@ def test_data_dir_expands_tilde():
     assert ".blastjob" in str(result)
 
 
-def test_output_dir_expands_tilde():
+def test_output_dir_expands_tilde(tmp_path, monkeypatch):
     import blastjob.config as mod
 
+    # A throwaway HOME: conftest swaps the REAL default output folder for a temp
+    # one, so the expansion is checked against a home that is not the owner's.
+    monkeypatch.setenv("HOME", str(tmp_path))
     cfg = BlastJobConfig()
     cfg.paths.output_dir = "~/Documents/blastjob"
     result = mod.output_dir(cfg)
-    assert not str(result).startswith("~")
-    assert "blastjob" in str(result)
+    assert result == tmp_path / "Documents" / "blastjob"
 
 
 def test_data_dir_custom_absolute(tmp_path):

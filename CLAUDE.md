@@ -86,9 +86,11 @@ lives in their data dir, the DB `settings` table, or the gitignored `local/` and
   the `backups/work_history-<stamp>-*.md` snapshots taken before a work-history
   overwrite, which it never touches.
 - **Output**: `paths.output_dir`, default `~/Documents/blastjob/`:
-  `{company-slug}-{date}/` per company per day, holding the resume run plus
-  `{role-slug}.interview_prep.md` (written into the job's recorded packet folder; see
-  "Application events + artifact index").
+  `{company-slug}-{date}/` per company per day (`-2`, `-3`... when that name is already
+  filed), holding the resume run plus `{role-slug}.interview_prep.md` (written into the
+  job's recorded packet folder; see "Application events + artifact index"). The top
+  level holds only packets still to send; the rest are filed into `Submitted/`,
+  `Closed before applying/` and `Archive/` (see "Packet filing").
 - **Secrets**: API keys and app passwords live in the file at `paths.secrets_file`
   (default `<data_dir>/secrets.env`, `KEY=value` lines, autoloaded by
   `src/blastjob/secrets.py`). Settings hold only env-var NAMES for them, never values.
@@ -124,6 +126,8 @@ uv run blastjob-daily --repair-linkedin-titles [--accept ...]   # apply structur
 uv run blastjob-daily --duplicate-applications  # kept applications sharing company key + title (read-only)
 uv run blastjob-daily --backfill-artifacts-report  # packet files + past events the backfill would index; writes nothing
 uv run blastjob-daily --backfill-artifacts         # index them (idempotent; missing files listed, skipped)
+uv run blastjob-daily --file-packets-report  # renames + entry moves it would make; writes nothing
+uv run blastjob-daily --file-packets         # rename to capped names, then file entries by stage
 uv run blastjob-daily --closure-report      # shadow closure run: moves nothing, sends nothing
 uv run blastjob-daily --refetch-workday-locations-report  # geo-rejected Workday rows with extra locations; writes nothing
 uv run blastjob-daily --refetch-workday-locations         # store them, re-score the changed rows
@@ -177,6 +181,12 @@ is autouse and points every secrets load at a throwaway file, restoring `os.envi
 after (that loader writes to it directly, which monkeypatch would not undo). A test
 that needs credentials sets them with `monkeypatch.setenv`; a test that needs a data
 dir sets `BLASTJOB_DATA_DIR` to a `tmp_path`.
+
+**No test may touch the real output folder.** The packet filer RENAMES folders under
+`paths.output_dir`, whose default is `~/Documents/blastjob`.
+`conftest.py::_no_real_output_dir` is autouse and wraps `config.output_dir` so that the
+default resolves to a throwaway folder. A test that needs packets sets
+`paths.output_dir` to a temp dir.
 
 **No personal data in tracked files.** `tests/test_no_personal_data.py` fails on real
 email addresses, phone numbers, home-directory paths and LinkedIn profile URLs in
@@ -521,6 +531,53 @@ Every list (surfaced, queued, all) collapses cross-source duplicates to one row 
 agencies as `staffing agency` (`compare.is_agency`) so they're not mistaken for the
 employer.
 
+### Packet filing (`core/packet_filing.py`, `core/filing_lock.py`, `core/packet_renames.py`)
+
+The output dir files itself (issue #20). An ENTRY is a top-level folder (`acme-2026-10-16`,
+a legacy `2026-04-21/<co>/<role>` tree, `comparisons`); filing is ONE `os.rename` of the
+whole entry into `paths.BUCKETS` (`Submitted`, `Closed before applying`, `Archive`) or back
+to the root. **No DB path is ever rewritten:** every write of a path goes through
+`paths.canonical(path, output_dir)` (root form: bucket segment stripped; `artifacts.register`
+via `stored_path`, `finish_build`, `packet_sends.record_send`, `workup_path` via
+`company._profile_data`), and every reader resolves it with `paths.locate` (the root or
+bucket form where the FULL path exists, else the first existing entry folder, root first;
+pure). `packet_for_job()["dir"]` is the LOCATED folder (`stored_dir` is the row);
+equality checks (`run_for_dir`, `is_registered`, `is_downloadable`, `history_job_ids`)
+compare root forms. Links entry -> jobs: `build_runs` / `artifacts` / `packet_sends`
+paths inside it; ONLY for an entry with none of those, `*.followup-{id}.md` -> that job and
+`<slugify(company)>-YYYY-MM-DD[-N]` -> every KEPT job of exactly that company (workup/prep
+folders; on a recorded entry the company rule would pull a filed application back to the
+root or an archived sibling into Submitted). `unfiled-followups` and dot-folders are never
+filed. A job's bucket (`bucket_for_job`): a `packet_sends` row or `applied` event ->
+Submitted (beats review_state); archived -> Archive; undecided -> root; kept +
+`applied_at` -> Submitted; kept + a state claiming an application with no evidence ->
+CONTRADICTION (root, reported); kept + `posting_closed` -> Closed before applying (a
+`posting_check='closed'` verdict alone never files); else root. An entry takes its most
+visible job's bucket (root > Submitted > Closed > Archive); no linked job -> Archive.
+Guards: `.filing.lock` `flock`, never held across an LLM call: writers take it SHARED
+around locate + write (`run_build` while picking the folder, the web build around
+`finish_build` + registration, refine around locate and indexing, prep/follow-up/release
+at write time; async code via `shared_async`, which waits in a thread); filing takes it
+EXCLUSIVE + non-blocking and logs a warning when busy. While a `build_runs` row is
+`running` with a live lease, only the entries it may write (linked to its job, or named
+for today) are skipped, each logged; the post-build hook and the 07:30 daily pass are the
+backstop that files them. Directories only, a symlinked entry or one holding a symlink is
+skipped, an existing target is a conflict (nothing moves, never merged). A job-scoped pass
+(the hooks) looks only at that job's recorded entries and unrecorded ones named for its
+company. A build always lands at the root: `application_dir` reuses a root `<co>-<today>`
+but skips a name filed in a bucket (`-2`...). Hooks (best-effort, a failure is a logged
+warning): `stage_moves.run_action`, the status, archive, unkeep, unarchive and manual
+posting-verdict routes, after a successful build and refine, and `blastjob-daily` after
+closure (`daily_filing.filing_pass`; dry run logs the report only). `--file-packets` first
+renames Shortlist jobs' (never applied) newest-packet documents whose token is an older
+`document_tokens` form to `document_token` (built-as company/role from metadata),
+rewriting exactly those `artifacts.path` rows in one transaction (a missing row is
+inserted; renamed back on failure), and repairs a row left naming the old file when only
+the renamed one exists; a family with a member named by `packet_sends`, quarantined, held
+or in `RELEASED.txt`, or whose target exists, is skipped and reported. The stage SQL it
+uses lives in `core/stage_sql.py` (re-exported by `web/stages.py`). `packet_report.json`
+no longer stores `artifact_dir`.
+
 ### Same role, different route (`core/same_role.py`, `core/role_clusters.py`, `web/same_role.py`)
 
 One job can show up several times wearing different hats. Titles group through ONE
@@ -857,7 +914,8 @@ was missing. The short version:
   `base.html` carries the CSRF token, and the cockpit has no authentication (and may be
   opted onto the LAN via `web.host`), so this matters more, not less.
 - **Two output layouts exist on disk.** Read `build_runs.artifact_dir`; never recompute
-  a packet path from today's slugs.
+  a packet path from today's slugs. Resolve every stored path with `paths.locate` and
+  write every path through `paths.canonical`: entries get filed into bucket folders.
 - **Never request a linkedin.com URL** from any code path; alert email is the
   sanctioned LinkedIn feed.
 - **Draft-only.** Nothing is ever submitted, sent or posted on the user's behalf.

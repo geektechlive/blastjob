@@ -22,7 +22,9 @@ from urllib.parse import quote
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from blastjob import config as cfg_mod
 from blastjob.core import artifacts, events
+from blastjob.core.paths import locate
 from blastjob.models.config import BlastJobConfig
 from blastjob.web.deps import Deps
 from blastjob.web.downloads import is_downloadable
@@ -44,6 +46,7 @@ def _event_rows(conn: sqlite3.Connection, job_id: int) -> list[dict[str, Any]]:
 
 def _file_rows(conn: sqlite3.Connection, cfg: BlastJobConfig, job_id: int) -> list[dict[str, Any]]:
     rows = []
+    out_dir = cfg_mod.output_dir(cfg)
     for a in artifacts.artifacts_for(conn, job_id):
         path = Path(a["path"])
         linked = is_downloadable(conn, cfg, job_id, path)
@@ -51,7 +54,8 @@ def _file_rows(conn: sqlite3.Connection, cfg: BlastJobConfig, job_id: int) -> li
             {
                 "kind": a["kind"],
                 "name": path.name,
-                "path": str(path),
+                # Where it is NOW: the row is root form, the entry may be filed.
+                "path": str(locate(path, out_dir)),
                 "date": (a["updated_at"] or "")[:10],
                 "href": f"/jobs/{job_id}/files/{quote(path.name)}" if linked else "",
             }

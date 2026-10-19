@@ -61,7 +61,7 @@ _QUARANTINE_DIRNAME = "quarantine"
 # returns a superseded version to the public folder.
 _SUPERSEDED_DIRNAME = "superseded"
 _WHY_FILENAME = "WHY.txt"
-_RELEASED_FILENAME = "RELEASED.txt"
+RELEASED_FILENAME = "RELEASED.txt"
 _REPORT_SUFFIX = ".packet_report.json"
 _LEGACY_REPORT = "packet_report.json"
 _QUARANTINED_STATE = "quarantined"
@@ -294,7 +294,7 @@ def release(
         src.rename(dest)
         moved.append(dest)
 
-    with (packet_dir / _RELEASED_FILENAME).open("a", encoding="utf-8") as f:
+    with (packet_dir / RELEASED_FILENAME).open("a", encoding="utf-8") as f:
         names = ", ".join(p.name for p in moved)
         f.write(f"{when.isoformat()} -- released: {reason} [{names}]\n")
 
@@ -317,7 +317,7 @@ def undo_release(packet_dir: Path, moved: list[Path], *, why: str) -> list[Path]
         except OSError:
             log.exception("undo_release: could not re-hold %s", path)
             stuck.append(path)
-    with (packet_dir / _RELEASED_FILENAME).open("a", encoding="utf-8") as f:
+    with (packet_dir / RELEASED_FILENAME).open("a", encoding="utf-8") as f:
         f.write(
             f"{datetime.now().isoformat()} -- release rolled back: {why} [{', '.join(restored)}]\n"
         )

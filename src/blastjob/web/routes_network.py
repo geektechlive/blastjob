@@ -21,9 +21,11 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
+from blastjob import config as cfg_mod
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
+from blastjob.core.paths import locate
 from blastjob.discovery import follow_seeds as fs
 from blastjob.web import people, service
 from blastjob.web.deps import Deps
@@ -157,6 +159,10 @@ def register(app: FastAPI, deps: Deps) -> None:
             profile = co.get_profile_by_key(c, key)
             if profile is None:
                 return HTMLResponse("Not found", status_code=404)
+            if profile.get("workup_path"):
+                # Shown where it is NOW: its entry may have been filed (issue #20).
+                out_dir = cfg_mod.output_dir(deps.load_config())
+                profile = {**profile, "workup_path": str(locate(profile["workup_path"], out_dir))}
             return deps.render(
                 request,
                 "company.html",

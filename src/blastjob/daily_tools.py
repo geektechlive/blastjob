@@ -14,6 +14,9 @@ Each flag prints a report and exits; none sends anything or records a run.
 - `--employer-jd-report` / `--employer-jd [--min-score N] [--max-requests N]`:
   look up the employer's full description for aggregator snippet rows
   (`core.employer_jd`); apply stores it and re-scores. The report writes nothing.
+- `--file-packets-report` / `--file-packets`: rename kept packets' documents to
+  the capped name, then file every output-folder entry by stage
+  (`daily_filing`, issue #20). The report writes nothing.
 """
 
 from __future__ import annotations
@@ -86,6 +89,11 @@ def add_arguments(ap: argparse.ArgumentParser) -> None:
         action="store_true",
         help=f"{wl_help}; stores them, then re-scores the changed rows",
     )
+    fp_help = "file output-folder packets by stage + rename to capped names (issue #20)"
+    ap.add_argument(
+        "--file-packets-report", action="store_true", help=f"report: {fp_help}; writes nothing"
+    )
+    ap.add_argument("--file-packets", action="store_true", help=fp_help)
     ej_help = "look up the employer's full description for aggregator snippet rows (issue #17)"
     ap.add_argument(
         "--employer-jd-report",
@@ -196,9 +204,16 @@ def dispatch(args: argparse.Namespace, cfg: BlastJobConfig, conn: sqlite3.Connec
 
         return dup.format_pairs(dup.duplicate_applications(conn))
     if args.backfill_artifacts_report or args.backfill_artifacts:
+        from blastjob import config as cfg_mod
         from blastjob.core import backfill
 
-        return backfill.run(conn, apply=args.backfill_artifacts)
+        return backfill.run(
+            conn, apply=args.backfill_artifacts, output_root=cfg_mod.output_dir(cfg)
+        )
+    if args.file_packets_report or args.file_packets:
+        from blastjob import daily_filing
+
+        return daily_filing.file_packets_cli(cfg, conn, apply=args.file_packets)
     if args.refetch_workday_locations_report or args.refetch_workday_locations:
         return refetch_workday_locations_cli(cfg, conn, apply=args.refetch_workday_locations)
     if args.employer_jd_report or args.employer_jd:

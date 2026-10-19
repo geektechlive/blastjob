@@ -372,7 +372,8 @@ def test_view_exposes_checks_failed(tmp_path):
     assert view.checks_run == ("structure", "arithmetic")
     assert view.checks_failed == ("prose_check",)
     assert view.checks_skipped == ("cover_letter_groundedness",)
-    assert view.artifact_dir == "/home/alexrivera/Documents/blastjob/acme-2026-09-16"
+    # Issue #20: an old sidecar's absolute folder is ignored; filing moves folders.
+    assert not hasattr(view, "artifact_dir")
 
 
 def test_missing_new_fields_default_gracefully(tmp_path):
@@ -386,7 +387,6 @@ def test_missing_new_fields_default_gracefully(tmp_path):
     assert view.checks_skipped == ()
     assert view.quarantined_artifacts == ()
     assert view.coverage_gaps == ()
-    assert view.artifact_dir == ""
 
 
 def test_finding_line_number_is_parsed(tmp_path):

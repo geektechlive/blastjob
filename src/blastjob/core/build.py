@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from blastjob import config as cfg_mod
-from blastjob.core import packet_verify
+from blastjob.core import filing_lock, packet_verify
 from blastjob.core.cover_letter_score import (
     render_cover_letter_score_md,
     score_cover_letter,
@@ -143,7 +143,11 @@ async def run_build(
 
     # Step 3: Create output folder (one flat folder per company per day) and
     # build professional, self-describing file stems: {Person}_Resume_-_{Co}_{Role}.
-    out_dir = application_dir(out_root, company)
+    # Under the shared filing lock (never across an LLM call): a filing pass
+    # cannot rename the folder between this choice and the claim's protection.
+    # The caller's running build_runs row keeps the filer off it from here on.
+    async with filing_lock.shared_async(out_root):
+        out_dir = application_dir(out_root, company)
     person = person_slug(_history_name(work_history_md))
     # Capped so every document fits an upload form's name limit (issue #19).
     token = document_token(company, role)

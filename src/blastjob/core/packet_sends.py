@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from blastjob.core.packet_report import Artifact, Finding, Severity
+from blastjob.core.paths import canonical
 from blastjob.models.tracking import STATUSES
 
 # Outcomes packet_outcomes accepts -- every application_state value except
@@ -177,8 +178,13 @@ def record_send(
     cover_letter_groundedness: int | None = None,
     fatal_findings: tuple[Finding, ...] | list[Finding] = (),
     now: datetime | None = None,
+    output_root: str | Path | None = None,
 ) -> int:
     """Snapshot one application-send. Immutable once written.
+
+    With `output_root`, the three paths are stored in ROOT form
+    (`paths.canonical`): the files are hashed where they are, but a filed
+    packet's row must not name a bucket folder (issue #20).
 
     Hashes `resume_path` (and `cover_letter_path`, if given) and the job's
     stored `raw_jd` AT THIS MOMENT -- never re-read later, so a subsequent
@@ -234,6 +240,11 @@ def record_send(
         # else: the earlier attempt with these exact files already resolved
         # (terminal outcome) -- fall through and record a new attempt.
 
+    if output_root is not None:
+        artifact_dir = str(canonical(artifact_dir, output_root))
+        resume_path = canonical(resume_path, output_root)
+        if cover_letter_path:
+            cover_letter_path = canonical(cover_letter_path, output_root)
     findings_json = json.dumps([_finding_to_dict(f) for f in fatal_findings])
     sent_at = (now or datetime.now()).isoformat()
 

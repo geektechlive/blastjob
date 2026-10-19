@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from blastjob import config as cfg_mod
-from blastjob import daily_employer_jd, daily_tools
+from blastjob import daily_employer_jd, daily_filing, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
 from blastjob.core import closure, closure_links
@@ -481,6 +481,8 @@ async def run_daily(
     # fetched by one is cached for the other.
     shared_deps = closure_links.default_deps()
     closure_res = await _closure_pass(cfg, conn, res, shadow=dry_run, deps=shared_deps)
+    # Closure moves kept jobs to posting_closed; file their packets (#20).
+    daily_filing.filing_pass(cfg, conn, dry_run=dry_run)
     await daily_employer_jd.lookup_step(
         cfg, conn, res, closure_res, shared_deps, free=free_copy, dry_run=dry_run, score=score
     )

@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
 
-from blastjob.core.paths import document_tokens_regex, resolve_role_slug
+from blastjob.core.paths import canonical, document_tokens_regex, locate, resolve_role_slug
 from blastjob.core.quarantine import quarantined_files
 
 log = logging.getLogger(__name__)
@@ -99,6 +99,14 @@ def kind_for(filename: str) -> str:
     return "other"
 
 
+def stored_path(path: str | Path, output_root: str | Path | None) -> Path:
+    """The form an artifact path is stored in: resolved, then in ROOT form
+    (`paths.canonical`) when the output dir is known, so filing an entry into a
+    bucket never changes which row a file is."""
+    target = Path(path).expanduser().resolve()
+    return canonical(target, output_root) if output_root is not None else target
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -115,17 +123,20 @@ def register(
     job_id: int | None = None,
     build_run_id: int | None = None,
     note: str = "",
+    output_root: str | Path | None = None,
 ) -> int:
     """Idempotent upsert by absolute path; commits. A re-register refreshes
     sha256/bytes/updated_at and fills job_id/build_run_id only where they are
     still NULL -- an artifact is never reassigned to another job or run.
-    A missing file raises FileNotFoundError; an unknown kind, ValueError."""
+    A missing file raises FileNotFoundError; an unknown kind, ValueError.
+    Pass `output_root` so the row is written in root form (`stored_path`)."""
     if kind not in ARTIFACT_KINDS:
         raise ValueError(f"unknown artifact kind: {kind!r}")
-    target = Path(path).expanduser().resolve()
-    if not target.is_file():
-        raise FileNotFoundError(str(target))
-    sha, size, now = _sha256(target), target.stat().st_size, _now()
+    actual = Path(path).expanduser().resolve()
+    if not actual.is_file():
+        raise FileNotFoundError(str(actual))
+    target = stored_path(actual, output_root)
+    sha, size, now = _sha256(actual), actual.stat().st_size, _now()
     conn.execute(
         "INSERT INTO artifacts (job_id, build_run_id, kind, path, sha256, bytes, note, "
         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
@@ -140,8 +151,10 @@ def register(
     return int(row["id"])
 
 
-def is_registered(conn: sqlite3.Connection, path: str | Path) -> bool:
-    target = str(Path(path).expanduser().resolve())
+def is_registered(
+    conn: sqlite3.Connection, path: str | Path, output_root: str | Path | None = None
+) -> bool:
+    target = str(stored_path(path, output_root))
     return conn.execute("SELECT 1 FROM artifacts WHERE path=?", (target,)).fetchone() is not None
 
 
@@ -158,13 +171,21 @@ def register_paths(
     *,
     job_id: int | None,
     build_run_id: int | None = None,
+    output_root: str | Path | None = None,
 ) -> int:
     """Best-effort registration for the write hooks. Never raises; a failure is
     a logged warning. Returns how many paths were registered."""
     count = 0
     for path in paths:
         try:
-            register(conn, path, kind_for(path.name), job_id=job_id, build_run_id=build_run_id)
+            register(
+                conn,
+                path,
+                kind_for(path.name),
+                job_id=job_id,
+                build_run_id=build_run_id,
+                output_root=output_root,
+            )
             count += 1
         except Exception:  # noqa: BLE001 -- bookkeeping never fails the work
             log.warning("could not register artifact %s for job %s", path, job_id, exc_info=True)
@@ -177,24 +198,34 @@ def build_run_pk(conn: sqlite3.Connection, run_id: str) -> int | None:
     return int(row["id"]) if row else None
 
 
-def run_for_dir(conn: sqlite3.Connection, job_id: int, artifact_dir: str | Path) -> int | None:
-    """This job's newest successful build whose recorded folder is `artifact_dir`."""
-    want = Path(artifact_dir).expanduser().resolve()
+def run_for_dir(
+    conn: sqlite3.Connection,
+    job_id: int,
+    artifact_dir: str | Path,
+    output_root: str | Path | None = None,
+) -> int | None:
+    """This job's newest successful build whose recorded folder is `artifact_dir`.
+    Compared in root form, so a filed folder still finds its build."""
+    want = stored_path(artifact_dir, output_root)
     rows = conn.execute(
         "SELECT id, artifact_dir FROM build_runs WHERE job_id=? AND status='done' "
         "AND artifact_dir != '' ORDER BY id DESC",
         (job_id,),
     ).fetchall()
     for row in rows:
-        if Path(row["artifact_dir"]).expanduser().resolve() == want:
+        if stored_path(row["artifact_dir"], output_root) == want:
             return int(row["id"])
     return None
 
 
-def latest_packet(conn: sqlite3.Connection, job_id: int) -> tuple[int, Path] | None:
+def latest_packet(
+    conn: sqlite3.Connection, job_id: int, output_root: str | Path | None = None
+) -> tuple[int, Path] | None:
     """(build_runs.id, folder) of the job's newest successful build, when that
     folder still exists -- the same row `web.packets.job_packet_dirs` puts
-    first. None when there is no such build or its folder is gone."""
+    first. None when there is no such build or its folder is gone. With
+    `output_root` the folder is where it is NOW (`paths.locate`): filing may
+    have moved it into a bucket."""
     row = conn.execute(
         "SELECT id, artifact_dir FROM build_runs WHERE job_id=? AND status='done' "
         "AND artifact_dir != '' ORDER BY id DESC LIMIT 1",
@@ -202,7 +233,8 @@ def latest_packet(conn: sqlite3.Connection, job_id: int) -> tuple[int, Path] | N
     ).fetchone()
     if row is None:
         return None
-    folder = Path(row["artifact_dir"]).expanduser()
+    raw = row["artifact_dir"]
+    folder = locate(raw, output_root) if output_root is not None else Path(raw).expanduser()
     return (int(row["id"]), folder) if folder.is_dir() else None
 
 
@@ -217,6 +249,11 @@ def _built_as(folder: Path, slug: str, company: str, role: str) -> tuple[str, st
     except (OSError, ValueError):
         return company, role
     return str(data.get("company") or company), str(data.get("role") or role)
+
+
+def built_as(folder: Path, slug: str, company: str, role: str) -> tuple[str, str]:
+    """Public form of `_built_as` (the rename step names files by it too)."""
+    return _built_as(folder, slug, company, role)
 
 
 def _document_pattern(company: str, role: str) -> re.Pattern[str]:
