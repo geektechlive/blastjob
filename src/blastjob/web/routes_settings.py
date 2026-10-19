@@ -119,6 +119,7 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
             mail_password_env=mail_password_env.strip(),
             personal_mail_user_env=personal_mail_user_env.strip(),
             personal_mail_password_env=personal_mail_password_env.strip(),
+            cfg=cfg,
         )
         if error:
             return _settings_page(request, cfg, mail_error=error)

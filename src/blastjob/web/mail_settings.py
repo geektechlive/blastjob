@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from blastjob import logging as applog
 from blastjob.discovery.mailalerts import open_imap
 from blastjob.discovery.replies import MailAccount, personal_account
+from blastjob.mail_names import name_problem
 from blastjob.models.config import BlastJobConfig
 from blastjob.secrets import secrets_file_hint
 
@@ -61,6 +62,7 @@ def validate_names(
     mail_password_env: str,
     personal_mail_user_env: str,
     personal_mail_password_env: str,
+    cfg: BlastJobConfig | None = None,
 ) -> str | None:
     """The error message for the first bad field, or None. The offending VALUE
     is never included -- if someone pasted a live password in, echoing it into
@@ -79,6 +81,10 @@ def validate_names(
                 f"an address. Secret values belong in {secrets_file_hint()}, never "
                 "in settings."
             )
+        # Shape is fine; now the IMAP-only suffix rule and the collision check
+        # (`mail_names`), which keep other secrets out of an IMAP LOGIN.
+        if problem := name_problem(name, value, cfg):
+            return problem
     return None
 
 

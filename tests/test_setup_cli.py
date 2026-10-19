@@ -113,3 +113,17 @@ def test_doctor_reports_a_missing_discord_secret_only_in_discord_mode(data_dir, 
     cfg.notify.mode = "discord"
     failing = [c for c in setup_doctor.check_secrets(cfg) if not c.ok and c.required]
     assert {c.name for c in failing} == {"DISCORD_BOT_TOKEN set", "DISCORD_CHANNEL_ID set"}
+
+
+def test_doctor_warns_on_a_saved_mail_name_that_breaks_the_rule():
+    from blastjob.models.config import BlastJobConfig
+
+    cfg = BlastJobConfig()
+    assert setup_doctor.check_mail_names(cfg) == []  # shipped defaults conform
+    cfg.discovery.mail_password_env = "ANTHROPIC_API_KEY"
+    cfg.discovery.personal_mail_user_env = "GMAIL_IMAP_USER"
+    (warn,) = setup_doctor.check_mail_names(cfg)
+    assert not warn.ok and not warn.required
+    assert "mail_password_env" in warn.name
+    assert "_IMAP_APP_PASSWORD" in warn.fix
+    assert "ANTHROPIC_API_KEY" not in warn.detail + warn.fix

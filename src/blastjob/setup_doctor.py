@@ -14,6 +14,7 @@ from pathlib import Path
 from blastjob import config as cfg_mod
 from blastjob import settings_store as ss
 from blastjob.db.schema import MIGRATIONS
+from blastjob.mail_names import MAIL_FIELDS, name_problem
 from blastjob.models.config import BlastJobConfig
 
 JINA_KEY_ENV = "JINA_API_KEY"
@@ -170,6 +171,20 @@ def check_secrets(cfg: BlastJobConfig) -> list[Check]:
     ]
 
 
+def check_mail_names(cfg: BlastJobConfig) -> list[Check]:
+    """A warning (never a failure) for each SAVED mail var name that breaks the
+    IMAP-only naming rule. The mail scan still uses the old name; only the
+    settings form enforces the rule. The name itself is not echoed."""
+    out: list[Check] = []
+    for field, (suffixes, _blank_ok) in MAIL_FIELDS.items():
+        problem = name_problem(field, getattr(cfg.discovery, field), cfg)
+        if problem:
+            ends = " or ".join(suffixes)
+            fix = f"rename the variable to end in {ends} (secrets file and /settings)"
+            out.append(Check(f"{field} naming", False, problem, fix, required=False))
+    return out
+
+
 def run_doctor(run: Runner | None = None) -> list[Check]:
     data_dir = cfg_mod.resolve_data_dir()
     path = data_dir / cfg_mod.DB_NAME
@@ -186,6 +201,7 @@ def run_doctor(run: Runner | None = None) -> list[Check]:
     checks += check_profile(cfg)
     checks.append(check_llm(cfg, run))
     checks += check_secrets(cfg)
+    checks += check_mail_names(cfg)
     return checks
 
 
