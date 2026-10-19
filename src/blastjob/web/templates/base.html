@@ -37,6 +37,8 @@
               title="Fetch new jobs and score them">Find + Score</button>
       <button hx-post="/run/matching" hx-target="#run-status" hx-swap="innerHTML"
               title="Re-score existing jobs (after changing the threshold or settings)">Re-score</button>
+      <span id="stale-scores" class="stale-scores" hx-get="/scores/stale"
+            hx-trigger="load, refresh-run-status from:body" hx-swap="innerHTML"></span>
     </div>
   </header>
   <div id="stale-notice"></div>

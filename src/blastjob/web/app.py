@@ -40,6 +40,7 @@ from blastjob.web import (
     routes_network,
     routes_outcomes,
     routes_packets,
+    routes_scores,
     routes_settings,
     routes_stages,
     service,
@@ -262,6 +263,7 @@ def create_app(
     employer_link.register(app, deps)
     web_employer_jd.register(app, deps)
     routes_activity.register(app, deps)
+    routes_scores.register(app, deps)
 
     def _packet_role_slug(packet, title: str) -> str | None:
         return vh.packet_role_slug(packet, title)

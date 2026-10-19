@@ -113,6 +113,12 @@ confidence statements.
 _SYSTEM_PROMPT = system_for(None) + SCORING_DETERMINISM_RULES
 
 
+def scoring_system_prompt(cfg: BlastJobConfig) -> str:
+    """The exact system prompt every scoring call sends. One function, so the
+    score fingerprint (`matching/fingerprint.py`) hashes the text the model saw."""
+    return system_for(cfg.candidate) + SCORING_DETERMINISM_RULES
+
+
 @dataclass
 class ScoringResult:
     """Scores plus how the run went.
@@ -537,8 +543,7 @@ async def _score_one_batch(
     per-job fallback rather than being written off."""
     valid_ids = {int(c["job_id"]) for c in batch}
     excerpted = [{**c, "jd": select_jd_excerpt(c.get("jd") or "", jd_char_cap)} for c in batch]
-    system_prompt = system_for(cfg.candidate) + SCORING_DETERMINISM_RULES
-    system = [caching.cached_text(system_prompt)]
+    system = [caching.cached_text(scoring_system_prompt(cfg))]
     user_content = [
         caching.plain_text(build_user_content(work_history_md, excerpted, jd_char_cap, rejections))
     ]

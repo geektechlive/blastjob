@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from blastjob.db.client import UNDECIDED_STATES
 from blastjob.llm.cost import CostTracker
 from blastjob.matching import pipeline
+from blastjob.matching.fingerprint import scoring_fingerprint
 from blastjob.matching.scorer import reuse_key, score_candidates
 from blastjob.models.config import BlastJobConfig
 
@@ -114,11 +115,13 @@ async def score_kept(
 ) -> int:
     job_id = int(row["id"])
     company, title, jd = row["company"] or "", row["title"] or "", row["raw_jd"] or ""
-    priors = pipeline.load_prior_scores(conn)
+    wh = pipeline.work_history_text(cfg)
+    fingerprint = scoring_fingerprint(cfg, wh)
+    priors = pipeline.load_prior_scores(conn, fingerprint)
     priors.pop(reuse_key(company, title, jd) or "", None)  # this row's own stale score
     scoring = await score_candidates(
         cfg,
-        pipeline.work_history_text(cfg),
+        wh,
         [{"job_id": job_id, "title": title, "company": company, "jd": jd}],
         cost_tracker,
         rejections=pipeline.load_rejections(conn),
@@ -127,18 +130,11 @@ async def score_kept(
     sc = scoring.scores.get(job_id)
     if sc is None:
         return 0
+    sets, params = pipeline.score_columns(sc, fingerprint)
     cur = conn.execute(
-        "UPDATE jobs SET alignment_score=?, rationale=?, match_strengths=?, match_gaps=?, "
-        "score_stale=0 "
+        f"UPDATE jobs SET {', '.join(sets)}, score_stale=0 "
         "WHERE id=? AND review_state='kept' AND raw_jd IS ?",
-        (
-            sc["alignment"],
-            sc["rationale"],
-            "\n".join(sc.get("strengths", [])),
-            "\n".join(sc.get("gaps", [])),
-            job_id,
-            row["raw_jd"],
-        ),
+        (*params, job_id, row["raw_jd"]),
     )
     conn.commit()
     return cur.rowcount

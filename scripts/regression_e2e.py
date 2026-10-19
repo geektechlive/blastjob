@@ -157,7 +157,7 @@ def check_matching(cfg: BlastJobConfig, db: Path, n: int, report: Report) -> Non
         report.add("sampled jobs to score", bool(ids), f"{len(ids)} job(s)")
         with (
             mock.patch("blastjob.matching.scorer.make_stream", fake_make_stream(systems)),
-            mock.patch.object(pipeline, "load_prior_scores", lambda _c: {}),
+            mock.patch.object(pipeline, "load_prior_scores", lambda _c, _fp: {}),
         ):
             res = asyncio.run(pipeline.run_matching(cfg, conn, CostTracker(), job_ids=ids))
     finally:

@@ -41,6 +41,7 @@ a:hover { text-decoration: underline; }
 .topbar nav a { color: var(--ink-dim); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 1px; }
 .topbar nav a:hover { color: var(--lime); text-decoration: none; }
 .topbar .actions { margin-left: auto; display: flex; gap: 0.5rem; }
+.topbar .stale-scores { align-self: center; color: var(--amber); font-size: 0.8rem; }
 
 /* Stage nav: five pipeline tabs with counts, then a More menu (a <details>,
    so it opens by tap and by keyboard with no script). */

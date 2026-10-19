@@ -149,7 +149,8 @@ def test_a_pasted_row_is_not_its_own_prior_score(conn):
     jid = _job(conn, "new")
     dbc.set_pasted_jd(conn, jid, FULL_JD)
     key = reuse_key("Acme", "Director of Technology", FULL_JD)
-    assert key not in pipeline.load_prior_scores(conn)
+    fp = conn.execute("SELECT score_model_version FROM jobs WHERE id=?", (jid,)).fetchone()[0]
+    assert key not in pipeline.load_prior_scores(conn, fp)
 
 
 def test_rescore_of_an_undecided_row_uses_the_new_jd(cfg, conn, monkeypatch):

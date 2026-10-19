@@ -14,6 +14,7 @@ import pytest
 from blastjob import config as cfg_mod
 from blastjob.db import client as dbc
 from blastjob.matching import pipeline as mp
+from blastjob.matching.fingerprint import scoring_fingerprint
 from blastjob.matching.scorer import ScoringResult
 from blastjob.models.config import BlastJobConfig
 from tests.geo_fixture import apply_region
@@ -368,8 +369,13 @@ async def test_an_unchanged_posting_is_not_rescored(cfg_conn, monkeypatch):
         raw_jd=long_jd,
         geo_remote=1,
     )
+    # Stamped with the current scoring fingerprint: only a score computed from
+    # today's profile/work history/prompt/model is replayed (#29).
+    fp = scoring_fingerprint(cfg, mp.work_history_text(cfg))
     conn.execute(
-        "UPDATE jobs SET alignment_score=84, rationale='scored yesterday' WHERE id=?", (jid,)
+        "UPDATE jobs SET alignment_score=84, rationale='scored yesterday', "
+        "score_model_version=? WHERE id=?",
+        (fp, jid),
     )
     conn.commit()
 

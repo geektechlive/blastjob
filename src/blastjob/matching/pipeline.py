@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from blastjob import config as cfg_mod
 from blastjob.core.company import company_key
 from blastjob.llm.cost import CostTracker
+from blastjob.matching.fingerprint import scoring_fingerprint
 from blastjob.matching.gate import decide
 from blastjob.matching.geo import assess_geo
 from blastjob.matching.prefilter import classify_scope
@@ -106,8 +107,11 @@ def auto_archive_rejected_companies(conn: sqlite3.Connection) -> int:
     return archived
 
 
-def load_prior_scores(conn: sqlite3.Connection) -> dict[str, dict]:
-    """Scores already held for an unchanged posting, keyed by `reuse_key`.
+def load_prior_scores(conn: sqlite3.Connection, fingerprint: str) -> dict[str, dict]:
+    """Scores already held for an unchanged posting, keyed by `reuse_key`, and
+    computed from the CURRENT scoring inputs (`fingerprint`, see
+    `matching/fingerprint.py`). A score from an older profile, work history,
+    prompt or model is not replayed: it is what the Match button exists to redo.
 
     Without this, a repost is re-judged every run. The live evidence: one job-board
     reseller's listing scored 90, 89, 88 and 84 on four consecutive mornings and crossed the
@@ -122,7 +126,9 @@ def load_prior_scores(conn: sqlite3.Connection) -> dict[str, dict]:
     for r in conn.execute(
         "SELECT company, title, raw_jd, alignment_score, rationale, "
         "match_strengths, match_gaps, comp_min, comp_max "
-        "FROM jobs WHERE alignment_score IS NOT NULL AND raw_jd <> ''"
+        "FROM jobs WHERE alignment_score IS NOT NULL AND raw_jd <> '' "
+        "AND score_model_version = ?",
+        (fingerprint,),
     ):
         key = reuse_key(r["company"] or "", r["title"] or "", r["raw_jd"] or "")
         if key is None or key in out:
@@ -136,6 +142,44 @@ def load_prior_scores(conn: sqlite3.Connection) -> dict[str, dict]:
             "comp_max": int(r["comp_max"] or 0),
         }
     return out
+
+
+def stale_score_count(conn: sqlite3.Connection, fingerprint: str) -> int:
+    """Visible (surfaced/queued), active scores that predate `fingerprint`
+    (empty = before #29): the ones the Match button redoes.
+
+    Not every machine state: a 'new' row that geo or the prefilter now skips is
+    reset without a model call, so its old score is never re-stamped and would
+    keep this count above zero after Match, for rows on no stage page. A gate
+    reject Match did score lands in 'new' already stamped."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE source_state='active' "
+        "AND review_state IN ('surfaced','queued') AND alignment_score IS NOT NULL "
+        "AND COALESCE(score_model_version,'') <> ?",
+        (fingerprint,),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def score_columns(sc: dict, fingerprint: str) -> tuple[list[str], list[object]]:
+    """The score SET fragment and its params, for EVERY score writer
+    (`_write_score` here, `rescore.score_kept`), so none can land a score
+    without the fingerprint it was computed from."""
+    sets = [
+        "alignment_score=?",
+        "rationale=?",
+        "match_strengths=?",
+        "match_gaps=?",
+        "score_model_version=?",
+    ]
+    params: list[object] = [
+        sc["alignment"],
+        sc["rationale"],
+        "\n".join(sc.get("strengths", [])),
+        "\n".join(sc.get("gaps", [])),
+        fingerprint,
+    ]
+    return sets, params
 
 
 def _split_list(raw: str | None) -> list[str]:
@@ -169,8 +213,10 @@ def _load_candidates(
     job_ids: Collection[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Machine-state jobs to (re)consider. `only_unscored` limits the LLM spend
-    to jobs that have never been scored — the daily run's mode. The cockpit's
-    Match button passes False to re-score everything after a rubric change.
+    to jobs that have never been scored — the daily run's mode, which never
+    treats an old score fingerprint as unscored (#29). The cockpit's Match
+    button passes False: a score whose fingerprint is current is replayed, any
+    other is redone, so a profile, work-history or rubric change takes effect.
 
     `job_ids`, when given, scopes the pass to those ids only (e.g. a single
     manually-added job) instead of the whole backlog. An explicit empty
@@ -219,6 +265,7 @@ def _write_score(
     sc: dict,
     state: ReviewState,
     inferred: bool,
+    fingerprint: str,
 ) -> bool:
     """Score, inferred comp and review state in ONE conditional UPDATE; True only
     when it changed the row.
@@ -231,20 +278,9 @@ def _write_score(
     the provenance read at load, so a lost race leaves no half-written row and a
     source's newly posted figure is never overwritten by our reading.
     """
-    sets = [
-        "alignment_score=?",
-        "rationale=?",
-        "match_strengths=?",
-        "match_gaps=?",
-        "review_state=?",
-    ]
-    params: list[object] = [
-        sc["alignment"],
-        sc["rationale"],
-        "\n".join(sc.get("strengths", [])),
-        "\n".join(sc.get("gaps", [])),
-        state.value,
-    ]
+    sets, params = score_columns(sc, fingerprint)
+    sets.append("review_state=?")
+    params.append(state.value)
     where = f"WHERE id=? AND review_state IN ({MACHINE_STATES}) AND raw_jd IS ?"
     where_params: list[object] = [int(row["id"]), row["raw_jd"]]
     if inferred:
@@ -273,6 +309,8 @@ async def run_matching(
 ) -> MatchResult:
     res = MatchResult()
     wh = work_history_text(cfg)
+    # Computed from the same `wh` the scorer is given, once per run.
+    fingerprint = scoring_fingerprint(cfg, wh)
     res.company_skipped = auto_archive_rejected_companies(conn)
     rejections = load_rejections(conn)
     rows = _load_candidates(conn, only_unscored=only_unscored, job_ids=job_ids)
@@ -346,7 +384,7 @@ async def run_matching(
         cost_tracker,
         on_progress=on_progress,
         rejections=rejections,
-        prior_scores=load_prior_scores(conn),
+        prior_scores=load_prior_scores(conn, fingerprint),
     )
     scores = scoring.scores
     res.scoring_failures = scoring.failed_batches
@@ -380,7 +418,7 @@ async def run_matching(
             cfg=cfg.discovery,
             geo_conditional=conditional,
         )
-        if not _write_score(conn, r, sc, outcome.review_state, inferred):
+        if not _write_score(conn, r, sc, outcome.review_state, inferred, fingerprint):
             continue  # the user (or a pasted JD) got there first: nothing changed
         res.scored += 1
         if outcome.review_state == ReviewState.SURFACED:
