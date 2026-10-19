@@ -32,7 +32,7 @@ The digest is built by `build_digest`. Sections appear only when they have somet
   - At most 25 are shown (`MAX_DIGEST_JOBS`). If there are more, a line points at the cockpit's All page.
   - Each line has the score, company, title, "(review)" for queued roles, location or "Remote", a comp badge, the posting link, then a cockpit link. The comp badge never calls a figure posted unless the employer posted it: it reads "posted", "inferred (from the posting)", "est." or "unverified", and "comp n/a" when there is none.
   - The posting link comes before the cockpit link because the digest is usually read on a phone, where the cockpit's `127.0.0.1` address is the wrong machine. The posting link is the cluster's best apply link (`apply_link.apply_links_for`; see [same role](same-role.md#one-application-per-role)), else the row's own URL.
-  - The cockpit links use a fixed base, `http://127.0.0.1:8765` (`COCKPIT_BASE`), whatever `web.port` is set to.
+  - The cockpit links use the base from `cockpit_base`: `web.public_url` when set, else `http://127.0.0.1:<web.port>`. `web.public_url` is checked against the same Host rule the cockpit enforces (loopback or a private IP address, never a DNS name); see [LAN access](../operations/lan-access.md#digest-links-on-a-phone).
 - **Closed postings.** One line naming up to five kept jobs whose posting closed this run.
 - **Replies.** One entry per surfaced reply: who, about what, a one-line snippet and a cockpit link.
 - **Follow-ups due.** Applied-stage jobs with a follow-up due, most overdue first.

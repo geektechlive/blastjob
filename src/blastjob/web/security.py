@@ -75,6 +75,9 @@ def _is_local(host: str) -> bool:
     return any(ip in net for net in _PRIVATE_NETS)
 
 
+is_local_host = _is_local  # public name for the settings validator (web.public_url)
+
+
 def _host_header_ok(value: str) -> bool:
     try:
         host = urlsplit(f"//{value}").hostname

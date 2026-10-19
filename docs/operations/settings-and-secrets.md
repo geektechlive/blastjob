@@ -27,7 +27,7 @@ How `setup set` reads a value:
 
 `setup set` checks the whole result before saving. An unknown name or an out-of-range value is refused with a message saying why, and nothing is saved. Changes apply to the next page load or daily run without a restart, except `web.host` and `web.port`, which are read when the cockpit starts. One setting, `paths.data_dir`, cannot be set this way; point the `BLASTJOB_DATA_DIR` environment variable at the folder instead.
 
-Saving `web.host` as anything but a local address prints a warning. See [using the cockpit from another device](lan-access.md).
+`web.public_url` sets the address the digest's cockpit links use; it is checked the same way. Saving `web.host` as anything but a local address prints a warning. See [using the cockpit from another device](lan-access.md).
 
 To pause the daily run without changing any setting, create a file named `PAUSE` in the data folder ([services](services.md#the-daily-run-service)).
 

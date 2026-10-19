@@ -45,7 +45,7 @@ Footer. An italic line at the end gives how long the run took, how many postings
 
 ## Cockpit links
 
-The cockpit links in the digest always point at `http://127.0.0.1:8765`. They open on the computer running the cockpit. From a phone they will not load, even if you opened the cockpit to your network. Use the apply link on the phone, and open the cockpit later on the computer. [Reaching the cockpit from other devices](../operations/lan-access.md) covers using the cockpit from a phone or tablet.
+By default the cockpit links in the digest point at `http://127.0.0.1:<web.port>` (8765 unless you changed it). That address only works on the computer running the cockpit. From a phone it will not load. Use the apply link on the phone, or set `web.public_url` to the computer's network address so the cockpit links open on the phone too (see [Digest links on a phone](../operations/lan-access.md#digest-links-on-a-phone)). [Reaching the cockpit from other devices](../operations/lan-access.md) covers using the cockpit from a phone or tablet.
 
 ## Keeping scores current
 

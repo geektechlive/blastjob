@@ -34,6 +34,16 @@ uv run blastjob-web --host 0.0.0.0
 
 While it is bound to the network, the cockpit logs a warning each time it starts. To turn LAN access off again, set `web.host` back to `127.0.0.1` and restart.
 
+## Digest links on a phone
+
+The daily digest links to the cockpit. By default those links use `http://127.0.0.1:<web.port>`, which only works on the computer itself. Once LAN access is on, give the digest an address the phone can reach:
+
+```bash
+uv run blastjob setup set web.public_url http://192.168.1.20:8765
+```
+
+The same field is in Settings, under **Daily digest and cockpit**, as **Cockpit address for digest links**. Leave it blank to go back to the default. The value must be `http` or `https`, then `localhost` or a private IP address (the cockpit refuses DNS names, so a name would only give you a dead link), an optional port, and no path. A trailing slash is dropped. Anything else is refused with a message saying why. It applies to the next daily run without a restart.
+
 On a Mac the application firewall may drop the traffic. The venv's Python is not the one the firewall knows, and the checkout's `.venv` path is long, so the helper script works it out for you:
 
 ```bash

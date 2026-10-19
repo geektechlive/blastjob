@@ -142,6 +142,7 @@ def _service(cfg: BlastJobConfig, form: Form) -> None:
     cfg.notify.mode = form.get("notify_mode", cfg.notify.mode)  # type: ignore[assignment]
     cfg.web.host = form.get("web_host", "").strip()
     cfg.web.port = _num(form, "web_port", int)
+    cfg.web.public_url = form.get("web_public_url", cfg.web.public_url).strip()
 
 
 _APPLY: dict[str, Callable[[BlastJobConfig, Form], None]] = {

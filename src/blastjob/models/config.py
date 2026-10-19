@@ -317,6 +317,38 @@ class DiscoveryConfig(BaseModel):
         return self
 
 
+def normalize_public_url(value: str) -> str:
+    """`http(s)://<host>[:port]` where the host passes the cockpit's own Host check
+    (loopback or a private IP literal; see docs/operations/lan-access.md). Drops one
+    trailing slash. Empty stays empty."""
+    from urllib.parse import urlsplit
+
+    from blastjob.web.security import is_local_host
+
+    v = value.strip()
+    if not v:
+        return ""
+    hint = (
+        "web.public_url must look like http://192.168.1.20:8765: http or https, then "
+        "localhost or a private IP address (the cockpit refuses DNS names), an optional "
+        "port, and no path"
+    )
+    try:
+        parts = urlsplit(v)
+        port = parts.port
+    except ValueError as e:
+        raise ValueError(hint) from e
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(hint)
+    if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username:
+        raise ValueError(hint)
+    if "?" in v or "#" in v or not is_local_host(parts.hostname):
+        raise ValueError(hint)
+    if port == 0:
+        raise ValueError(hint)
+    return v.rstrip("/")
+
+
 class WebConfig(BaseModel):
     """Where `blastjob-web` binds. Read once at startup: a change takes effect
     after the cockpit restarts. Anything but loopback exposes a tool with no
@@ -324,6 +356,14 @@ class WebConfig(BaseModel):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1, le=65535)
+    # The address the daily digest's cockpit links use (read on a phone, so the
+    # loopback default is wrong there). Empty means http://127.0.0.1:<port>.
+    public_url: str = ""
+
+    @field_validator("public_url")
+    @classmethod
+    def _public_url_is_a_host_the_cockpit_accepts(cls, v: str) -> str:
+        return normalize_public_url(v)
 
 
 class NotifyConfig(BaseModel):

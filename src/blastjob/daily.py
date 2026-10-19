@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 HEADER = "🎯 **blastjob**"
-COCKPIT_BASE = "http://127.0.0.1:8765"
+COCKPIT_BASE = "http://127.0.0.1:8765"  # fallback default; the run derives it: cockpit_base()
 HEARTBEAT_WEEKDAY = 0  # Monday
 MAX_DIGEST_JOBS = 25
 MAX_CLOSED_NAMES = 5
@@ -89,6 +89,12 @@ class DailyResult:
     backup_path: str = ""
     closed_postings: list[dict] = field(default_factory=list)
     replies: list[ReplyMatch] = field(default_factory=list)
+
+
+def cockpit_base(cfg: BlastJobConfig) -> str:
+    """Base of every cockpit link in the digest: `web.public_url` when set, else
+    loopback on the configured port (docs/using/digest.md)."""
+    return cfg.web.public_url or f"http://127.0.0.1:{cfg.web.port}"
 
 
 def is_paused(cfg: BlastJobConfig) -> bool:
@@ -500,6 +506,7 @@ async def run_daily(
         jobs,
         res.errors,
         fups,
+        base_url=cockpit_base(cfg),
         heartbeat=hb,
         warm_ids=warm_ids,
         closed_postings=res.closed_postings,
@@ -523,6 +530,7 @@ async def run_daily(
         jobs,
         res.errors,
         fups,
+        base_url=cockpit_base(cfg),
         heartbeat=hb,
         footer=footer,
         warm_ids=warm_ids,
