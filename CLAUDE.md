@@ -253,10 +253,27 @@ deliberately no global cap on concurrent LLM calls (considered and dropped: #24)
 ### Build pipeline (`core/build.py`)
 
 1. Reads `work_history.md` and the selected template from the data dir
-2. `llm/providers.make_research_call()`: on the `anthropic` provider, a non-streaming
-   call with the `web_search_20250305` tool; on `claude-cli`/OpenAI, a plain completion
-   from training data with no web access (the sidecar says so in a footer; #59 moves
-   this to fetched pages). Returns raw markdown
+2. Company research (#59, `core/packet_research.py`). With a Jina key: at most 3
+   searches and `jina.MAX_PAGES` page reads inside a 45 s deadline.
+   - **Pages must be about THIS employer** (`core/research_match.py`, job context from
+     `web/research_context.py`). A page is used if it is on an employer domain
+     (`discovery.employer_domains`, or the job's own posting host; ATS and job-board hosts
+     never count), or if it names the company with the job's US state within 300 characters
+     ("<Company> of <Place>" is a different company). A city counts only with its state.
+     With no anchor at all, an isolated model call keeps only pages it judges to be the same
+     business entity, and the packet notes `company_match_judged`.
+   - **What the model returns is checked.** Its facts must have their span verbatim on the
+     cited page, and its single values must appear on that page.
+   - **The letter gets source sentences.** The cover letter (and resume) get the verbatim
+     span with `(host, date)`, never the model's restatement.
+   - **Dates** (`core/page_dates.py`) are publish dates only, else "undated". "Over 2 years
+     old" is computed in code, and the letter may state a dated figure only as of its date.
+   - **Fallback:** no key, no usable page, or no verified fact falls back to
+     `llm/providers.make_research_call()`. That is a web_search tool call on `anthropic`;
+     on claude-cli/OpenAI it is a training-data completion with a footer. A packet-report
+     note says the facts have no cited source or the company couldn't be confirmed.
+
+   Returns the research markdown.
 3. `build_resume_messages()`: assembles a 3-breakpoint cached message list (see Prompt
    caching rules)
 4. Streaming LLM call with `RESUME_SYSTEM` or `RESUME_ATS_SYSTEM`: streams resume markdown
