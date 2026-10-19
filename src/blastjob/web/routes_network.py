@@ -87,7 +87,7 @@ def register(app: FastAPI, deps: Deps) -> None:
         classifies just the delta."""
         from blastjob.web.enrich import make_enrich_work
 
-        run = RUNTIME.start("enrich", make_enrich_work(deps.load_config))
+        run = RUNTIME.start("enrich", make_enrich_work(deps.load_config), key="network")
         return deps.render(request, "_build_panel.html", run=run, heading="Reading titles")
 
     @app.get("/network/recruiters", response_class=HTMLResponse)
@@ -320,7 +320,11 @@ def register(app: FastAPI, deps: Deps) -> None:
             c.close()
         if job is None:
             return HTMLResponse("Not found", status_code=404)
-        run = RUNTIME.start("research", make_research_work(job["company"], deps.load_config))
+        run = RUNTIME.start(
+            "research",
+            make_research_work(job["company"], deps.load_config),
+            key=co.company_key(job["company"]),
+        )
         return deps.render(
             request, "_build_panel.html", run=run, heading=f"Researching {job['company']}"
         )
@@ -336,7 +340,11 @@ def register(app: FastAPI, deps: Deps) -> None:
             c.close()
         if profile is None:
             return HTMLResponse("Not found", status_code=404)
-        run = RUNTIME.start("research", make_research_work(profile["company"], deps.load_config))
+        run = RUNTIME.start(
+            "research",
+            make_research_work(profile["company"], deps.load_config),
+            key=co.company_key(profile["company"]),
+        )
         return deps.render(
             request, "_build_panel.html", run=run, heading=f"Researching {profile['company']}"
         )

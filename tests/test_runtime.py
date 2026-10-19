@@ -234,3 +234,71 @@ async def test_an_abandoned_sse_waiter_cannot_pin_a_finished_run_forever():
 
 async def _noop_work(run):
     return None
+
+
+# ----- 5. per-key single flight (#24) -----------------------------------------
+
+
+async def _park(reg: rt.Runtime, name: str, key: str | None, gate: asyncio.Event) -> rt.Run:
+    async def work(run):
+        await gate.wait()
+        return "ok"
+
+    return reg.start(name, work, key=key)
+
+
+async def test_second_start_with_same_name_and_key_returns_the_running_run():
+    reg = rt.Runtime()
+    gate = asyncio.Event()
+    first = await _park(reg, "prep", "7", gate)
+    second = await _park(reg, "prep", "7", gate)
+    assert second is first
+    gate.set()
+
+
+async def test_different_keys_run_concurrently():
+    reg = rt.Runtime()
+    gate = asyncio.Event()
+    a = await _park(reg, "prep", "7", gate)
+    b = await _park(reg, "prep", "8", gate)
+    c = await _park(reg, "outreach", "7", gate)
+    assert len({a.id, b.id, c.id}) == 3
+    gate.set()
+
+
+async def test_start_without_a_key_is_never_deduplicated():
+    reg = rt.Runtime()
+    gate = asyncio.Event()
+    a = await _park(reg, "tailor", None, gate)
+    b = await _park(reg, "tailor", None, gate)
+    assert a is not b
+    gate.set()
+
+
+async def test_same_key_starts_a_new_run_once_the_first_finished():
+    reg = rt.Runtime()
+    gate = asyncio.Event()
+    first = await _park(reg, "prep", "7", gate)
+    gate.set()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert first.status == "done"
+    again = await _park(reg, "prep", "7", asyncio.Event())
+    assert again is not first
+
+
+async def test_same_key_starts_a_new_run_once_the_first_failed():
+    # A failed run must release its key too, or one error would block that job's
+    # Prep (or Outreach...) until the cockpit restarts.
+    reg = rt.Runtime()
+
+    async def boom(_run):
+        raise RuntimeError("provider down")
+
+    first = reg.start("prep", boom, key="7")
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert first.status == "failed"
+    again = await _park(reg, "prep", "7", asyncio.Event())
+    assert again is not first
+    assert again.status == "running"

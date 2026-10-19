@@ -194,6 +194,7 @@ def register(app: FastAPI, deps: Deps) -> None:
         run = RUNTIME.start(
             "followup",
             make_followup_work(job_id, deps.load_config, artifact_dir=(packet or {}).get("dir")),
+            key=str(job_id),
         )
         return deps.render(request, "_followup_panel.html", run=run, heading="Follow-up draft")
 
@@ -322,7 +323,9 @@ def register(app: FastAPI, deps: Deps) -> None:
         from blastjob.web.build import make_outreach_work
 
         run = RUNTIME.start(
-            "outreach", make_outreach_work(job_id, deps.load_config, contact_id=contact_id)
+            "outreach",
+            make_outreach_work(job_id, deps.load_config, contact_id=contact_id),
+            key=f"{job_id}:{contact_id or ''}",
         )
         heading = "Outreach draft" + (" (addressed)" if contact_id else "")
         return deps.render(request, "_build_panel.html", run=run, heading=heading)
@@ -331,7 +334,7 @@ def register(app: FastAPI, deps: Deps) -> None:
     async def prep_route(request: Request, job_id: int, _: None = Depends(require_csrf)):
         from blastjob.web.prep import make_prep_work
 
-        run = RUNTIME.start("prep", make_prep_work(job_id, deps.load_config))
+        run = RUNTIME.start("prep", make_prep_work(job_id, deps.load_config), key=str(job_id))
         return deps.render(request, "_build_panel.html", run=run, heading="Interview prep")
 
     # ----- people / addressed outreach -----

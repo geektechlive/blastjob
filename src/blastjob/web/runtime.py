@@ -83,6 +83,7 @@ class Event:
 class Run:
     id: str
     name: str
+    key: str | None = None  # per-(name, key) single flight; None = not deduplicated
     status: str = "running"  # running | done | failed
     events: list[Event] = field(default_factory=list)
     result: Any = None
@@ -148,6 +149,12 @@ class Runtime:
                 return run
         return None
 
+    def _running_keyed(self, name: str, key: str) -> Run | None:
+        for run in reversed(list(self._runs.values())):
+            if run.name == name and run.key == key and run.status == "running":
+                return run
+        return None
+
     def _prune(self) -> None:
         """Drop finished runs (and their event logs) once nothing can still want
         them. Never a run that is still going, and never one an SSE consumer is
@@ -180,14 +187,21 @@ class Runtime:
             if evictable(run):
                 del self._runs[rid]
 
-    def start(self, name: str, work: Callable[[Run], Awaitable[Any]]) -> Run:
+    def start(
+        self, name: str, work: Callable[[Run], Awaitable[Any]], key: str | None = None
+    ) -> Run:
         """Schedule `work(run)` on the event loop. `work` uses run.emit(...) for
         progress/log/output; its return value becomes run.result.
 
         For a SINGLE_FLIGHT name with a pass already in flight, `work` is NOT
         scheduled and the in-flight Run is handed back, so the caller's status
-        panel shows the real run instead of hiding it behind a duplicate."""
+        panel shows the real run instead of hiding it behind a duplicate. The same
+        holds per `(name, key)` when a `key` is given (a job id, a company key): a
+        double-click on Prep for one job hands back its running run, while Prep for
+        another job still starts. No key means no deduplication."""
         existing = self._running(name) if name in SINGLE_FLIGHT else None
+        if existing is None and key is not None:
+            existing = self._running_keyed(name, key)
         if existing is not None:
             return existing
         self._prune()
@@ -196,7 +210,7 @@ class Runtime:
         # (build_runs.run_id is UNIQUE; a bare counter resets to 1 on restart and
         # collides with rows from a prior session).
         run_id = f"{name}-{self._seq}-{uuid.uuid4().hex[:8]}"
-        run = Run(id=run_id, name=name)
+        run = Run(id=run_id, name=name, key=key)
         self._runs[run_id] = run
 
         async def _driver() -> None:
