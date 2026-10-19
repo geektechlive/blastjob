@@ -160,8 +160,8 @@ you". See [Your network](how-it-works/network.md#name-matching).
 
 ## Research is a trust boundary
 
-**Rule: research text never shares a context window with the work history, and the cover
-letter consumes verified facts, never raw research.** Scraped or recalled text about an
+**Rule: research text never shares a context window with the work history, and the resume
+and the cover letter consume verified facts, never raw research.** Scraped or recalled text about an
 employer is distilled in an isolated call whose context holds the research and nothing else
 (`core/research_facts.py`: `research_facts.distill_research`, and the page-research call
 in `core/packet_research.py`). Each fact carries a source span, a polarity (affirmed, denied,
@@ -169,7 +169,7 @@ considered, abandoned, unknown) and a provenance. A fact survives only if its sp
 verbatim in the text it cites (`research_facts.span_verifies`, minimum 16 characters).
 Calling raw text "untrusted" inside a prompt is not a control; this structure is.
 
-What the letter sees (`research_facts.facts_block`) is each fact's verbatim span with its
+What the resume and the letter see (`research_facts.facts_block`) is each fact's verbatim span with its
 polarity, provenance, confidence, source host and page date. The model's own restatement of
 a fact is never rendered. Polarity is why "considered entering aerospace and abandoned it"
 cannot become "serves aerospace":

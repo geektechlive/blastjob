@@ -39,11 +39,11 @@ reuses it (see [Build claims](#build-claims)). In order:
    [Company research](#company-research).
 3. **Company facts.** Cited research already is a list of verified facts. Fallback research
    is distilled into facts in an isolated call (`research_facts.distill_research`). Either
-   way the facts, not the raw text, are what the cover letter gets.
+   way the facts, not the raw text, are what the resume and the cover letter get.
 4. **Resume.** `caching.build_resume_messages` assembles the cached message list (system
    prompt `RESUME_SYSTEM` or `RESUME_ATS_SYSTEM` with the candidate profile appended, the
-   work history, the template, then the job description and research as a trailing
-   uncached block), and one streaming call writes the resume markdown. An empty resume
+   work history, the template, then the job description and the company facts block as a
+   trailing uncached block), and one streaming call writes the resume markdown. An empty resume
    fails the build.
 5. **Folder and names.** Under the shared filing lock, the build picks today's
    `{company-slug}-{date}/` folder (`paths.application_dir`), the document stems (see
@@ -132,10 +132,12 @@ are dropped, never guessed.
 **The letter gets source sentences.** The research sidecar opens with
 `research_facts.CITED_MARKER` and lists the verified values, the quoted spans with their
 source host and date, and the sources. No model-written sentence goes in it, because refine
-re-distills it and a model sentence there would come back as a "verified span". The resume
-prompt reads this sidecar; the cover letter gets the facts block, which is each verbatim span
-with its polarity, provenance, confidence, host and date, never the model's restatement
-(`research_facts.facts_block`).
+re-distills it and a model sentence there would come back as a "verified span". Neither
+the resume nor the cover letter reads this sidecar: both get the facts block, which is each
+verbatim span with its polarity, provenance, confidence, host and date, never the model's
+restatement (`research_facts.facts_block`). With no verified fact the block says so and
+tells the model to make no claim about the company. Refine's resume revision gets no
+research at all; only its letter re-score reads the sidecar, and re-distills it first.
 
 **Dates** (`core/page_dates.py`) are publish dates only, found without guessing: the
 reader's published time, a published-time meta tag or schema.org `datePublished`, a date in

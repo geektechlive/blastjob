@@ -27,15 +27,20 @@ def build_resume_messages(
     work_history_md: str,
     template_md: str,
     job_description: str,
-    company_research: str,
+    company_facts_md: str,
 ) -> tuple[list[dict], list[dict]]:
-    """Return (system_blocks, user_message_content) with 3 cache breakpoints."""
+    """Return (system_blocks, user_message_content) with 3 cache breakpoints.
+
+    `company_facts_md` is `research_facts.facts_block` output, never the raw research
+    sidecar (docs/truth-guarantees.md). It is per-call, so it rides in the trailing
+    uncached block.
+    """
     system = [cached_text(system_prompt)]  # BP 1
     user_content = [
         cached_text(work_history_md),  # BP 2
         cached_text(template_md),  # BP 3
         plain_text(
-            f"## Job Description\n\n{job_description}\n\n## Company Research\n\n{company_research}"
+            f"## Job Description\n\n{job_description}\n\n## Company Facts\n\n{company_facts_md}"
         ),
     ]
     return system, user_content
@@ -46,7 +51,7 @@ def build_cover_letter_messages(
     work_history_md: str,
     resume_md: str,
     job_description: str,
-    company_research: str,
+    company_facts_md: str,
 ) -> tuple[list[dict], list[dict]]:
     """Return (system_blocks, user_message_content) for cover letter generation.
 
@@ -63,7 +68,7 @@ def build_cover_letter_messages(
         cached_text(work_history_md),  # BP 2
         plain_text(f"## Current Resume\n\n{resume_md}"),
         plain_text(
-            f"## Job Description\n\n{job_description}\n\n## Company Research\n\n{company_research}"
+            f"## Job Description\n\n{job_description}\n\n## Company Facts\n\n{company_facts_md}"
         ),
     ]
     return system, user_content

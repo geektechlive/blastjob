@@ -88,9 +88,9 @@ def test_build_resume_messages_user_block_count():
     assert len(user) == 3
 
 
-def test_build_resume_messages_empty_research():
+def test_build_resume_messages_empty_facts():
     _, user = build_resume_messages("sys", "history", "template", "jd", "")
-    assert "## Company Research" in user[2]["text"]
+    assert "## Company Facts" in user[2]["text"]
 
 
 # ---------------------------------------------------------------------------

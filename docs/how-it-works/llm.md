@@ -56,7 +56,7 @@ There are three cache breakpoints per resume generation call
 3. the template (`standard.md` or `ats.md`).
 
 **Never interpolate per-call data into a cached block.** Per-call data (the job description,
-company research, a generated resume, feedback) goes in a trailing `plain_text` block. A
+company facts, a generated resume, feedback) goes in a trailing `plain_text` block. A
 changing block in the cached prefix kills the hit rate and pays the cache-write premium every
 call.
 

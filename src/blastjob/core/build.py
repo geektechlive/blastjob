@@ -134,12 +134,21 @@ async def run_build(
     if research_md and cited is None:
         research_notes.append(packet_verify.SKIPPED_RESEARCH_SOURCES)
 
+    # What every generating call may know about the employer: the facts block
+    # (verbatim spans with polarity, provenance, host, date; cited single
+    # values), never the raw sidecar. Built once, used by the resume and the
+    # letter, so neither can see what the other does not.
+    company_facts_md = facts_block(
+        company_facts,
+        values=packet_research.value_lines(cited) if cited is not None else (),
+    )
+
     # Step 2: Generate resume
     system_prompt = prompts.with_profile(
         prompts.RESUME_ATS_SYSTEM if use_ats else prompts.RESUME_SYSTEM, app_config.candidate
     )
     system, user_content = caching.build_resume_messages(
-        system_prompt, work_history_md, template_md, job_description, research_md
+        system_prompt, work_history_md, template_md, job_description, company_facts_md
     )
 
     if on_text:
@@ -218,10 +227,7 @@ async def run_build(
             job_description,
             # Spans with source and date, never the model's statements (#59);
             # cited single values ride along with theirs.
-            facts_block(
-                company_facts,
-                values=packet_research.value_lines(cited) if cited is not None else (),
-            ),
+            company_facts_md,
             formats,
             out_dir,
             app_config,
