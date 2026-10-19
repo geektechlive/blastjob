@@ -518,3 +518,67 @@ def test_snippet_stops_at_an_original_message_divider():
 
 def test_snippet_keeps_the_whole_body_when_nothing_is_quoted():
     assert rp._snippet("<p>Short and unquoted.</p>") == "Short and unquoted."
+
+
+# ---------- exact-address matching and deterministic order (#46) ----------
+
+
+def _applied_job(conn, ext_id, company, notes="", applied_at=""):
+    job_id = dbc.upsert_job(
+        conn,
+        source="t",
+        external_id=ext_id,
+        company=company,
+        title="Chief Officer",
+        url="https://x",
+        review_state="kept",
+        application_state="applied",
+        app_notes=notes,
+    )
+    conn.execute("UPDATE jobs SET applied_at=? WHERE id=?", (applied_at, job_id))
+    conn.commit()
+    return job_id
+
+
+def test_notes_address_is_not_matched_as_a_substring_of_a_longer_local_part(db):
+    _, conn, _ = db
+    _applied_job(conn, "e1", "Zed Co", notes="Wrote to jimbob@example.com")
+    job, matched_by = rp.match_job("bob@example.com", rp._reply_candidate_jobs(conn))
+    assert job is None and matched_by == ""
+
+
+def test_notes_address_is_not_matched_as_a_substring_of_a_longer_domain(db):
+    _, conn, _ = db
+    _applied_job(conn, "e2", "Zed Co", notes="Wrote to jane@example.org.example")
+    job, matched_by = rp.match_job("jane@example.org", rp._reply_candidate_jobs(conn))
+    assert job is None and matched_by == ""
+
+
+def test_notes_address_match_is_case_insensitive_and_exact(db):
+    _, conn, _ = db
+    job_id = _applied_job(conn, "e3", "Zed Co", notes="Met Bob <Bob@Example.com>.")
+    job, matched_by = rp.match_job("Bob <bob@example.com>", rp._reply_candidate_jobs(conn))
+    assert job is not None and int(job["id"]) == job_id and matched_by == "app_notes"
+
+
+@pytest.mark.parametrize("order", [("old", "new"), ("new", "old")])
+def test_domain_match_prefers_the_most_recently_applied_job(db, order):
+    _, conn, _ = db
+    ids = {}
+    for key in order:
+        stamp = "2026-01-01" if key == "old" else "2026-09-01"
+        ids[key] = _applied_job(conn, f"d-{key}", "Acme Industries", applied_at=stamp)
+    job, matched_by = rp.match_job(
+        "Jane <jane@acmeindustries.example>", rp._reply_candidate_jobs(conn)
+    )
+    assert job is not None and int(job["id"]) == ids["new"] and matched_by == "domain"
+
+
+def test_job_with_empty_applied_at_sorts_after_dated_ones(db):
+    _, conn, _ = db
+    undated = _applied_job(conn, "u1", "Acme Industries", applied_at="")
+    dated = _applied_job(conn, "u2", "Acme Industries", applied_at="2026-05-05")
+    ids = [
+        int(j["id"]) for j in rp._reply_candidate_jobs(conn) if j["company"] == "Acme Industries"
+    ]
+    assert ids == [dated, undated]

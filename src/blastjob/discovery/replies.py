@@ -193,7 +193,8 @@ def _reply_candidate_jobs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     placeholders = ",".join("?" for _ in APPLIED_STATES)
     return conn.execute(
         f"SELECT id, company, title, url, app_notes FROM jobs "
-        f"WHERE review_state='kept' AND application_state IN ({placeholders})",
+        f"WHERE review_state='kept' AND application_state IN ({placeholders}) "
+        f"ORDER BY applied_at DESC, id DESC",
         APPLIED_STATES,
     ).fetchall()
 
@@ -225,7 +226,7 @@ def match_job(sender: str, jobs: list[sqlite3.Row]) -> tuple[sqlite3.Row | None,
         return None, ""
     for job in jobs:
         notes = (job["app_notes"] or "").lower()
-        if notes and addr in notes:
+        if notes and addr in set(_EMAIL_RE.findall(notes)):
             return job, "app_notes"
     if "@" not in addr:
         return None, ""
