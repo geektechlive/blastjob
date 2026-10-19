@@ -50,7 +50,7 @@ def list_page(
     deps: Deps, request: Request, view: str, rows, c: sqlite3.Connection, sort: str = "fit"
 ) -> HTMLResponse:
     status = request.query_params.get("status", "all")
-    all_jobs = service.annotate_network(c, rows)
+    all_jobs = service.annotate_network(c, rows, deps.load_config().candidate)
     jobs, status_counts, chips = status_filter.filter_stage(all_jobs, view, status)
     if view in srv.CHIP_VIEWS:
         jobs = srv.annotate_rows(c, jobs, deps.radius(), deps.load_config().discovery)
@@ -153,7 +153,9 @@ def row_response(
     the answer is empty and the row's outerHTML swap removes it; if the move was
     refused the page reloads to show where the job really is. Elsewhere (the job
     page ignores the body) the updated row renders."""
-    job = service.annotate_network_one(c, service.job_detail(c, job_id))
+    job = service.annotate_network_one(
+        c, service.job_detail(c, job_id), deps.load_config().candidate
+    )
     if job is None:
         return HTMLResponse("Not found", status_code=404)
     if from_list:

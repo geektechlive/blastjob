@@ -11,7 +11,7 @@ import sqlite3
 from blastjob.core import events
 from blastjob.core import network as net
 from blastjob.core.company import company_key
-from blastjob.models.config import BlastJobConfig
+from blastjob.models.config import BlastJobConfig, CandidateConfig
 from blastjob.models.job import ReviewState
 from blastjob.web.stages import stage_of
 
@@ -165,7 +165,9 @@ def job_detail(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def annotate_network(conn: sqlite3.Connection, rows: list) -> list[dict]:
+def annotate_network(
+    conn: sqlite3.Connection, rows: list, candidate: CandidateConfig
+) -> list[dict]:
     """Attach `warm_count` (connections at that company) and `is_alumni`
     (the user already worked there) to a list of job rows. One batched query
     across every company in `rows` — see `net.warm_counts` and
@@ -176,15 +178,17 @@ def annotate_network(conn: sqlite3.Connection, rows: list) -> list[dict]:
     for r in out:
         key = company_key(r.get("company") or "")
         r["warm_count"] = counts.get(key, 0)
-        r["is_alumni"] = net.is_alumni_company(key)
+        r["is_alumni"] = net.is_alumni_company(key, candidate)
     return out
 
 
-def annotate_network_one(conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict | None:
+def annotate_network_one(
+    conn: sqlite3.Connection, row: sqlite3.Row | None, candidate: CandidateConfig
+) -> dict | None:
     """Single-row form of `annotate_network`, for the job detail page."""
     if row is None:
         return None
-    return annotate_network(conn, [row])[0]
+    return annotate_network(conn, [row], candidate)[0]
 
 
 def set_review_state(

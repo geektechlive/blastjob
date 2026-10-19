@@ -304,7 +304,7 @@ def create_app(
             warm_paths = net.warm_paths(c, job_id)
             # annotate_network_one returns a dict (the row plus network badges),
             # so it needs its own name rather than rebinding the sqlite3.Row.
-            job = service.annotate_network_one(c, row)
+            job = service.annotate_network_one(c, row, load_config().candidate)
             assert job is not None
             cfg = load_config()
             packet = packets.packet_for_job(c, job_id, load_config=load_config)

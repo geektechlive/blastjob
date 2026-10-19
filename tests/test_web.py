@@ -1353,3 +1353,42 @@ def test_job_page_notes_form_carries_the_loaded_version(client_cfg):
     r = client.get(f"/jobs/{jid}")
     assert r.status_code == 200
     assert f'name="notes_version" value="{service.notes_version("call Tuesday")}"' in r.text
+
+
+# ----- Alumni badge (#63) ------------------------------------------------------
+
+ALUMNI_BADGE = "you worked here"
+
+
+def test_alumni_badge_shows_on_list_and_job_page_for_former_employer(client_cfg):
+    client, cfg, _, ids = client_cfg
+    # Different legal suffix than the job's "Acme": company_key must reconcile them.
+    cfg.candidate.former_employers = ["Acme Corporation, Inc."]
+
+    assert ALUMNI_BADGE in client.get("/").text
+    assert ALUMNI_BADGE in client.get(f"/jobs/{ids['surfaced']}").text
+
+
+def test_alumni_badge_absent_for_other_employers(client_cfg):
+    client, cfg, _, ids = client_cfg
+    cfg.candidate.former_employers = ["Acme Corporation, Inc."]
+
+    assert ALUMNI_BADGE not in client.get("/queue").text
+    assert ALUMNI_BADGE not in client.get(f"/jobs/{ids['queued']}").text
+
+
+def test_alumni_badge_absent_when_no_former_employers(client_cfg):
+    client, _, _, ids = client_cfg
+
+    assert ALUMNI_BADGE not in client.get("/").text
+    assert ALUMNI_BADGE not in client.get(f"/jobs/{ids['surfaced']}").text
+
+
+def test_keep_row_response_keeps_alumni_badge(client_cfg):
+    client, cfg, _, ids = client_cfg
+    cfg.candidate.former_employers = ["Acme"]
+
+    r = client.post(f"/jobs/{ids['surfaced']}/keep", headers=_tok())
+
+    assert r.status_code == 200
+    assert ALUMNI_BADGE in r.text

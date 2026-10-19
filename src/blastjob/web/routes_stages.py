@@ -58,7 +58,8 @@ def register(app: FastAPI, deps: Deps) -> None:
     async def all_jobs(request: Request, status: str = "all"):
         c = deps.conn()
         try:
-            every = service.annotate_network(c, service.all_active(c, deps.load_config()))
+            cfg = deps.load_config()
+            every = service.annotate_network(c, service.all_active(c, cfg), cfg.candidate)
             jobs, status_counts = status_filter.filter_jobs(every, status)
             return deps.render(
                 request,

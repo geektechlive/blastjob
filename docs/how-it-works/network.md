@@ -36,9 +36,7 @@ The results report how many names were ambiguous or skipped.
 
 ## Alumni signal
 
-`candidate.former_employers` lists the places you worked. A job at one of them is the strongest warm signal, and it is matched on the normalized company key (`company.company_key`, including `discovery.company_aliases` for legal-name versus brand-name differences). `network.alumni_employers` computes the set at call time from the candidate settings you pass in, so a fresh install with an empty list and a filled-in one both behave without a restart.
-
-Known gap: `network.is_alumni_company` takes the candidate settings as an argument, and without them it treats the list as empty. The cockpit's list and detail badges call it through `service.annotate_network` without passing them, so the "alumni" badge does not currently appear. The "N in your network" count is not affected.
+`candidate.former_employers` lists the places you worked. A job at one of them is the strongest warm signal, and it is matched on the normalized company key (`company.company_key`, including `discovery.company_aliases` for legal-name versus brand-name differences). `network.alumni_employers` computes the set at call time from the candidate settings you pass in (the web layer passes the loaded config's `candidate` on every list and the job page), so a fresh install with an empty list and a filled-in one both behave without a restart.
 
 Connections at a job's company are found by company key. `network.warm_paths` orders them: recommenders first, then executive, director, manager, individual contributor, then most recently messaged, then name. A VP who recommended you outranks a VP who never spoke to you. The job page shows them under "People you know here", each with the source URL from your export so you can verify before writing.
 
