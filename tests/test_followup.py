@@ -196,7 +196,7 @@ def test_followup_prompt_forbids_fabrication_and_sending():
 
 
 def test_followup_messages_keep_per_call_data_out_of_the_cached_blocks():
-    """CLAUDE.md rule: interpolating per-call data into a cached block kills the
+    """docs/how-it-works/llm.md rule: interpolating per-call data into a cached block kills the
     hit rate. The job details belong in the trailing plain block only."""
     system, user = followup.build_followup_messages(
         WORK_HISTORY, JOB, reason="follow-up due 2026-09-17", contact=None, today=date(2026, 9, 17)

@@ -135,7 +135,7 @@
 
 {# ---- Mail accounts. Env var NAMES only: values live in the secrets file
    and are NEVER rendered here, only reported present/missing. The cockpit is
-   LAN-bound without auth, so anything on this page is readable LAN-wide. ---- #}
+   served without auth (and may be reachable on the LAN), so anything on this page is readable by whoever can reach it. ---- #}
 <section class="settings-note" id="mail">
   <h3>Mail accounts</h3>
   <p class="dim">blastjob reads two mailboxes and they are not interchangeable:

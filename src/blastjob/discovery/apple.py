@@ -1,6 +1,6 @@
 """Apple careers site adapter (jobs.apple.com), via the Jina reader.
 
-Feasibility was probed 2026-09-10 (see docs/ARCHITECTURE.md) and
+Feasibility was probed 2026-09-10 (see docs/how-it-works/discovery.md) and
 is NOT re-investigated here:
 
 - Plain `GET jobs.apple.com/en-us/search` returns real HTML but the results are

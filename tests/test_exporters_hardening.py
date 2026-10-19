@@ -1,6 +1,6 @@
 """ATS/Workday-safety tests for exporters/ats.py and exporters/docx.py.
 
-Covers the confirmed defects from docs/ARCHITECTURE.md
+Covers the confirmed defects described in docs/how-it-works/tailoring.md
 (V13 / W5): banned characters surviving into the .ats.txt (the exact set behind the
 logged Workday rejection, 2026-09-10), ats.py raising instead of being fail-soft like
 docx.py/pdf.py, mojibake (U+FFFD) reaching either exported file, and the 2.5MB

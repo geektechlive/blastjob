@@ -323,8 +323,8 @@ def test_is_local_request_true_for_loopback_v6():
 
 
 def test_is_local_request_false_for_lan_peer():
-    """The cockpit is LAN-bound for iPad access; only the peer address (not the
-    Origin header, which RFC1918 also satisfies) can tell an iPad from the Mac."""
+    """The cockpit may be bound to the LAN; only the peer address (not the
+    Origin header, which RFC1918 also satisfies) can tell another device from this computer."""
     req = SimpleNamespace(client=SimpleNamespace(host="192.168.1.42"))
     assert packets.is_local_request(req) is False
 

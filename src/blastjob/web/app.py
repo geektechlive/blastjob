@@ -1,6 +1,7 @@
-"""FastAPI + HTMX cockpit. Bound to 127.0.0.1 by the launcher; state-changing
-routes require the per-launch CSRF token; all untrusted job text is rendered
-through Jinja autoescaping.
+"""FastAPI + HTMX cockpit. Bound to `web.host` (default 127.0.0.1;
+LAN is an opt-in) by the launcher; state-changing routes
+require the per-launch CSRF token; all untrusted job text is rendered through
+Jinja autoescaping.
 
 `create_app` takes injectable load/save config callables so tests can run against
 a temp data dir without touching ~/.blastjob or the real config file.
@@ -76,7 +77,7 @@ _HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
 # Every href fed by a discovery feed or by model output goes through this filter.
 # Jinja escapes quotes but not URL schemes, and base.html carries the CSRF token
-# on <body>, so a javascript: href would be a full takeover on a LAN-bound page.
+# on <body>, so a javascript: href would be a full takeover on a page served to the network.
 templates.env.filters["safe_url"] = safe_external_url
 # The employer link to show: a limited-trust careers page shows its ATS root (#23).
 templates.env.filters["employer_href"] = page_links.employer_href

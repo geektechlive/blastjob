@@ -5,7 +5,7 @@ Written as `{role-slug}.apply_link.html` next to the role's
 of the packet. The URL comes only from `apply_link.apply_links_for` (the
 cluster's best route, already through `safe_external_url`); with no link there
 is no file. A plain HTML page with one link opens from Finder and from Files
-Quick Look on a phone or tablet.
+Quick Look on another device.
 """
 
 from __future__ import annotations

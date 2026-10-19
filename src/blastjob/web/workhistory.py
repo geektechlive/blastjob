@@ -1,12 +1,11 @@
 """Work history editor for the web cockpit.
 
 `work_history.md` is the single input every resume, cover letter, interview prep
-pack, and groundedness judgment derives from. Previously it could only be edited
-from the Textual TUI; this module lets the cockpit read and save it directly so
-the cockpit can be the only surface the user needs.
+pack, and groundedness judgment derives from. This module lets the cockpit read and
+save it directly, so the cockpit is the only surface the user needs.
 
 Save path mirrors the existing tmp-write + `os.replace` convention used elsewhere
-in the codebase (`core/ingest.py`, `tui/screens/work_history.py`) so a failed or
+in the codebase (`core/ingest.py`) so a failed or
 partial write can never truncate the canonical file, plus a timestamped backup
 before overwrite. The backup filename follows the naming convention already
 established for DB backups (`db/client.py`: `blastjob-YYYYMMDD-HHMMSS.db` written
@@ -51,12 +50,12 @@ class WorkHistoryView:
 
 class WorkHistoryConflictError(ValueError):
     """Raised when the on-disk file no longer matches the version the save
-    was based on -- someone else (another tab, the TUI) saved first."""
+    was based on -- someone else (another tab) saved first."""
 
     def __init__(self, current: WorkHistoryView):
         super().__init__(
             "Work history changed on disk since this page was loaded "
-            "(likely saved from another tab or the TUI). Reload to see the "
+            "(likely saved from another tab). Reload to see the "
             "latest version before saving again."
         )
         self.current = current

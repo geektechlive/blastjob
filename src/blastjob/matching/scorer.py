@@ -61,7 +61,7 @@ JD_HEAD_CHARS = 1500
 _JD_SPLICE = "\n[... middle of posting omitted; requirements section follows ...]\n"
 
 # Below this, a JD carries too little to identify a posting by content. Notably
-# an empty description means "presence only" (see CLAUDE.md) and every such
+# an empty description means "presence only" (see docs/how-it-works/discovery.md) and every such
 # posting hashes alike — collapsing them would share one score across unrelated
 # jobs. Those are always scored individually.
 MIN_JD_CHARS_FOR_REUSE = 200

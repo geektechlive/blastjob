@@ -63,11 +63,14 @@ def register(app: FastAPI, deps: Deps) -> None:
 
     @app.post("/jobs/{job_id}/reveal", response_class=HTMLResponse)
     async def job_reveal(request: Request, job_id: int, _: None = Depends(require_csrf)):
-        """Open the packet folder in Finder. Only from the Mac itself: the cockpit
-        is LAN-bound and the Origin check accepts RFC1918, so the peer address is
-        the only thing that can tell this machine from another device."""
+        """Open the packet folder in Finder. Only from the computer running
+        blastjob: the cockpit may be bound to the LAN and the Origin check accepts
+        RFC1918, so the peer address is the only thing that can tell this machine
+        from another device."""
         if not packets.is_local_request(request):
-            return HTMLResponse("Finder is only available on this Mac", status_code=403)
+            return HTMLResponse(
+                "Finder is only available from the computer running blastjob", status_code=403
+            )
         c = deps.conn()
         try:
             cfg = deps.load_config()

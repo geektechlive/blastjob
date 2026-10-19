@@ -4,8 +4,7 @@
 recorded only in `{role-slug}.packet_report.json` changes nothing about what
 sits in the packet folder: the resume and cover letter stay right where they
 were, next to a working download link. A badge beside a sendable file is the
-exact defect the packet-quality program (see CLAUDE.md's "Packet verification
-(2026-09-16)") was built to end.
+exact defect the packet-quality program (see docs/truth-guarantees.md) was built to end.
 
 This module is the enforcement half. `quarantine()` physically moves the
 GENERATED documents (not the sidecars -- the job description, research,
@@ -264,7 +263,7 @@ def release(
     without, every held document does.
 
     A manual decision always beats automation in this codebase (see
-    CLAUDE.md's "Truth guarantees"), but it is written down -- `RELEASED.txt`
+    docs/truth-guarantees.md), but it is written down -- `RELEASED.txt`
     is append-only, so a packet quarantined and released more than once
     keeps its whole history rather than the latest line only.
 

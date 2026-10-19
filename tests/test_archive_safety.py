@@ -1,8 +1,8 @@
 """Pins the archive-import decompression caps in `core/network.py`.
 
 The owner re-imports their full LinkedIn export periodically and the cockpit is
-LAN-bound with no authentication (their informed decision -- see CLAUDE.md
-"Truth guarantees" / docs/ARCHITECTURE.md "Trust boundaries"), so a ZIP that
+has no authentication and may be bound to the LAN (see
+docs/operations/lan-access.md and docs/how-it-works/network.md), so a ZIP that
 declares -- or actually delivers -- an absurd amount of decompressed content
 must never be read into memory whole. These tests pin:
 

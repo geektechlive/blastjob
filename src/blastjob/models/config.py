@@ -181,7 +181,7 @@ class DiscoveryConfig(BaseModel):
     # Optional aggregator discovery (Adzuna; a SerpAPI adapter was considered and
     # never built, so its key setting is gone too). OFF by default:
     # v1 needs NO API keys — LLM runs via the Claude CLI and discovery uses public
-    # ATS board JSON (Greenhouse/Lever/Ashby/Workable). Enable only to widen search
+    # ATS board JSON (Greenhouse/Lever/Ashby/Workday/Dayforce). Enable only to widen search
     # beyond curated target companies; keys then live in the secrets file / env.
     enable_aggregators: bool = False
     adzuna_app_id_env: str = "ADZUNA_APP_ID"

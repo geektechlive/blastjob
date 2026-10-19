@@ -56,7 +56,7 @@ def test_distinct_pairs_collapse_duplicate_holders(conn):
 
 
 def test_batch_is_not_inside_a_cached_block(conn):
-    """CLAUDE.md: never interpolate per-call data into a cached block."""
+    """docs/how-it-works/llm.md: never interpolate per-call data into a cached block."""
     system, user = ne.build_messages(ne.pending_pairs(conn))
     assert system[0]["cache_control"] == {"type": "ephemeral"}
     assert all("cache_control" not in b for b in user)

@@ -436,8 +436,8 @@ async def run_daily(
         # failure. Roll back anything mid-flight that hadn't self-committed
         # (per-job upserts already have, same as any other crash mid-loop),
         # then keep going: the run must still be recorded and reported —
-        # see the module docstring and the CLAUDE.md defect writeup this
-        # guard was written against.
+        # see the module docstring and docs/how-it-works/daily.md for the defect
+        # this guard was written against.
         conn.rollback()
         log.exception("discovery pipeline failed")
         res.errors["discovery"] = applog.redact(f"{type(e).__name__}: {e}")

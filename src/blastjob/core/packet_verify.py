@@ -47,7 +47,7 @@ SKIPPED_COVER_LETTER_GENERATION = "cover_letter_generation"
 # cited source. Informational: figures keep being used as before (issue #59).
 SKIPPED_RESEARCH_SOURCES = "company_research_sources"
 # Pages were fetched but none could be tied to THIS employer (by its domain, or
-# by naming it with the job's city/state, or by the model's judgment), so the
+# by naming it with the job's US state near a company mention, or by the model's judgment), so the
 # research fell back. Common names collide: see core/research_match.
 SKIPPED_COMPANY_UNCONFIRMED = "company_match_unconfirmed"
 # The job had no location or website to anchor on, so the model judged which

@@ -42,26 +42,15 @@ sidecar opening with `CITED_MARKER` (written by `core/packet_research`, whose
 spans were verified against fetched pages) reads as `WEB_SEARCH`. Same
 discipline as `CallCost.known`: a gap beats a fabrication.
 
-**DECIDED 2026-09-17 (dead-code review): `supports()` is WIRE, not delete —
-and today it has no caller, which is a real gap, not a false alarm.**
+**`supports()` is wired in (decided 2026-09-17, dead-code review; wired with #59).**
 `facts_block` renders every fact's polarity as prompt TEXT and asks the model
-to respect it ("only an 'affirmed' fact supports an affirmative claim"); that
-is the same kind of control this module's own docstring (point 1, above)
-rejects for the research text itself — words in a window, not a structural
-guarantee. The actual post-generation check on employer claims,
-`core.cover_letter_score.verify_employer_claim`, does not consult
-`CompanyFact`/`supports()` at all: it re-derives polarity from raw
-`research_md` with its own hand-built negation-cue rail, and its own
-docstring says so ("The real trust boundary for research text is V8 of the
-packet-quality plan [this module] ... This module ... narrows the hole, it
-does not close it."). Closing that hole means threading `company_facts` into
-`verify_employer_claim` and calling `supports()` there; see the INTEGRATION
-PATCH delivered alongside this decision (owner: `core/cover_letter_score.py`
-and `core/build.py`, both out of this module's ownership). Until that patch
-lands, the polarity guarantee this module's docstring claims is prompt-text
-only for employer claims in a *generated* letter, even though it is fully
-structural for which facts are *distilled* in the first place (`parse_facts`'s
-span/polarity gates run regardless of any caller of `supports`).
+to respect it ("only an 'affirmed' fact supports an affirmative claim"), which
+is words in a window, not a structural guarantee. The structural check is
+post-generation: `core.cover_letter_score` calls `supports()` (via
+`_supporting_fact`) to let an affirmed fact back an employer claim, and a
+separate any-polarity topic match (`_downgrading_fact`) lets a CONSIDERED,
+ABANDONED or DENIED fact downgrade it. Polarity is also structural for which
+facts are *distilled* at all (`parse_facts`'s span/polarity gates).
 
 `MIN_SUPPORT_CONFIDENCE` (0.5) and `SUPPORT_OVERLAP_MIN` (0.6), like
 `core.scoring.GROUNDEDNESS_FLOOR_DEFAULT` and

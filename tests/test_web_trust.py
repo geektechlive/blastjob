@@ -164,7 +164,7 @@ def test_safe_external_url_rejects_everything_else():
 # ---------------------------------------------------------------------------
 # End-to-end: a poisoned company profile must not produce a clickable
 # javascript: link. base.html carries the CSRF token on <body>, and the cockpit
-# is LAN-bound without authentication by an explicit decision, so one click on
+# has no authentication (and may be bound to the LAN), so one click on
 # such a link would be account takeover rather than a nuisance.
 # ---------------------------------------------------------------------------
 

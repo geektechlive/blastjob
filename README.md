@@ -14,31 +14,30 @@ resume, cover letter and interview prep pack for the ones you keep.
   keeps your data out of this repo.
 
 The app ships empty: no candidate profile, no location, no target companies.
-Follow the Quickstart below, or open [SETUP.md](SETUP.md) with an AI assistant
+Follow the quick start below, or open [SETUP.md](SETUP.md) with an AI assistant
 and let it walk you through the full setup interview.
 
-## Quickstart
+## Quick start
 
-You need macOS or Linux, Python 3.11 to 3.14, [uv](https://docs.astral.sh/uv/),
+You need macOS or Linux, Python 3.11 or newer, [uv](https://docs.astral.sh/uv/),
 and one LLM: a logged-in [Claude Code](https://claude.ai/code) `claude` CLI (no
 key needed), or an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. PDF export also
-needs pango (`brew install pango`); Markdown and DOCX work without it.
+needs pango (`brew install pango` on macOS); Markdown and DOCX work without it.
+[Install blastjob](docs/getting-started/install.md) covers each step in detail.
 
 1. Install, and check what's missing:
 
    ```bash
    git clone https://github.com/geektechlive/blastjob && cd blastjob
-   uv sync
+   uv sync --extra dev
    uv run blastjob setup doctor
    ```
 
-   The doctor lists what still needs doing, with a fix for each item.
+   The doctor lists what still needs doing, with a fix for each item. Expect
+   failures until you finish the steps below.
 
-2. Create the secrets file, even if it stays empty for now:
-
-   ```bash
-   mkdir -p ~/.blastjob && touch ~/.blastjob/secrets.env && chmod 600 ~/.blastjob/secrets.env
-   ```
+2. Create the secrets file, even if it stays empty for now. The one command is in
+   [install](docs/getting-started/install.md#create-the-secrets-file).
 
 3. Say what you're looking for and where you live (your own values here):
 
@@ -58,9 +57,9 @@ needs pango (`brew install pango`); Markdown and DOCX work without it.
    lists every town you'd work in, lowercased, with its coordinates. You can
    also fill these in on the cockpit's Settings page after step 5.
 
-4. Decide where your documents go. The default is `~/Documents/blastjob`, which
-   syncs to iCloud on a Mac with "Desktop & Documents" turned on. To use another
-   folder:
+4. Optional: choose where your documents go. The default is
+   `~/Documents/blastjob`, which syncs to iCloud on a Mac with "Desktop &
+   Documents" turned on. To use another folder:
 
    ```bash
    uv run blastjob setup set paths.output_dir ~/blastjob-packets
@@ -76,21 +75,17 @@ needs pango (`brew install pango`); Markdown and DOCX work without it.
    Read the merged work history it produces and correct it at `/work-history`.
    Every resume is built from it.
 
-6. Add job sources in the cockpit's Settings page (`/settings`) or with
-   `setup set`: company job boards, job-alert email, Adzuna. SETUP.md section
-   3c covers each one.
+6. Add job sources on the Settings page (`/settings`) or with `setup set`:
+   company job boards, job-alert email, Adzuna. The interview in
+   [SETUP.md](SETUP.md) (section 3c) covers each one.
 
-7. Optional: run discovery every morning and keep the cockpit always on (macOS):
-
-   ```bash
-   sh scripts/install-launchd.sh
-   ```
+7. Optional, macOS: run discovery every morning and keep the cockpit always on
+   with `sh scripts/install-launchd.sh`. See
+   [Running the services](docs/operations/services.md), which also covers Linux.
 
 Run `uv run blastjob setup doctor` again at any point. Once your work history
 and target titles are in, the only items it still lists are for features you
 haven't turned on.
-
----
 
 ## What it does
 
@@ -115,93 +110,30 @@ haven't turned on.
 - **Daily autopilot (optional).** A scheduled run that discovers, scores and sends
   a digest (Discord, stdout or off).
 
-## Requirements
-
-- macOS or Linux, Python 3.11 to 3.14, [uv](https://docs.astral.sh/uv/)
-- One LLM: a logged-in [Claude Code](https://claude.ai/code) `claude` CLI (no key
-  needed), **or** an Anthropic API key (adds prompt caching and live web search),
-  **or** an OpenAI key
-- Optional: WeasyPrint's system libraries (pango/cairo) for PDF export. Markdown
-  and DOCX always work.
-
-## Quick start
-
-```bash
-git clone <this repo> blastjob && cd blastjob
-uv sync --extra dev
-uv run blastjob-web          # http://127.0.0.1:8765
-```
-
-Then follow [SETUP.md](SETUP.md): the setup interview, resume ingest, and
-`uv run blastjob setup doctor`. If an AI assistant is setting this up for you,
-point it at SETUP.md.
-
-## Commands
-
-```bash
-uv run blastjob-web [--no-browser] [--port 8765]
-uv run blastjob setup doctor | get [key] | set <key> <value> | import <toml> | export
-uv run blastjob-daily --dry-run          # print today's digest, send nothing
-uv run blastjob-daily --status           # last recorded daily run
-uv run python -m blastjob.discovery.resolve "Company"   # find a company's job board
-sh scripts/install-launchd.sh            # macOS: always-on cockpit + 07:30 daily run
-
-uv run --extra dev pytest -q             # offline; never calls a real LLM or the network
-uv run --extra dev ruff check src tests
-```
-
 ## Where your data lives
 
-Everything blastjob knows about you lives in three places on your own machine.
-None of them is inside this repository, so `git` cannot see them.
+Everything blastjob knows about you lives on your own machine, in three places,
+none of them inside this repository: the data dir (`~/.blastjob` by default, holding
+your settings, jobs and work history in `blastjob.db` and `work_history.md`), a
+secrets file for API keys and app passwords, and the output folder
+(`~/Documents/blastjob` by default) with your resumes, cover letters and prep packs.
+Your work history and each job description go to the LLM provider you chose; nothing
+is ever submitted on your behalf. The full list of what each place holds, what leaves
+your machine, backups and removal is in
+[Your data and backups](docs/operations/data-and-backups.md).
 
-| What | Where |
-|---|---|
-| **Data dir** | `BLASTJOB_DATA_DIR`, default `~/.blastjob` |
-| `blastjob.db` | your settings, every job and its score, applications and their history, people found for outreach, company profiles, pay data you recorded, and your LinkedIn export's connections (name, profile URL, email if shared, company, position, when you connected, message count and latest date; never message text) |
-| `work_history.md`, `templates/` | your merged work history and the resume templates built from it |
-| `backups/` | a database copy at the start of each daily run (14 kept) and a snapshot before each work-history overwrite |
-| `mail-debug/` | up to 20 job-alert emails that could not be parsed, kept so the parser can be fixed |
-| `daily.log`, `web.launchd.log` | logs from the background services, if you install them |
-| **Secrets file** | `paths.secrets_file`, default `<data_dir>/secrets.env` (make it mode 600). API keys and app passwords; settings hold only the variable *names* |
-| **Output folder** | `paths.output_dir`, default `~/Documents/blastjob` |
-| `<company>-<date>/` at the top | resumes, cover letters, prep packs and notes still to send |
-| `Submitted/` | packets for jobs you applied to |
-| `Closed before applying/` | packets for postings that closed before you applied |
-| `Archive/` | everything else: archived jobs, old or unlinked folders |
+The cockpit has no login. It binds `127.0.0.1` unless you choose otherwise; see [LAN access](docs/operations/lan-access.md).
 
-The app files output folders for you as a job changes stage; a folder is moved
-whole and never copied. To put your documents somewhere else, run
-`uv run blastjob setup set paths.output_dir <path>`. **On a Mac with iCloud
-"Desktop & Documents" turned on, `~/Documents/blastjob` syncs to iCloud.** Pick
-a path outside `~/Documents` if you don't want that.
+## Where to go next
 
-**What leaves your machine:** your work history and each job description go to
-the LLM provider you chose (Anthropic, OpenAI, or the `claude` CLI). Company
-names and job titles go to Jina search if you add a Jina key. Discovery calls
-public job boards and Adzuna with your search terms. The daily digest goes to
-Discord only if you turn it on. Nothing else is sent anywhere, and nothing is
-ever submitted on your behalf.
-
-**To back up or remove everything,** copy or delete the data dir, the secrets
-file (if you moved it) and the output folder.
-
-**The privacy rule:** this repository holds code and generic docs only. Your work
-history, settings, database, documents, contacts and secrets never go into it.
-If you fork it, keep personal notes in `CLAUDE.local.md` and `local/` (both
-gitignored), and run `sh scripts/install-git-hooks.sh` once so every push runs
-`scripts/check_no_personal_data.py` first and stops if it finds your data.
-
-The cockpit has no login. It binds `127.0.0.1` unless you choose otherwise.
-
-## More
-
-- [SETUP.md](SETUP.md): installation and the setup interview
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how a job flows through, trust
-  boundaries, truth guarantees, and why each rule exists
-- [CLAUDE.md](CLAUDE.md): working reference for a coding agent (conventions,
-  commands, module map)
-- [CONTRIBUTING.md](CONTRIBUTING.md): development setup, tests, the leak check
+- [docs/README.md](docs/README.md): the documentation index, by what you want to do.
+- [SETUP.md](SETUP.md): let an AI assistant set it up for you with the setup
+  interview.
+- [CONTRIBUTING.md](CONTRIBUTING.md): development setup, tests, the leak check and
+  pull request rules.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability, and what blastjob is
+  built to resist.
+- [AGENTS.md](AGENTS.md): the rulebook for AI coding agents working in this repo.
 
 ## License
 

@@ -341,14 +341,14 @@ def staleness(built_at: str, cfg: BlastJobConfig) -> tuple[bool, str]:
 
 
 def is_local_request(request: Any) -> bool:
-    """True only for a request whose TCP peer is the Mac itself (loopback).
+    """True only for a request whose TCP peer is this computer itself (loopback).
 
     The cockpit can bind to the LAN for access from another device, and the Origin check in
-    `security.py` accepts any RFC1918 address -- it cannot tell the Mac from
+    `security.py` accepts any RFC1918 address -- it cannot tell this computer from
     that device. Only `request.client.host`, the actual peer address, can. A
     "Reveal in Finder" action must gate on this: `subprocess`-opening a
     Finder window is a no-op (or worse, confusing) when the click came from
-    a tablet on the LAN.
+    another device on the network.
     """
     client = getattr(request, "client", None)
     if client is None:

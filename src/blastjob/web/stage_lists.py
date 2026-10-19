@@ -317,7 +317,7 @@ def stage_list_cache(conn: sqlite3.Connection) -> dict[str, list[dict]]:
     once for the board, once for the header counts -- eight stage-list
     computations where five do. Passing this to both is not just cheaper: it
     makes the counts literally the same rows the page renders, which is the
-    invariant CLAUDE.md states ("header counts are the page lengths") and which
+    invariant docs/how-it-works/web.md states ("header counts are the page lengths") and which
     two independent computations could only ever approximate.
     """
     return {stage: render(conn) for stage, render in STAGE_LISTS.items()}

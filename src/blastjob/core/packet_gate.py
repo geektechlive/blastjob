@@ -1,9 +1,7 @@
 """The gate that decides whether a generated packet is sendable, plus the
 arithmetic check that guards against invented totals.
 
-See CLAUDE.md's "Truth guarantees" and
-docs/ARCHITECTURE.md ("Revisions after adversarial
-review (v2)", V5-V7) for the reasoning encoded here:
+See docs/truth-guarantees.md for the reasoning encoded here (V5-V7):
 
 - **V7. No computed totals at all.** `check_arithmetic` deliberately does NOT
   check "is this figure the sum of other figures that exist" -- that check

@@ -3,7 +3,7 @@
 Handles both filename conventions found on disk:
   - legacy: bare `resume.md` / `job_description.md` / `metadata.json` /
     `fit_score.json` / `fit_score.md` (one build per run_dir; still produced
-    by the legacy TUI build path).
+    by older builds).
   - current (core/build.py, the web cockpit's only build path): the resume is
     `{Person}_Resume_-_{Co}_{Role}.md` and the sidecars are role-slug-prefixed
     (`{role_slug}.job_description.md`, `.metadata.json`, `.fit_score.json`,

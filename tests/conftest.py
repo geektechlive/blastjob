@@ -112,8 +112,8 @@ def _no_real_packet_research(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def isolated_secrets(tmp_path_factory, monkeypatch):
-    """Point a test's secrets load at a throwaway file instead of the owner's
-    real `~/.claude/secrets.env`.
+    """Point a test's secrets load at a throwaway file instead of the user's
+    real secrets file.
 
     Several code paths load it deliberately (`web/mail_settings`, `web/people`,
     `web/research`, `discovery/pipeline`, `daily`), so a test asserting
@@ -121,9 +121,10 @@ def isolated_secrets(tmp_path_factory, monkeypatch):
     it runs on. It is autouse for the whole suite; a test that needs
     credentials sets them with `monkeypatch.setenv`.
 
-    Patching `secrets.SECRETS_PATH` is not enough: `load_secrets_env` binds it
-    as a default argument at definition time, so the bound default wins. The
-    function is replaced instead. os.environ is snapshotted and restored
+    The loader takes `path=None` and resolves the real location itself
+    (`secrets_path()`), so callers that pass nothing would read the user's
+    file. The function is replaced with a wrapper that always passes the
+    throwaway path. os.environ is snapshotted and restored
     because that function writes to it directly, which monkeypatch would not
     undo -- the keys would leak into every later test file.
     """

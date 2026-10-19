@@ -59,8 +59,8 @@ _RESET_TO_NEW = (
 # and leaves every surviving job unscored. Surfaced through the same
 # run-notes channel the cockpit run panel and blastjob-daily already use.
 NO_CANDIDATE_PROFILE_NOTE = (
-    "No candidate profile: set [candidate] target_titles in config.toml "
-    "(see CUSTOMIZING.md) — skipped scoring"
+    "No candidate profile: set candidate.target_titles at /settings or with "
+    "`blastjob setup set` (see SETUP.md) — skipped scoring"
 )
 
 

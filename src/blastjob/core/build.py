@@ -78,8 +78,8 @@ async def run_build(
     template_path = data_path / "templates" / template_key
     template_md = template_path.read_text(encoding="utf-8") if template_path.exists() else ""
 
-    # `cost_tracker` may be a long-lived, session-wide tracker (the TUI keeps
-    # one on `app.cost_tracker` across every build in a sitting), so its full
+    # `cost_tracker` may be a long-lived, session-wide tracker (a caller may keep
+    # one across every build in a sitting), so its full
     # `.calls` list can hold plenty of cost unrelated to this build. Every
     # call below still records into it immediately, exactly as before — a
     # build that fails partway (e.g. the empty-resume check below) must not
@@ -360,8 +360,8 @@ async def run_build(
                     round(build_total.cache_hit_ratio, 3) if build_total.known else None
                 ),
                 # Legacy keys, kept ALWAYS NUMERIC for readers that don't know
-                # about the `build_*` fields yet and aren't None-safe — the
-                # TUI's history screen formats this straight into an f-string
+                # about the `build_*` fields yet and aren't None-safe — an older
+                # history reader formats this straight into an f-string
                 # (`f"${entry.cost_usd:.4f}"`) with no null check, so writing
                 # `null` here would crash it outright. They used to hold the
                 # RESUME call's cost only — ambiguously named for what was

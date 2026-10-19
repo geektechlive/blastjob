@@ -497,7 +497,7 @@ def all_active(conn: sqlite3.Connection, cfg: BlastJobConfig) -> list[dict]:
             elif not keep:
                 disp, reason = "filtered", "different role type (not a leadership role)"
             else:
-                disp, reason = "pending", "not scored yet — run Match"
+                disp, reason = "pending", "not scored yet — run Find + Score"
         d["disposition"] = disp
         d["reason"] = reason
         out.append(d)

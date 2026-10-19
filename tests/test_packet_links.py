@@ -1,8 +1,8 @@
 """Packets must lead somewhere.
 
 The Packets page was a static table: no link to the job, no way to open the
-resume, and nothing an iPad could use, because "Reveal in Finder" only works on
-the Mac. Each packet row now links to its job and to its documents, and every
+resume, and nothing another device could use, because "Reveal in Finder" only works on
+the computer running blastjob. Each packet row now links to its job and to its documents, and every
 file in a job's packet can be opened from the browser, but only files that
 really are in that job's packet folder under the configured output directory.
 """

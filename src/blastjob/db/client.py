@@ -643,9 +643,9 @@ def backup_db(
     WAL-mode connection while the cockpit is open (readers/writers keep
     going; the backup just takes longer than usual for concurrent writers).
 
-    This lives beside the TUI's `~/.blastjob/backups/<timestamp>/` work-history
-    folders but never touches them — pruning only matches the `blastjob-*.db`
-    glob this function writes, so those directories are left alone.
+    This lives beside the `work_history-<stamp>-*.md` snapshots taken before a
+    work-history overwrite (same `backups/` folder) but never touches them: pruning only matches the
+    `blastjob-*.db` glob this function writes, so those snapshots are left alone.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     ts = now or datetime.now()

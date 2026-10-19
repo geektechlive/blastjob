@@ -13,8 +13,10 @@ recruiter reply, the posting closing. Writers:
 - the user, from the job page (source 'manual' -- the only events a delete may
   remove, and only on the job they belong to).
 
-Newest first is `ORDER BY at DESC, id DESC` everywhere, so a timestamp tie has
-one answer. `insert_event` never commits; `add_event` does.
+Newest first is `ORDER BY substr(at, 1, 10) DESC, id DESC` everywhere (calendar
+day, then insertion order), so events on the same day have one answer and a
+later-recorded event for an earlier moment never outranks a newer day.
+`insert_event` never commits; `add_event` does.
 """
 
 from __future__ import annotations

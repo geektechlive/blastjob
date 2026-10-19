@@ -5,8 +5,8 @@ URL schemes: `javascript:alert(1)` survives escaping intact and runs on click.
 That matters more here than in most apps, because `base.html` carries the
 per-launch CSRF token on `<body hx-headers=...>` -- script running in the
 cockpit origin can read that attribute and drive every state-changing route
-with a valid token. The cockpit is deliberately LAN-bound with no auth (owner's
-decision, 2026-09-12), which is a reason to close this properly rather than
+with a valid token. The cockpit has no auth and may be bound beyond this computer
+(`web.host`, an opt-in), which is a reason to close this properly rather than
 treat it as theoretical.
 
 Two sources of untrusted URLs reach hrefs: LLM output distilled from pages read

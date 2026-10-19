@@ -1,9 +1,9 @@
-"""Launch the cockpit: uvicorn on 127.0.0.1 (never a public interface), open the
+"""Launch the cockpit: uvicorn on `web.host` (default 127.0.0.1, loopback), open the
 browser, recover any builds left mid-flight by a previous crash.
 
 Runs standalone (`blastjob-web`, browser opens) or as a launchd service
 (`blastjob-web --no-browser`, `RunAtLoad`/`KeepAlive`) so the Discord daily
-digest's cockpit links resolve on the Mac without starting it by hand."""
+digest's cockpit links resolve on this computer without starting it by hand."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
     host, port = bind_address(cfg_mod.load_config(), args.host, args.port)
 
-    # Give the web/discovery/matching path the same disk log the TUI already has,
+    # Give the web/discovery/matching path the same disk log as the rest of the app,
     # so a failed background run is debuggable after the fact (not just a transient
     # SSE line lost on restart).
     applog.setup()

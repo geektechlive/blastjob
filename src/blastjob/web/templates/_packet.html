@@ -43,8 +43,8 @@
 
   <div class="packet-actions">
     {% if is_local and packet.exists %}
-      {# Only from this Mac: `open` would raise a Finder window here while the user is
-         holding a tablet. The Origin check cannot tell them apart; the peer can. #}
+      {# Only from the computer running blastjob: `open` would raise a Finder window here while the user is
+         on another device. The Origin check cannot tell them apart; the peer can. #}
       <button hx-post="/jobs/{{ job_id }}/reveal"
               hx-target="#packet-{{ job_id }}" hx-swap="outerHTML">Reveal in Finder</button>
     {% endif %}

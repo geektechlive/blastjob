@@ -396,12 +396,12 @@ def test_job_event_log_empty_for_job_with_no_send(conn):
 
 
 def test_no_ranking_or_comparison_function_exists_in_public_api(conn):
-    """HARD CONSTRAINT (module docstring, and CLAUDE.md's as-sent-attribution
-    entry): packet_sends does descriptive bookkeeping only. If a future
+    """HARD CONSTRAINT (module docstring, and docs/truth-guarantees.md):
+    packet_sends does descriptive bookkeeping only. If a future
     contributor adds a rank_packets / success_rate / win_rate / compare_sends
     style function, this test should fail the build rather than rely on
-    someone re-reading the docstring. Revisit plan V9
-    (docs/ARCHITECTURE.md) before changing this."""
+    someone re-reading the docstring. Revisit docs/truth-guarantees.md
+    before changing this."""
     forbidden_substrings = ("rank", "compare", "success_rate", "win_rate", "best_packet")
     public_names = [name for name in dir(ps) if not name.startswith("_")]
     offenders = [

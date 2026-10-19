@@ -3,7 +3,7 @@
 `/settings` and `/work-history` moved here verbatim out of `web/app.py`
 (2026-09-17) alongside the new `/work-history/ingest`, which is the route that
 makes `core/ingest.py` reachable from the cockpit at all -- previously its only
-caller was the Textual TUI (`tui/screens/ingest.py`), which is being deleted.
+caller was a retired terminal UI.
 "Web is the only surface. A capability with no route does not exist."
 
 `register` takes `save_config` as a fourth argument alongside `deps`, because
@@ -111,9 +111,9 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
         _: None = Depends(require_csrf),
     ):
         """Env var NAMES are validated and REJECTED on mismatch -- never
-        sanitized. A pasted app password would otherwise land in config.toml,
-        which is backed up in the clear; the page re-renders with an error and
-        nothing is written. The rejected value is not echoed back."""
+        sanitized. A pasted app password would otherwise land in the settings
+        table, which the daily backup copies and `setup get` prints; the page re-renders
+        with an error and nothing is written. The rejected value is not echoed back."""
         cfg = deps.load_config()
         error = ms.validate_names(
             mail_user_env=mail_user_env.strip(),

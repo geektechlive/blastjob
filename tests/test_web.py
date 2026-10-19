@@ -1090,8 +1090,8 @@ def test_unarchive_clears_the_reason_and_needs_a_token(client_cfg):
 
 
 def test_reveal_is_refused_for_a_non_local_peer(client_cfg):
-    """The cockpit is LAN-bound and the Origin check accepts RFC1918, so only the
-    peer address can tell this Mac from the iPad. Finder must never open here
+    """The cockpit may be bound to the LAN and the Origin check accepts RFC1918, so only the
+    peer address can tell this computer from another device. Finder must never open here
     for a remote viewer."""
     client, _cfg, _saved, ids = client_cfg
     r = client.post(

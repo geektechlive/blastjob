@@ -606,11 +606,11 @@ async def test_run_build_metadata_cost_is_null_when_any_call_is_unknown(tmp_path
     # The resume call itself WAS known, and is reported under its own name.
     assert meta["resume_cost_usd"] is not None
     # The legacy `cost_usd`/`cache_hit_ratio` keys stay numeric (0.0), never
-    # `null`: the unmodified TUI history reader formats them straight into
+    # `null`: an older history reader formats them straight into
     # an f-string with no None-guard (`f"${entry.cost_usd:.4f}"`), so writing
     # `null` there would crash it outright. 0.0 is an imperfect "unknown" on
     # that legacy surface — no worse than this app's pre-existing bug class —
-    # but the WEB surface (the one ARCHITECTURE.md calls authoritative)
+    # but the WEB surface (the one docs/how-it-works/llm.md calls authoritative)
     # already treats a falsy `cost_usd` as "show the unknown dash", so this
     # reads correctly there today with zero integration patch.
     assert meta["cost_usd"] == 0.0

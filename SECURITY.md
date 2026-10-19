@@ -20,8 +20,17 @@ exposed to the internet.
 - Job postings, alert emails and model output are untrusted. A posting that gets
   the app to run script, fetch a private address, reach a tool, or leak a secret
   is a bug worth reporting.
-- The cockpit has **no login**. If you set `web.host` to `0.0.0.0` so other
+- The cockpit has **no login** (see [LAN access](docs/operations/lan-access.md)). If you set `web.host` to `0.0.0.0` so other
   devices on your network can reach it, anyone on that network can use it. That
   is a documented choice, not a vulnerability on its own. Something that lets a
   network user go further, such as pulling secret values out of the app, is still
   worth reporting.
+
+## Agent instruction files
+
+`AGENTS.md` and `CLAUDE.md` are loaded by AI coding agents as instructions, so a
+change to either one in a pull request can steer any agent that runs on that
+branch. Review those changes before running an agent on the branch, and never run
+an agent that holds credentials on a branch you do not trust. A way to slip
+instructions in past that review is worth reporting. See
+[Working with AI coding agents](CONTRIBUTING.md#working-with-ai-coding-agents).

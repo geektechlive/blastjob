@@ -36,7 +36,7 @@ real lead. Two signals, in descending reliability:
    company name), so it is held to a strict equality bar rather than a
    substring one.
 
-What this deliberately does NOT catch (v1, by design -- see CLAUDE.md):
+What this deliberately does NOT catch (v1, by design -- see docs/how-it-works/discovery.md):
 company name mentioned only in the subject line, or a domain that merely
 resembles the company loosely. Those are lower-confidence signals this
 module skips rather than guesses at.
@@ -326,8 +326,8 @@ async def scan_replies(
     the surfaced matches; also records a `mail_ledger` row (source='reply',
     status='ok') per match so the next run doesn't re-surface it. Missing IMAP
     credentials or an empty applied-jobs list is a quiet no-op, not an error
-    -- the caller (`daily._replies_pass`) decides whether to even call this
-    based on `mail_alerts_enabled`."""
+    -- the caller (`daily._replies_pass`) calls it whenever personal-mailbox
+    credentials resolve, never gated on `mail_alerts_enabled`."""
     import asyncio
 
     acct = personal_account(cfg.discovery)

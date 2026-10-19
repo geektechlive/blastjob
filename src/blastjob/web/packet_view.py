@@ -4,7 +4,7 @@ Every build already runs the deterministic checks in `core/build.py`
 (`_verify_packet` -> `packet_gate.gate`) and writes the verdict beside the
 documents. Nothing in the app has ever read it back: the sidecar exists, the
 gate decides `ready` vs `quarantined`, and none of that reaches the browser.
-By this project's own rule (see CLAUDE.md, "Web is the only surface") a
+By this project's own rule (see AGENTS.md) a
 capability with no route does not exist — so this module is the read side of
 that file, following the exact pattern `web/fitscore.py` uses for
 `fit_score.json`: never raise, degrade to "nothing to show" on anything

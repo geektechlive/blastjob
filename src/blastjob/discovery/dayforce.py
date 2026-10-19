@@ -4,7 +4,7 @@ A good share of regional credit unions, hospitals and
 mid-market employers post on Dayforce, which neither Adzuna nor the Workday
 adapter sees. The public candidate portal is a JavaScript SPA with no job text in
 its HTML, but it is backed by an unauthenticated JSON endpoint (probed and
-verified live 2026-09-05, see docs/ARCHITECTURE.md):
+verified live 2026-09-05, see docs/how-it-works/discovery.md):
 
   POST https://jobs.dayforcehcm.com/api/geo/{clientNamespace}/jobposting/search
        {"clientNamespace": ..., "jobBoardCode": ..., "cultureCode": "en-US",

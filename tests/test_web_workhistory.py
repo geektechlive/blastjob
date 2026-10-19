@@ -5,7 +5,7 @@ pack, and groundedness judgment derives from, so the save path is safety-critica
 tmp-write + os.replace (never truncate the canonical file), a timestamped backup
 before overwrite, a rejected empty/whitespace body, and lost-update protection
 (a save must be based on the file's current content or it is rejected rather
-than silently overwriting a concurrent edit from another tab or the TUI).
+than silently overwriting a concurrent edit from another tab).
 """
 
 from __future__ import annotations

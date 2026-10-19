@@ -1,5 +1,5 @@
 """Mail settings for the cockpit: which mailboxes blastjob reads, editable
-from the browser instead of by hand-editing `config.toml`.
+from the browser (or `blastjob setup set`) instead of by hand.
 
 Two accounts exist and they are not interchangeable (see
 `discovery/replies.py`): the ALERT mailbox carries LinkedIn/Indeed job-alert
@@ -10,15 +10,16 @@ mailbox will actually be scanned. So `status()` reports the RESOLVED account
 per role and marks every field that is inherited rather than set. That is this
 module's main job.
 
-**Config is not a secret store.** `config.toml` is backed up in the clear and
-its contents get quoted into logs and terminals. So the form edits env var
+**Settings are not a secret store.** They live in the DB `settings` table, which
+is copied by the daily backup, and their contents get quoted into logs and
+terminals (`blastjob setup get`). So the form edits env var
 NAMES only; the values stay in the secrets file (`paths.secrets_file`). An input that does not
 look like an env var name is REJECTED, never stripped-and-stored -- otherwise
 a pasted app password becomes a permanent plaintext credential in a file
 nothing treats as sensitive. `status()` returns booleans for presence and
-never a value, a length or a prefix: the cockpit is LAN-bound without auth by
-the user's standing decision, so anything this page renders is readable by
-anything on the LAN.
+never a value, a length or a prefix: the cockpit has no login and may be
+bound to the LAN (an opt-in via `web.host`), so anything this page renders is
+readable by anything that can reach it.
 """
 
 from __future__ import annotations

@@ -11,7 +11,8 @@ the research from pages it actually fetched instead:
    when it is known) and `jina.MAX_PAGES` page reads, read concurrently, all
    inside one `GATHER_DEADLINE_S` deadline.
 2. Each page must be about THIS employer (`core/research_match.py`): on one of
-   its domains, or naming the company and the job's city or state. With no
+   its domains, or naming the company with the job's US state within 300
+   characters (a city counts only beside its state). With no
    anchor at all, a separate isolated model call judges each page against the
    job description, and only an explicit "same employer" admits a page.
 3. Each admitted page is sanitized with `research_facts.strip_instructions` and
@@ -315,10 +316,12 @@ def _verified_fact(item: Any, by_url: Mapping[str, FetchedPage]) -> CompanyFact 
     if _looks_instructional(f"{fact.statement} {fact.entity} {fact.time_scope}"):
         log.warning("dropped company fact: instruction-shaped statement (%.60s)", fact.statement)
         return None
-    # `facts_block` renders statement, entity AND time_scope into the letter
-    # prompt, so a figure in any of them must be the page's, not the model's: in
-    # the span for the claim itself, anywhere on the cited page for its period
-    # ("as of fiscal 2025" is often stated a line away from the fact).
+    # `facts_block` renders only the verbatim span (with host and page date), never
+    # the model's statement, but the stored fact still carries statement, entity and
+    # time_scope (refine and the report read them), so a figure in any of them must
+    # be the page's, not the model's: in the span for the claim itself, anywhere on
+    # the cited page for its period ("as of fiscal 2025" is often stated a line away
+    # from the fact).
     if not cited_values.figures_supported(f"{fact.statement} {fact.entity}", fact.source_span):
         log.warning("dropped company fact: statement figure not in span (%.60s)", fact.statement)
         return None

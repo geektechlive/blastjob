@@ -1,6 +1,6 @@
 """As-sent attribution: which exact documents went out for an application.
 
-WHY THIS EXISTS (plan V9, docs/ARCHITECTURE.md): a
+WHY THIS EXISTS (see docs/truth-guarantees.md): a
 packet gets rebuilt after it was already sent -- three were rebuilt the same
 day this module was written. If outcomes were attached by re-hashing whatever
 happens to be on disk when the screen or rejection arrives, a later rebuild

@@ -1,8 +1,8 @@
 """Deterministic scope prefilter — cut the discovered-postings haul down to roles
 worth paying the LLM to score, WITHOUT gating on title variants.
 
-Policy, configured by the candidate (`[discovery] title_keep_terms` /
-`title_drop_terms` in config.toml): drop job *families* the candidate never
+Policy, configured by the candidate (`discovery.title_keep_terms` /
+`title_drop_terms` in the settings table): drop job *families* the candidate never
 wants, never drop title *variants* of a family they do want. So:
 - a title containing a configured keep term  -> KEEP, any wording
 - a title containing a configured drop term  -> KEEP only if the JD shows the

@@ -404,7 +404,7 @@ def test_counts_from_shared_lists_match_counts_computed_independently(conn):
     and then `counts` (which rebuilds all five), so eight stage-list computations
     happened where five would do.
 
-    Sharing them has to preserve the invariant CLAUDE.md states outright --
+    Sharing them has to preserve the invariant docs/how-it-works/web.md states outright --
     header counts ARE the page lengths -- so this asserts the shared path gives
     exactly the independent numbers, not merely plausible ones.
     """

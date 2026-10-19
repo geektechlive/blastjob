@@ -9,13 +9,14 @@ that includes yours.
 ```bash
 uv sync --extra dev
 uv run --extra dev pytest -q
+uv run --extra dev pytest tests/test_paths.py::test_slugify_special_chars   # one test
 uv run --extra dev ruff check src tests
 uv run --extra dev ruff format src tests
 uv run --extra dev mypy                 # whole tree (config in pyproject.toml)
 sh scripts/verify.sh   # the whole gate in one command: run it before landing
 ```
 
-- Python 3.11 to 3.14, managed with [uv](https://docs.astral.sh/uv/). Add
+- Python version: see [prerequisites](docs/getting-started/install.md#prerequisites). Managed with [uv](https://docs.astral.sh/uv/). Add
   dependencies by editing `pyproject.toml` and running `uv lock`; never
   `pip install` into the venv.
 - Ruff rules E, F, I (isort), UP (pyupgrade), line length 100. Fix every finding.
@@ -23,25 +24,22 @@ sh scripts/verify.sh   # the whole gate in one command: run it before landing
   across the tree.
 - External data (board JSON, mail, LLM output, uploaded files) is parsed into a
   Pydantic model at the boundary.
-- Read `CLAUDE.md` ("Truth guarantees") and `docs/ARCHITECTURE.md` before touching
-  matching, tailoring, scoring or closure. Most rules there exist because
-  something went wrong without them.
+- Read [Truth guarantees](docs/truth-guarantees.md) and the matching page under
+  [docs/how-it-works/](docs/how-it-works/overview.md) before touching matching,
+  tailoring, scoring or closure. Most rules there exist because something went
+  wrong without them.
 
 ## Tests run offline
 
 The suite must pass with no network, no API keys and no real data dir.
-`tests/conftest.py` enforces this with autouse guards:
+`tests/conftest.py` enforces this with autouse guards for the network, real LLM
+calls, employer-page fetches, the secrets file, the data dir and the output folder.
+[Testing](docs/how-it-works/testing.md) lists each guard and how to write a fake
+that passes it.
 
-- any socket connection to a non-loopback address raises, naming the test;
-- every module's `make_stream` binding and `make_research_call` are patched to
-  raise unless the test supplies a fake (`tests/test_no_real_llm_guard.py` fails if
-  a new module binds `make_stream` without joining the list);
-- real employer-page fetches and Jina searches raise;
-- the secrets loader points at a throwaway file.
-
-Inject fakes instead: `httpx.MockTransport`, `search=`/`fetch=` parameters, a
-`tmp_path` data dir via `BLASTJOB_DATA_DIR`, `monkeypatch.setenv` for
-credentials. Use Arrange-Act-Assert and descriptive test names.
+Inject fakes instead of reaching out: `httpx.MockTransport`, `search=`/`fetch=`
+parameters, a `tmp_path` data dir via `BLASTJOB_DATA_DIR`, `monkeypatch.setenv`
+for credentials. Use Arrange-Act-Assert and descriptive test names.
 
 ## The leak check
 
@@ -86,6 +84,24 @@ one push with `git push --no-verify`, after you have read the findings.
 These are pattern and list checks. They catch the common ways personal data
 leaks; they are not a general secret scanner. Review your own diff too.
 
+## Working with AI coding agents
+
+[AGENTS.md](AGENTS.md) is the rulebook every coding agent must follow in this
+repo. How each tool picks it up:
+
+- Codex, Cursor and GitHub Copilot's coding agent read `AGENTS.md` natively.
+- Claude Code reads `CLAUDE.md`, which imports it with `@AGENTS.md`. Keep
+  `CLAUDE.md`; Claude Code does not read `AGENTS.md` by itself.
+- Gemini CLI: add `AGENTS.md` to `context.fileName` in `.gemini/settings.json`.
+- Aider: pass `--read AGENTS.md`, or add `read: AGENTS.md` to `.aider.conf.yml`.
+
+For any other tool, see its docs for how to load a project instruction file.
+
+**Instruction files are code.** An agent loads `AGENTS.md` and `CLAUDE.md` as
+instructions, so a pull request that edits either one can steer any agent that
+runs on that branch. Review those changes before running an agent on the branch,
+and never run an agent that holds credentials on a branch you do not trust.
+
 ## Pull request rules
 
 - **No personal data.** No real resumes, settings exports, databases, generated
@@ -99,7 +115,10 @@ leaks; they are not a general secret scanner. Review your own diff too.
   secrets file, which is never committed.
 - **Keep the truth guarantees.** Draft-only; groundedness checks; only posted
   comp may reject; unplaceable locations go to review; only proof closes a
-  posting. A change that weakens one needs an explicit argument in the PR.
+  posting (see [Truth guarantees](docs/truth-guarantees.md)). A change that
+  weakens one needs an explicit argument in the PR.
+- **Changes to `AGENTS.md` or `CLAUDE.md` get a review** before any agent runs on
+  the branch (see above).
 - **Web is the only surface.** A new capability needs a cockpit route.
 - **Tests with the change.** New behavior gets tests; the suite, ruff, mypy and
   the leak check all pass.

@@ -5,8 +5,8 @@ Every finding from this module is `Severity.MINOR` (advisory) — see
 `core/packet_report.py`'s module docstring for why severity is calibrated to
 the user's actual application boards, and why nothing derived from prose style
 ever blocks a packet. The sourcing for each rule below is spelled out in
-docs/ARCHITECTURE.md ("Evidence base"); nothing
-here is an invented threshold.
+docs/how-it-works/tailoring.md; nothing here is an
+invented threshold.
 
 NO AI-DETECTOR SCORING, EVER. This module does not compute, and must never be
 extended to compute, a probability that text is "AI-written". Liang et al.
@@ -44,7 +44,7 @@ never an auto-derived baseline.
 
 The em-dash check (`em_dash`) is absolute, not relative: one finding per
 occurrence. Its authority is this project's own convention — "No em dashes
-in writing output," Source `CLAUDE.md` — which says NONE, not "fewer than
+in writing output," the repo writing conventions — which says NONE, not "fewer than
 some sample". It makes no ATS-parsing claim: no vendor documents em dashes
 breaking a parser.
 
@@ -402,7 +402,7 @@ def _check_em_dash(text: str, artifact: Artifact) -> list[Finding]:
     """One MINOR finding per em dash — absolute, not a density comparison.
 
     Authority is this project's own convention ("No em dashes in writing
-    output," Source CLAUDE.md), which says NONE, not "fewer than some
+    output," repo writing conventions), which says NONE, not "fewer than some
     sample". No ATS-parsing claim is made: no vendor documents em dashes
     breaking a parser.
     """
@@ -415,12 +415,12 @@ def _check_em_dash(text: str, artifact: Artifact) -> list[Finding]:
                 code="em_dash",
                 message=(
                     "Em dash found. This repo's own convention is no em dashes in writing "
-                    "output (Source CLAUDE.md)."
+                    "output (repo writing conventions)."
                 ),
                 artifact=artifact,
                 line=_line_of(text, start),
                 evidence=evidence,
-                source="Source CLAUDE.md convention",
+                source="repo writing conventions",
             )
         )
     return findings

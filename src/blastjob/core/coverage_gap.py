@@ -47,7 +47,7 @@ renders that sidecar directly, so the gap text a human would copy is already
 on screen. A copy-to-clipboard affordance for it would be client-side (copy
 whatever the page already displays) and would never need a Python function to
 emit the "- "-prefixed, period-terminated string -- "Web is the only surface"
-(CLAUDE.md) argues for deleting an unrouted formatter, not for building it a
+(AGENTS.md) argues for deleting an unrouted formatter, not for building it a
 route. Removed rather than kept as an unused export; the verbatim-insertion
 argument above survives intact since it was never about this function's
 specific formatting, only about never letting a model rewrite the quote.
