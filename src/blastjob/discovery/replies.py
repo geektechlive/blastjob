@@ -25,9 +25,10 @@ Matching is conservative on purpose -- a false positive here is worse than a
 miss, because it would put a stranger's name in front of the user as if a
 real lead. Two signals, in descending reliability:
 
-1. The sender's email address appears verbatim in the job's `app_notes` free
-   text (this is how a recruiter reply is catchable today: the user pastes a
-   recruiter's address into notes when they first reach out).
+1. The sender's email address exactly equals (case-insensitively) an address
+   found in the job's `app_notes` free text, never a substring of one (this
+   is how a recruiter reply is catchable today: the user pastes a recruiter's
+   address into notes when they first reach out).
 2. The sender's domain, squashed and stripped of its TLD, exactly equals the
    job's company name run through the same normalization
    (`core.company.company_key`) -- exact match only, common webmail domains

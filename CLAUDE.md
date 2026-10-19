@@ -246,8 +246,10 @@ streamed LLM chunk is unbounded otherwise.
 ### Build pipeline (`core/build.py`)
 
 1. Reads `work_history.md` and the selected template from the data dir
-2. `_research_company()`: non-streaming call using the `web_search_20250305` tool,
-   returns raw markdown
+2. `llm/providers.make_research_call()`: on the `anthropic` provider, a non-streaming
+   call with the `web_search_20250305` tool; on `claude-cli`/OpenAI, a plain completion
+   from training data with no web access (the sidecar says so in a footer; #59 moves
+   this to fetched pages). Returns raw markdown
 3. `build_resume_messages()`: assembles a 3-breakpoint cached message list (see Prompt
    caching rules)
 4. Streaming LLM call with `RESUME_SYSTEM` or `RESUME_ATS_SYSTEM`: streams resume markdown
@@ -367,7 +369,11 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
     event per surfaced reply (source `'replies'`, ref = Message-ID) in the ledger's
     transaction; a dry run writes none. Both mailboxes are editable at `/settings`
     (`web/mail_settings.py`): the form holds env var **names** only and REJECTS anything
-    not name-shaped, so a pasted app password can't land in settings; presence renders
+    not name-shaped, so a pasted app password can't land in settings; a user var must
+    end in `_IMAP_USER` and a password var in `_IMAP_PASSWORD`/`_IMAP_APP_PASSWORD`, and
+    no mail name may equal another `*_env` setting (`mail_names.py`), so a cockpit client
+    can't point the IMAP login at a different secret (`setup doctor` warns on an older
+    saved name; the scan still uses it); presence renders
     as a boolean, never a value/length/prefix (the cockpit has no auth); the page shows
     the RESOLVED account and marks inherited fields, and
     `POST /settings/mail/test/{alert|personal}` runs a read-only login probe (classified
@@ -896,7 +902,9 @@ was missing. The short version:
 - **Credentials are quoted, never paraphrased.** Coursework is not the degree, acting
   or interim is not the permanent title, and a certification in progress is not a
   certification; each would be an upgrade.
-- **Prep-pack numbers** are trusted by whole-token match, never substring.
+- **Prep-pack numbers** are trusted by whole-token match, never substring. Percent forms
+  (`30%`, `30 percent`, `30 pct`, `thirty percent`) share one key in both the prep pack
+  and the packet figure check (`core/percent_figures.py`).
 - **Never invent a person.** LLM-authored contacts and sources are allowlisted to URLs
   actually fetched; an ambiguous name credits nobody.
 - **Only proof moves state.** A posting is `closed` only when a source that can prove

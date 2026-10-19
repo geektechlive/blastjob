@@ -58,10 +58,10 @@ from blastjob.models.config import BlastJobConfig
 # misplaced decimal are the likeliest real-world errors, and a substring test
 # clears both ("$1,200" would wrongly read as verified inside a trusted
 # "$1,200,000"; "3%" would wrongly read as verified inside a trusted "13%").
-# Kept as a local copy rather than importing prep's private regex -- prep.py
-# is owned by another workstream and its combined pattern also matches bare
-# magnitudes/headcounts ("12 years", "500 employees") that are not arithmetic
-# claims this check should police.
+# Money is kept as a local copy rather than importing prep's combined pattern,
+# which also matches bare magnitudes/headcounts ("12 years", "500 employees")
+# that are not arithmetic claims this check should police. The percent form is
+# shared with prep (`core/percent_figures`) so both spell it the same way.
 _SCALE = r"(?:[KMBTkmbt]|(?i:thousand|million|billion|trillion))\b"
 _MONEY = rf"\$\d[\d,]*(?:\.\d+)?(?:\s?{_SCALE})?"
 _PERCENT = PERCENT
