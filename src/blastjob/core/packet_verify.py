@@ -42,6 +42,18 @@ SKIPPED_COVER_LETTER_SCORE = "cover_letter_claims"
 # The letter was asked for but its generation failed (e.g. a `claude -p` CLIError).
 # Fail-soft so the finished resume is not lost, but never silent.
 SKIPPED_COVER_LETTER_GENERATION = "cover_letter_generation"
+# The company research fell back to the provider's knowledge-only path (no Jina
+# key, or no fact verified against a fetched page), so no company fact has a
+# cited source. Informational: figures keep being used as before (issue #59).
+SKIPPED_RESEARCH_SOURCES = "company_research_sources"
+# Pages were fetched but none could be tied to THIS employer (by its domain, or
+# by naming it with the job's city/state, or by the model's judgment), so the
+# research fell back. Common names collide: see core/research_match.
+SKIPPED_COMPANY_UNCONFIRMED = "company_match_unconfirmed"
+# The job had no location or website to anchor on, so the model judged which
+# pages describe this employer. Informational, like the others.
+SKIPPED_COMPANY_JUDGED = "company_match_judged"
+RESEARCH_NOTES = (SKIPPED_RESEARCH_SOURCES, SKIPPED_COMPANY_UNCONFIRMED, SKIPPED_COMPANY_JUDGED)
 
 
 class PacketNotQuarantinedError(RuntimeError):
@@ -72,6 +84,7 @@ def verify_packet(
     cover_letter_expected: bool = False,
     carried_cover_findings: Sequence[Finding] | None = None,
     carried_checks_skipped: Sequence[str] = (),
+    research_notes: Sequence[str] = (),
 ) -> PacketReport:
     """Run every deterministic check over a finished packet and aggregate one
     report.
@@ -218,6 +231,7 @@ def verify_packet(
     )
     if cover_letter_md and not letter_scored:
         skipped.append(SKIPPED_COVER_LETTER_SCORE)
+    skipped.extend(n for n in research_notes if n not in skipped)
     # A refine does not redo what an earlier run left undone (e.g. a letter whose
     # generation failed): that gap stays on the record.
     skipped.extend(name for name in carried_checks_skipped if name not in skipped)

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from blastjob import config as cfg_mod
-from blastjob.core import filing_lock, packet_verify
+from blastjob.core import filing_lock, packet_research, packet_verify
 from blastjob.core.cover_letter_score import (
     render_cover_letter_score_md,
     score_cover_letter,
@@ -16,6 +16,7 @@ from blastjob.core.cover_letter_score import (
 from blastjob.core.coverage_run import coverage_gaps_for, render_gaps_md
 from blastjob.core.paths import application_dir, document_token, person_slug, resolve_role_slug
 from blastjob.core.research_facts import distill_research, facts_block
+from blastjob.core.research_match import JobContext
 from blastjob.core.scoring import parse_score as _parse_score
 from blastjob.core.scoring import render_score_md as _render_score_md
 from blastjob.core.scoring import score_resume as _score_resume
@@ -60,6 +61,7 @@ async def run_build(
     on_text: Callable[[str], None] | None = None,
     confidential: bool = False,
     include_cover_letter: bool = False,
+    job_context: JobContext | None = None,
 ) -> tuple[Path, FitScore | None]:
     data_path = cfg_mod.data_dir(app_config)
     out_root = cfg_mod.output_dir(app_config)
@@ -87,7 +89,14 @@ async def run_build(
     # running total.
     _calls_before_this_build = len(cost_tracker.calls)
 
-    # Step 1: Company research (skipped when company is confidential)
+    # Step 1: Company research (skipped when company is confidential). With a
+    # Jina key it is built from fetched pages, every fact span-verified against
+    # the page it cites (issue #59); otherwise, or when nothing usable came
+    # back, it falls back to the provider's research call, and the packet report
+    # says the company facts have no cited source. `job_context` (location,
+    # the job's links) anchors the pages to THIS employer: names collide.
+    cited = None
+    research_notes: list[str] = []
     if confidential:
         if on_text:
             on_text("Skipping company research (confidential posting).\n")
@@ -95,9 +104,15 @@ async def run_build(
     else:
         if on_text:
             on_text(f"Researching {company}...\n")
-        research_md = await make_research_call(
-            app_config, company, cost_tracker, app_config.generation.max_web_searches
-        )
+        context = job_context or JobContext(company=company, title=role, jd=job_description)
+        attempt = await packet_research.research_from_pages(app_config, context, cost_tracker)
+        cited, research_notes = attempt.cited, list(attempt.notes)
+        if cited is not None:
+            research_md = cited.research_md
+        else:
+            research_md = await make_research_call(
+                app_config, company, cost_tracker, app_config.generation.max_web_searches
+            )
 
     # Step 1b: the research sidecar is a trust boundary, not a warning label.
     # Scraped or recalled text about an employer is distilled into span-verified,
@@ -105,14 +120,19 @@ async def run_build(
     # nothing else, so it never shares a context window with work_history.md.
     # The cover letter consumes those facts instead of the raw sidecar: a fact
     # that says the company CONSIDERED entering a market cannot then support a
-    # claim that it serves that market.
-    company_facts = (
-        await distill_research(
+    # claim that it serves that market. Cited research already IS such facts
+    # (extracted in the same kind of isolated call, verified per page), so it
+    # is not distilled a second time: that would stamp them provenance unknown.
+    if cited is not None:
+        company_facts = list(cited.facts)
+    elif research_md:
+        company_facts = await distill_research(
             research_md, company=company, cfg=app_config, cost_tracker=cost_tracker
         )
-        if research_md
-        else []
-    )
+    else:
+        company_facts = []
+    if research_md and cited is None:
+        research_notes.append(packet_verify.SKIPPED_RESEARCH_SOURCES)
 
     # Step 2: Generate resume
     system_prompt = prompts.with_profile(
@@ -196,7 +216,12 @@ async def run_build(
             resume_md,
             work_history_md,
             job_description,
-            facts_block(company_facts),
+            # Spans with source and date, never the model's statements (#59);
+            # cited single values ride along with theirs.
+            facts_block(
+                company_facts,
+                values=packet_research.value_lines(cited) if cited is not None else (),
+            ),
             formats,
             out_dir,
             app_config,
@@ -272,6 +297,7 @@ async def run_build(
         coverage_gaps=coverage_gaps,
         company_facts=company_facts,
         cover_letter_expected=include_cover_letter,
+        research_notes=research_notes,
     )
     verdict = _gate_and_report(
         packet_report,

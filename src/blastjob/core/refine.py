@@ -547,11 +547,15 @@ def _letter_was_unscored(old_report: dict | None) -> bool:
 
 def _carried_skips(old_report: dict | None, letter_md: str) -> tuple[str, ...]:
     """Skip notes a refine cannot resolve: a letter whose generation failed is still
-    missing after the resume is revised."""
+    missing after the resume is revised, and refine never re-researches, so research
+    with no cited source still has none."""
     skipped = (old_report or {}).get("checks_skipped")
-    if letter_md or not isinstance(skipped, list):
+    if not isinstance(skipped, list):
         return ()
-    return tuple(n for n in skipped if n == packet_verify.SKIPPED_COVER_LETTER_GENERATION)
+    carry = set(packet_verify.RESEARCH_NOTES)
+    if not letter_md:
+        carry.add(packet_verify.SKIPPED_COVER_LETTER_GENERATION)
+    return tuple(n for n in skipped if n in carry)
 
 
 def _prior_override(old_report: dict | None, carried) -> tuple[frozenset[Artifact], dict | None]:

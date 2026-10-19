@@ -1,7 +1,7 @@
 """Employer careers pages as a closure link (`page:<host>`).
 
 The fixture is the live shape that motivated it (2026-10-08): Northwind Services
-runs JazzHR on careers.groundmasters.com; the page carries schema.org
+runs JazzHR on careers.northwindgrounds.example; the page carries schema.org
 JobPosting JSON-LD naming "Northwind Services Inc", and its apply form posts to
 northwindservices1.applytojob.com. An unknown posting URL on that host answers 410.
 
@@ -25,7 +25,7 @@ from blastjob.core.closure_links import Link
 from blastjob.core.page_fetch import jina_search as real_jina_search
 from blastjob.core.page_fetch import safe_get as real_safe_get
 
-HOST = "careers.groundmasters.com"
+HOST = "careers.northwindgrounds.example"
 POSTING_URL = f"https://{HOST}/apply/jobs/details/AbC123"
 TODAY = datetime.date(2026, 10, 8)
 COMPANY, TITLE, REGION = "Northwind Services", "VP of Technology", "Ohio"
@@ -212,7 +212,7 @@ async def _check(page, **kw):
 @pytest.mark.parametrize("status", [404, 410])
 async def test_gone_status_from_the_same_host_is_closed(status):
     # Only a page on the employer's own (listed) domain proves absence (#23).
-    employer_domains.set_employer_domains({COMPANY: ["groundmasters.com"]})
+    employer_domains.set_employer_domains({COMPANY: ["northwindgrounds.example"]})
     assert await _check(_page(status, html="")) is False
 
 
@@ -228,7 +228,8 @@ async def test_gone_after_a_cross_host_redirect_is_no_evidence():
 
 
 async def test_open_posting_is_verified_open():
-    employer_domains.set_employer_domains({COMPANY: ["groundmasters.com"]})  # full trust (#23)
+    # full trust (#23)
+    employer_domains.set_employer_domains({COMPANY: ["northwindgrounds.example"]})
     assert await _check(_page()) is True
 
 

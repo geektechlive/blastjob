@@ -64,6 +64,29 @@ PATH_ATS: frozenset[str] = frozenset(
         "jobs.lever.co", "jobs.ashbyhq.com",
     }
 )  # fmt: skip
+# Every host family that serves many employers' postings, for "is this host the
+# employer's own?" (core/research_match). A host here is never an anchor: a
+# Dayforce posting on jobs.dayforcehcm.com would otherwise vouch for every
+# Dayforce tenant's pages. Covers the families above plus hosts closure never
+# needed (Dayforce, UKG/UltiPro, Taleo, Rippling, ADP, Workday's own domain).
+SHARED_ATS_SUFFIXES: frozenset[str] = frozenset(
+    {
+        *SUBDOMAIN_ATS, *PATH_ATS,
+        "dayforcehcm.com", "ultipro.com", "ukg.net", "myworkdayjobs.com", "myworkday.com",
+        "workday.com", "taleo.net", "ats.rippling.com", "workforcenow.adp.com",
+        "recruiting.adp.com", "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com",
+        "smartrecruiters.com", "jobvite.com", "paylocity.com", "paycomonline.net",
+        "successfactors.com", "oraclecloud.com", "jazzhr.com", "applytojob.com",
+    }
+)  # fmt: skip
+
+
+def is_shared_ats_host(host: str) -> bool:
+    """`host` is (a subdomain of) a multi-employer ATS host."""
+    host = host.lower().rstrip(".")
+    return any(host == s or host.endswith("." + s) for s in SHARED_ATS_SUFFIXES)
+
+
 MAX_CANDIDATES = 3  # search results fetched per job
 GONE_STATUSES = frozenset({404, 410})
 

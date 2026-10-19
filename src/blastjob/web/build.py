@@ -28,6 +28,7 @@ from blastjob.llm.cost import CostTracker
 from blastjob.llm.providers import make_stream
 from blastjob.models.config import BlastJobConfig
 from blastjob.web.apply_file import write_apply_file
+from blastjob.web.research_context import job_research_context
 from blastjob.web.runtime import Event, Run
 
 log = logging.getLogger(__name__)
@@ -150,6 +151,7 @@ def make_tailor_work(job_id: int, load_config=cfg_mod.load_config):
                     cost_tracker=ct,
                     on_text=lambda t: run.emit("output", t),
                     include_cover_letter=True,
+                    job_context=job_research_context(conn, job_id),
                 )
                 ok = True
             except PacketNotQuarantinedError as e:

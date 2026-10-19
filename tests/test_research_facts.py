@@ -445,7 +445,7 @@ def test_facts_block_shows_polarity_and_span():
     )
     block = facts_block([fact])
     assert "affirmed" in block
-    assert "fetched from the web" in block
+    assert "found on a fetched page" in block
     assert "Markets served" in block
 
 

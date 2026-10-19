@@ -1014,10 +1014,12 @@ def test_affirmed_fact_supports_a_claim_the_substring_rail_would_have_missed() -
         "Fairview ships many products. Fasteners are shipped to customers "
         "around the world. The company serves customers worldwide."
     )
+    # The fact's SPAN carries the wording: support compares against the span,
+    # never the model's statement (#59).
     fact = _fact(
         "Fairview ships fasteners to customers worldwide",
         entity="fasteners distribution",
-        span="serves customers worldwide",
+        span="Fairview ships fasteners to customers worldwide",
     )
     claim = CoverLetterClaim(
         claim_text="Fairview ships fasteners to customers worldwide.",
@@ -1032,6 +1034,30 @@ def test_affirmed_fact_supports_a_claim_the_substring_rail_would_have_missed() -
     assert result.grounded is True
     assert result.quote_verified is True
     assert result.evidence_quote == fact.source_span
+
+
+def test_a_statement_that_goes_beyond_its_span_supports_nothing() -> None:
+    """Owner decision (#59): the model's statement says more than its span, so the
+    span decides. 'serves customers worldwide' does not back 'ships fasteners'."""
+    research = _normalize_ws(
+        "Fairview ships many products. Fasteners are shipped to customers "
+        "around the world. The company serves customers worldwide."
+    )
+    fact = _fact(
+        "Fairview ships fasteners to customers worldwide",
+        entity="fasteners distribution",
+        span="serves customers worldwide",
+    )
+    claim = CoverLetterClaim(
+        claim_text="Fairview ships fasteners to customers worldwide.",
+        subject=ClaimSubject.EMPLOYER,
+        grounded=True,
+        evidence_quote="ships fasteners directly to every customer worldwide",
+    )
+
+    result = verify_employer_claim(claim, research, facts=[fact])
+
+    assert result.verdict is not ClaimVerdict.SUPPORTED
 
 
 def test_non_affirmed_ontopic_fact_downgrades_an_otherwise_supported_claim() -> None:

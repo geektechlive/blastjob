@@ -17,8 +17,11 @@ import os
 import sqlite3
 from datetime import datetime
 
-import httpx
-
+from blastjob.core.jina import JINA_KEY_ENV as JINA_KEY_ENV
+from blastjob.core.jina import MAX_RESULTS_PER_QUERY as MAX_RESULTS_PER_QUERY
+from blastjob.core.jina import SEARCH_URL as SEARCH_URL
+from blastjob.core.jina import _is_no_results as _is_no_results
+from blastjob.core.jina import jina_search as jina_search
 from blastjob.llm import caching
 from blastjob.llm.providers import make_stream
 from blastjob.matching.scorer import _extract_json
@@ -28,9 +31,6 @@ from blastjob.secrets import secrets_file_hint
 
 log = logging.getLogger(__name__)
 
-JINA_KEY_ENV = "JINA_API_KEY"
-SEARCH_URL = "https://s.jina.ai/"
-MAX_RESULTS_PER_QUERY = 8
 MAX_CONTACTS = 5
 
 
@@ -52,59 +52,6 @@ def search_queries(company: str, candidate: CandidateConfig | None = None) -> li
         f'{c} ("talent acquisition" OR "technical recruiter" OR "recruiter") site:linkedin.com/in',
         f"{c} leadership team{field_hint}",
     ]
-
-
-_NO_RESULTS_MESSAGE = "no search results available"
-
-
-def _is_no_results(response: httpx.Response) -> bool:
-    """True when Jina's 422 means "that query matched nothing".
-
-    Confirmed live 2026-09-07: `site:example-search-firm.com (<titles>)
-    (<regions>)` answers 422 / AssertionFailureError with message "No search
-    results available for query ...", while the same query against a
-    different search-firm domain answers 200. A narrow site: query matching
-    nothing is an ordinary outcome, not a failure.
-    """
-    try:
-        message = str(response.json().get("message") or "")
-    except ValueError:
-        message = response.text
-    return _NO_RESULTS_MESSAGE in message.lower()
-
-
-async def jina_search(query: str, api_key: str, *, timeout_s: int = 30) -> list[dict]:
-    """[{title, url, description}] from Jina's search endpoint (no page content).
-
-    A zero-hit search comes back as HTTP 422, so it is normalized to [] here
-    rather than raised — otherwise every run logs a WARNING and the daily digest
-    reports a per-source error for a search that simply found nothing.
-    """
-    async with httpx.AsyncClient(timeout=timeout_s) as client:
-        r = await client.get(
-            SEARCH_URL,
-            params={"q": query},
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Accept": "application/json",
-                "X-Respond-With": "no-content",
-            },
-        )
-        if r.status_code == 422 and _is_no_results(r):
-            return []
-        r.raise_for_status()
-        data = r.json().get("data") or []
-    out = []
-    for d in data[:MAX_RESULTS_PER_QUERY]:
-        if isinstance(d, dict) and d.get("url"):
-            out.append(
-                {
-                    "title": str(d.get("title") or "")[:200],
-                    "url": str(d.get("url")),
-                    "description": str(d.get("description") or "")[:400],
-                }
-            )
-    return out
 
 
 async def search_people(

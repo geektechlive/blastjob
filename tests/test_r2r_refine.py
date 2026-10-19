@@ -147,6 +147,17 @@ async def test_a_missing_letter_generation_stays_recorded_as_skipped(tmp_path, m
     assert "cover_letter_generation" in _report(run_dir)["checks_skipped"]
 
 
+async def test_uncited_research_note_survives_a_refine(tmp_path, monkeypatch):
+    """Refine never re-researches, so research with no cited source still has none."""
+    run_dir, cfg = _seed(tmp_path)
+    _write_old_report(run_dir, checks_skipped=["company_research_sources"])
+    _patch(monkeypatch, GOOD)
+
+    await _refine(run_dir, cfg)
+
+    assert "company_research_sources" in _report(run_dir)["checks_skipped"]
+
+
 # ---- R4 -------------------------------------------------------------------
 
 

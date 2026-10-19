@@ -87,6 +87,30 @@ def _no_real_page_fetches(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_packet_research(monkeypatch):
+    """Packet research (`core/packet_research`) searches and reads pages through
+    Jina when a key is set. Every test sees no key, so `run_build` takes the
+    knowledge-only fallback whatever the developer's shell exports; and the
+    default search/read raise, so a test that passes `api_key=` without
+    injecting `search=` / `read=` fails loudly. `pytest.fail` is a
+    BaseException, so the module's fail-soft `except Exception` cannot hide it."""
+    from blastjob.core import packet_research
+
+    def _forbid(name: str):
+        async def _raise(*_a: object, **_k: object):
+            pytest.fail(
+                f"blastjob.core.packet_research.{name} tried to reach the network. Inject "
+                "search=/read= fakes (see tests/conftest.py::_no_real_packet_research)."
+            )
+
+        return _raise
+
+    monkeypatch.setattr(packet_research, "_jina_key", lambda: "")
+    monkeypatch.setattr(packet_research, "_search", _forbid("_search"))
+    monkeypatch.setattr(packet_research, "_read", _forbid("_read"))
+
+
+@pytest.fixture(autouse=True)
 def isolated_secrets(tmp_path_factory, monkeypatch):
     """Point a test's secrets load at a throwaway file instead of the owner's
     real `~/.claude/secrets.env`.
@@ -178,6 +202,7 @@ _STREAM_BINDINGS = (
     "blastjob.core.followup",
     "blastjob.core.ingest",
     "blastjob.core.network_enrich",
+    "blastjob.core.packet_research",
     "blastjob.core.prep",
     "blastjob.core.refine",
     "blastjob.core.research_facts",

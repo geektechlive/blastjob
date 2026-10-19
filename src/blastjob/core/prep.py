@@ -29,6 +29,8 @@ from typing import Any
 from blastjob import config as cfg_mod
 from blastjob.core import artifacts, filing_lock
 from blastjob.core import company as co
+from blastjob.core.packet_gate import _SCALE as SHARED_SCALE
+from blastjob.core.packet_gate import _SCALE_WORDS as SHARED_SCALE_WORDS
 from blastjob.core.paths import application_dir, locate, resolve_role_slug, slugify
 from blastjob.core.percent_figures import PERCENT, percent_key
 from blastjob.llm import caching
@@ -229,7 +231,9 @@ def write_prep_pack(
 # the letter branch from eating the first character of an ordinary word: in
 # "$250,000 base" the B-branch takes the 'b' of "base", fails the boundary, and
 # the whole optional group collapses to empty rather than swallowing the space.
-_SCALE = r"(?:[KMBTkmbt]|(?i:thousand|million|billion|trillion))\b"
+# Shared with packet_gate (one scale vocabulary, `bn`/`mn`/`tn` included), so
+# "$2.1bn" is a figure here too and is marked when the trusted text lacks it.
+_SCALE = SHARED_SCALE
 _MONEY = rf"\$\d[\d,]*(?:\.\d+)?(?:\s?{_SCALE})?"
 _PERCENT = PERCENT
 _MAGNITUDE = rf"\d+(?:\.\d+)?\s?{_SCALE}"
@@ -243,7 +247,7 @@ _NUMERIC = re.compile(
     rf"(?:{_MONEY}|(?<![\w.,$])(?:{_PERCENT}|{_MAGNITUDE}|{_BIG_BARE}))(?!\w|[.,]\d)"
 )
 _CONFIRM = "[confirm]"
-_SCALE_WORDS = {"thousand": "k", "million": "m", "billion": "b", "trillion": "t"}
+_SCALE_WORDS = SHARED_SCALE_WORDS
 
 
 def _normalize_number(token: str) -> str:

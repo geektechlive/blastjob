@@ -37,8 +37,10 @@ claude-CLI provider, `llm/providers.make_research_call` cannot do live web
 search and writes a disclosure footer saying the research came from training
 data. A recalled fact and a fetched fact are not equally trustworthy, so the
 distinction is carried on every fact and rendered in `facts_block`. Absence of
-the footer does NOT prove a live fetch — that case is `UNKNOWN`, never
-`WEB_SEARCH`. Same discipline as `CallCost.known`: a gap beats a fabrication.
+the footer does NOT prove a live fetch — that case is `UNKNOWN`. Only a
+sidecar opening with `CITED_MARKER` (written by `core/packet_research`, whose
+spans were verified against fetched pages) reads as `WEB_SEARCH`. Same
+discipline as `CallCost.known`: a gap beats a fabrication.
 
 **DECIDED 2026-09-17 (dead-code review): `supports()` is WIRE, not delete —
 and today it has no caller, which is a real gap, not a false alarm.**
@@ -73,7 +75,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
+from datetime import date
 from enum import StrEnum
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -103,6 +108,10 @@ SUPPORT_OVERLAP_MIN = 0.6
 # `providers.make_research_call` on the OpenAI / claude-CLI path. Matched on a
 # fragment, not the whole line: that line carries an em dash and would drift.
 RECALL_FOOTER_MARK = "based on training data"
+# First line of a sidecar written by `core/packet_research.render_sidecar`, whose
+# every span was verified against the fetched page it cites. An HTML comment, so
+# the sanitizer redacts it inside any span: page text can never carry it.
+CITED_MARKER = "<!-- blastjob:cited-research every span quotes a fetched page -->"
 
 REDACTED = "[redacted: instruction-like text]"
 FENCE_OPEN = "<RESEARCH>"
@@ -127,7 +136,9 @@ class Polarity(StrEnum):
 class Provenance(StrEnum):
     """How the research text came to exist. Never inferred optimistically."""
 
-    WEB_SEARCH = "web_search"  # fetched live (Anthropic web_search path)
+    # Fetched live AND span-verified against the page it cites: only
+    # core/packet_research stamps it. The Anthropic web_search path is UNKNOWN.
+    WEB_SEARCH = "web_search"
     TRAINING_RECALL = "training_recall"  # model recall; the disclosure footer is present
     UNKNOWN = "unknown"  # no disclosure either way — treat as unverified
 
@@ -148,6 +159,9 @@ class CompanyFact(BaseModel):
     time_scope: str = Field(default="", max_length=120)
     source_url: str = Field(default="", max_length=500)
     source_span: str = Field(min_length=1, max_length=1000)
+    # The cited page's date (ISO), stamped in Python by core/packet_research
+    # from the page itself; "" = undated. Never the model's to assert.
+    source_date: str = Field(default="", max_length=10)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     provenance: Provenance = Provenance.UNKNOWN
 
@@ -244,14 +258,19 @@ def detect_provenance(research_md: str, override: Provenance | None = None) -> P
     Deliberately does NOT call `providers.detect_provider`: that reads the
     environment and `shutil.which`, so it is machine-dependent and can raise.
     What matters is how THIS text was produced, and the producer says so in a
-    disclosure footer. No footer means no claim either way — `UNKNOWN`, never
-    `WEB_SEARCH`. `override` is for a caller that knows better (the build knows
-    which provider ran).
+    disclosure footer. No footer means no claim either way — `UNKNOWN`, unless
+    the text opens with `CITED_MARKER`. `override` is for a caller that knows
+    better (the build knows which provider ran).
     """
     if override is not None:
         return override
     if RECALL_FOOTER_MARK in research_md.lower():
         return Provenance.TRAINING_RECALL
+    # Only as the very first line, where `packet_research.render_sidecar` puts
+    # it; the recall footer above wins if both are somehow present. Refine
+    # re-distills such a sidecar, and its spans still re-verify against it.
+    if research_md.startswith(CITED_MARKER + "\n"):
+        return Provenance.WEB_SEARCH
     return Provenance.UNKNOWN
 
 
@@ -400,7 +419,9 @@ def parse_facts(
             # rather than dropping verified material over metadata.
             log.warning("stripped invented source_url %r from company fact", url)
             url = ""
-        out.append(fact.model_copy(update={"provenance": provenance, "source_url": url}))
+        out.append(
+            fact.model_copy(update={"provenance": provenance, "source_url": url, "source_date": ""})
+        )
         if len(out) >= MAX_FACTS:
             break
     return out
@@ -450,7 +471,41 @@ async def distill_research(
         log.warning("research distillation failed for %s: %s", company, e)
         return []
 
-    return parse_facts(full_text, sanitized=sanitized, original=research_md, provenance=prov)
+    facts = parse_facts(full_text, sanitized=sanitized, original=research_md, provenance=prov)
+    if prov is Provenance.WEB_SEARCH and research_md.startswith(CITED_MARKER):
+        return [_with_cited_source(f, cited_sources(research_md)) for f in facts]
+    return facts
+
+
+# A cited sidecar (core/packet_research.render_sidecar) quotes each fact as
+# `- "<span>" [n] (host, date...)` and lists `[n] <title>: <url> (<date>|undated)`.
+_QUOTED_LINE = re.compile(r'^- "(?P<span>.*)" \[(?P<n>\d+)\] \(', re.MULTILINE)
+_SOURCE_LINE = re.compile(
+    r"^\[(?P<n>\d+)\] .*: (?P<url>https?://\S+) \((?P<date>\d{4}-\d\d-\d\d|undated)\)$",
+    re.MULTILINE,
+)
+
+
+def cited_sources(sidecar: str) -> list[tuple[str, str, str]]:
+    """(quoted span, url, page date) for each quoted fact in a cited sidecar, so a
+    refine's re-distilled facts keep the source and date the build verified."""
+    sources = {
+        m["n"]: (m["url"], "" if m["date"] == "undated" else m["date"])
+        for m in _SOURCE_LINE.finditer(sidecar)
+    }
+    return [
+        (m["span"], *sources[m["n"]]) for m in _QUOTED_LINE.finditer(sidecar) if m["n"] in sources
+    ]
+
+
+def _with_cited_source(fact: CompanyFact, entries: list[tuple[str, str, str]]) -> CompanyFact:
+    """The source and date of the quoted line that contains this fact's span;
+    none (both empty) when no line does, never the model's own citation."""
+    needle = _normalize_ws(fact.source_span)
+    for quoted, url, when in entries:
+        if needle in _normalize_ws(quoted):
+            return fact.model_copy(update={"source_url": url, "source_date": when})
+    return fact.model_copy(update={"source_url": "", "source_date": ""})
 
 
 async def _final_message(stream: object):
@@ -504,11 +559,12 @@ def supports(fact: CompanyFact, claim: str) -> bool:
     here is calibrated to prove a negative, and an affirmed fact plainly cannot.
 
     The wording test is deliberately blunt — a share of the claim's content
-    words must appear in the fact. It is a coarse relevance filter, not
-    entailment: it cannot tell "supplies adhesives TO aerospace firms" from
-    "buys adhesives FROM aerospace firms". Callers should treat a True as
-    "this fact is on topic and points the right way", and still require the
-    prose to stay inside `fact.statement`.
+    words must appear in the fact's verified span (never its model-written
+    statement, #59). It is a coarse relevance filter, not entailment: it
+    cannot tell "supplies adhesives TO aerospace firms" from "buys adhesives
+    FROM aerospace firms". Callers should treat a True as "this fact is on
+    topic and points the right way", and still require the prose to stay
+    inside `fact.source_span`.
 
     Facts from `distill_research` are span-verified already; a hand-built fact
     is not, and this function does not re-check it.
@@ -522,44 +578,74 @@ def supports(fact: CompanyFact, claim: str) -> bool:
     claim_tokens = _content_tokens(claim)
     if not claim_tokens:
         return False
-    haystack = set(_content_tokens(f"{fact.statement} {fact.entity}"))
+    # The verified span, never the model's `statement`/`entity`: a statement can
+    # say "office in Chevy Chase" over a span that names a street address (#59).
+    haystack = set(_content_tokens(fact.source_span))
     hits = sum(1 for t in claim_tokens if t in haystack)
     return hits / len(claim_tokens) >= SUPPORT_OVERLAP_MIN
 
 
-def facts_block(facts: list[CompanyFact]) -> str:
-    """Render approved facts for a generation prompt.
+# Older than this, a dated item is marked stale IN PYTHON: the model is never
+# asked to do date arithmetic (#59 review).
+STALE_AFTER_DAYS = 730
+STALE_MARK = "over 2 years old"
+DATED_FIGURE_RULE = (
+    'A dated figure may be used only with "as of <date>" phrasing. A fact or figure '
+    'marked "over 2 years old" or "undated" must not be stated as current.'
+)
+
+
+def source_label(url: str, page_date: str, *, today: date | None = None) -> str:
+    """'host, 2013-12-19, over 2 years old' / 'host, 2025-12-12' / 'host, undated';
+    no URL means the research text itself. `today` is injectable for tests."""
+    host = (urlsplit(url).hostname or "").lower().removeprefix("www.") if url else ""
+    label = f"{host or 'research text'}, {page_date or 'undated'}"
+    try:
+        published = date.fromisoformat(page_date) if page_date else None
+    except ValueError:
+        published = None
+    if published and ((today or date.today()) - published).days > STALE_AFTER_DAYS:
+        label += f", {STALE_MARK}"
+    return label
+
+
+def facts_block(
+    facts: list[CompanyFact], values: Sequence[str] = (), *, today: date | None = None
+) -> str:
+    """Render approved facts (and pre-rendered single values) for the letter prompt.
 
     This is the ONLY sanctioned way company research reaches the cover-letter
-    call: the raw sidecar does not go in, a fact record does. Each line shows
-    polarity and provenance, because "Acme serves aerospace and defense"
-    recalled from training data and the same sentence fetched from the company's
-    site are not equally safe to assert in a letter the user signs.
+    call: the raw sidecar does not go in, a fact record does. Each fact is its
+    verbatim SOURCE SENTENCE (the span) with its polarity, provenance, source host
+    and the page's date. The model's own `statement`, `entity` and `time_scope`
+    are never rendered (owner decision, #59): a live run produced "office in
+    Chevy Chase, MD" over a span that was only a street address.
 
-    The span is included and is safe to include: it verified against the
-    SANITIZED text, so anything the sanitizer redacted cannot appear here.
+    The span is safe to include: it verified against the SANITIZED text, so
+    anything the sanitizer redacted cannot appear here.
     """
-    if not facts:
+    if not facts and not values:
         return "No verified company facts. Make no factual claims about the company."
 
     labels = {
-        Provenance.WEB_SEARCH: "fetched from the web",
+        Provenance.WEB_SEARCH: "found on a fetched page",
         Provenance.TRAINING_RECALL: "recalled from training data, NOT verified",
         Provenance.UNKNOWN: "provenance unknown, treat as unverified",
     }
     lines = [
-        "Approved company facts. Every claim you make about the company must come "
-        "from this list, and must respect its polarity: only an 'affirmed' fact "
-        "supports an affirmative claim.",
+        "Approved company facts, each quoted verbatim from its source. Every claim you "
+        "make about the company must come from this list, and must respect its "
+        "polarity: only an 'affirmed' fact supports an affirmative claim.",
+        DATED_FIGURE_RULE,
         "",
     ]
     for i, f in enumerate(facts, 1):
-        when = f" | when: {f.time_scope}" if f.time_scope else ""
-        where = f" | source: {f.source_url}" if f.source_url else ""
         lines.append(
-            f"[{i}] ({f.polarity.value}; {labels[f.provenance]}; "
-            f"confidence {f.confidence:.2f}) {f.statement}"
+            f"[{i}] ({f.polarity.value}; {labels[f.provenance]}; confidence "
+            f'{f.confidence:.2f}) "{f.source_span[:MAX_SPAN_RENDER]}"'
         )
-        lines.append(f"    entity: {f.entity or 'unspecified'}{when}{where}")
-        lines.append(f'    span: "{f.source_span[:MAX_SPAN_RENDER]}"')
+        lines.append(f"    source: {source_label(f.source_url, f.source_date, today=today)}")
+    if values:
+        lines += ["", "Company figures (value, source, page date):"]
+        lines += [f"- {v}" for v in values]
     return "\n".join(lines)

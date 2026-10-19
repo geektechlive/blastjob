@@ -62,7 +62,9 @@ from blastjob.models.config import BlastJobConfig
 # which also matches bare magnitudes/headcounts ("12 years", "500 employees")
 # that are not arithmetic claims this check should police. The percent form is
 # shared with prep (`core/percent_figures`) so both spell it the same way.
-_SCALE = r"(?:[KMBTkmbt]|(?i:thousand|million|billion|trillion))\b"
+# `bn`/`mn`/`tn` (press-release shorthand) too: "$1.8bn" must equal "$1.8 billion"
+# and must never be read as "$1.8" with trailing letters.
+_SCALE = r"(?:[KMBTkmbt]|(?i:thousand|million|billion|trillion|bn|mn|tn))\b"
 _MONEY = rf"\$\d[\d,]*(?:\.\d+)?(?:\s?{_SCALE})?"
 _PERCENT = PERCENT
 # The percent branch gets a lookbehind guard (money already starts with an
@@ -70,7 +72,15 @@ _PERCENT = PERCENT
 # lookahead guard stops it from ending mid-number.
 _FIGURE = re.compile(rf"(?:{_MONEY}|(?<![\w.,$]){_PERCENT})(?!\w|[.,]\d)")
 
-_SCALE_WORDS = {"thousand": "k", "million": "m", "billion": "b", "trillion": "t"}
+_SCALE_WORDS = {
+    "thousand": "k",
+    "million": "m",
+    "billion": "b",
+    "trillion": "t",
+    "bn": "b",
+    "mn": "m",
+    "tn": "t",
+}
 _SCALE_FACTOR = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000, "t": 1_000_000_000_000}
 
 
@@ -223,6 +233,13 @@ _SKIPPED_LABELS = {
     "so claims in the resume were not verified against your work history.",
     "cover_letter_claims": "The cover letter's claims were not checked (the scoring call did not "
     "run), so its statements about you and the employer are unverified.",
+    "company_research_sources": "Company facts have no cited source: no fetched web page "
+    "backs them (the research is the model's own knowledge, or a web search whose pages could "
+    "not be checked), so check any statement about the employer before sending.",
+    "company_match_unconfirmed": "Couldn't confirm which company the web pages describe (none "
+    "was on the employer's website or named it with the job's location), so they were not used.",
+    "company_match_judged": "Company match judged by the model, not confirmed by location or "
+    "website: check that the cited pages are about this employer.",
 }
 
 

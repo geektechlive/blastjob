@@ -620,7 +620,9 @@ def _on_topic_any_polarity(claim_text: str, fact: CompanyFact) -> bool:
     claim_tokens = _fact_tokens(claim_text)
     if not claim_tokens:
         return False
-    haystack = set(_fact_tokens(f"{fact.statement} {fact.entity}"))
+    # Statement AND span: support compares against the span alone (#59), but a
+    # downgrade is the conservative direction, so it may catch either wording.
+    haystack = set(_fact_tokens(f"{fact.statement} {fact.entity} {fact.source_span}"))
     hits = sum(1 for t in claim_tokens if t in haystack)
     return hits / len(claim_tokens) >= _FACT_OVERLAP_MIN
 
