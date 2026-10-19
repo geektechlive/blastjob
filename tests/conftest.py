@@ -94,13 +94,8 @@ def isolated_secrets(tmp_path_factory, monkeypatch):
     Several code paths load it deliberately (`web/mail_settings`, `web/people`,
     `web/research`, `discovery/pipeline`, `daily`), so a test asserting
     "credentials missing" otherwise passes or fails depending on whose machine
-    it runs on. Opt in per module with an autouse wrapper.
-
-    NOT autouse suite-wide, though it arguably should be: making it global broke
-    four unrelated tests and tripled suite runtime, because some tests today
-    depend on real credentials being present in the environment. That is a
-    latent problem worth fixing on its own, not as a side effect of adding a
-    settings page.
+    it runs on. It is autouse for the whole suite; a test that needs
+    credentials sets them with `monkeypatch.setenv`.
 
     Patching `secrets.SECRETS_PATH` is not enough: `load_secrets_env` binds it
     as a default argument at definition time, so the bound default wins. The

@@ -74,7 +74,9 @@ lives in their data dir, the DB `settings` table, or the gitignored `local/` and
     default; **matching makes no LLM call until `candidate.target_titles` is set.**
   - `discovery.*`: comp floor, alignment threshold, title keep/drop terms, home location
     / state / coordinates, `towns`, commute/extended radii, remote_ok, target_boards,
-    adzuna queries, excludes, company aliases, mail, search firms, closure_auto. Every
+    adzuna queries, excludes, company aliases, employer_domains (company -> domains
+    the user confirms are that employer's own; see "Employer careers pages"), mail,
+    search firms, closure_auto. Every
     default is empty or off.
   - `notify.mode` (`discord|stdout|off`, default `stdout`), `web.host` / `web.port`
     (default `127.0.0.1:8765`), `paths.output_dir`, `paths.secrets_file`, `llm.*`.
@@ -230,7 +232,12 @@ through `web/runtime.py`: a `Run` holds a replayable event log, and the browser 
 along over SSE with `Last-Event-ID` replay, so a refresh resumes a stream rather than
 restarting the work. `Run.events` is capped at `MAX_EVENTS_PER_RUN` (oldest dropped
 first) because this is a service that never restarts on its own and one event per
-streamed LLM chunk is unbounded otherwise.
+streamed LLM chunk is unbounded otherwise. `Runtime.start(name, work, key=...)` is
+single-flight per `(name, key)`: a second Prep/Follow-up for the same job, Outreach for
+the same job and recipient (`job_id:contact_id`), or Research for the same company key
+hands back the running run instead of starting a duplicate. Only a run whose status is
+`running` holds its key, so a finished or failed run frees it. No key, no dedupe. There is
+deliberately no global cap on concurrent LLM calls (considered and dropped: #24).
 
 ### Ingest pipeline (`core/ingest.py`, route `/work-history/ingest`)
 
@@ -319,7 +326,10 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
     before this are repaired by `--refetch-workday-locations[-report]`. Add the
     user's own employers to `discovery.target_boards`; `resolve.probe_workday` (or
     `python -m blastjob.discovery.resolve "<Company>"`) finds them via Jina search + a
-    confirming POST.
+    confirming POST. Known limitation (#42, accepted): two boards on one Workday tenant
+    share `source = workday:{tenant}`, so a req missing from both listings is probed
+    through whichever board was configured last, and the stored URL follows the last
+    board saved. Requisitions are tenant-wide, so the two boards update one row.
   - **Dayforce** (`dayforce.py`): no key, but an anonymous CSRF handshake:
     `GET jobs.dayforcehcm.com/api/auth/csrf`, then echo the token in an `x-csrf-token`
     header on `POST /api/geo/{client}/jobposting/search`. Not a login; a bare POST
@@ -415,6 +425,17 @@ Backs the web app; all state in `<data_dir>/blastjob.db`.
   pre-generation alignment score vs. the post-generation groundedness `FitScore`.
   `alignment_threshold` defaults to 78. `comp_floor_usd` defaults to 0, which disables
   the comp gate until a floor is set.
+- **Score fingerprint** (`matching/fingerprint.py`, #29): every alignment score is
+  stamped in `score_model_version` with a hash of `SCORER_SCHEMA_VERSION` + the exact
+  scoring system prompt + candidate profile + `work_history.md` + provider/model, through
+  one writer (`pipeline.score_columns`, also used by `rescore.score_kept`). A prior score
+  is reused only when its fingerprint matches. The archive-reason calibration block and
+  batch peers are deliberately excluded (calibration changes on every archive), and the
+  model behind claude-cli is invisible to it. Only the Match/Re-score button redoes
+  old-fingerprint scores; the daily run scores unscored rows only. The cockpit shows how
+  many surfaced/queued scores predate the last change (`web/routes_scores.py`). Bump
+  `SCORER_SCHEMA_VERSION` when the scoring user-content template, JD excerpting or score
+  normalization changes.
 
 ### Web cockpit (`web/`)
 
@@ -638,7 +659,8 @@ of/and/the/for/&), used by the discovery fingerprint and both rules below (not b
   (read-only).
 - **One "apply here" link per role** (`web/apply_link.py`, `best_apply_link`): the
   employer's own board posting ("employer site (Workday)"), then a board link closure
-  found, then a `page:` or manual employer link, then LinkedIn > Indeed > Adzuna >
+  found, then a `page:` (a limited page contributes its ATS tenant root, or nothing
+  until that is known) or manual employer link, then LinkedIn > Indeed > Adzuna >
   other, an agency last; every URL through `safe_external_url`. Stage list rows (from
   the members `stage_lists` already loads), the detail header, and the daily digest
   (`apply_links_for`, one query) all use it. **Manual employer link**: the detail page's
@@ -719,7 +741,17 @@ label, or first path segment for path-tenanted hosts) starts with the compacted 
 key; the page names ONE `hiringOrganization` and it is this company; and exactly one
 JobPosting on the page matches the title (exact or single ≥ 0.92, region folded from a
 state name to its two-letter code). Exactly one trusted posting across pages → link,
-else none. `check_page(link, company, title, region)` (via `LinkDeps.check_page`, never
+else none. **Two trust levels** (`core/employer_domains.py`, #23), recomputed at use
+time from the stored page URL and current settings: FULL when the page host is the ATS
+host itself or (a subdomain of) a domain listed for that company in
+`discovery.employer_domains` (keyed by `company_key`; aggregators, ATS families and
+shared hosts like github.io are refused as entries); LIMITED when the page binds only
+through a `<form action>` ATS host on some other domain. A limited page is no evidence
+either way (its row's verdict is `unverifiable`), its text is never adopted as the
+employer JD, and neither its URL nor its host is ever shown: the apply link and labels
+use the ATS tenant root (`https://<tenant-host>/`), which `probe_page` reads from the
+page it already fetched (no search). The fetched page URL lives in
+`employer_link_external_id`; `employer_link_url` is the URL shown. `check_page(link, company, title, region)` (via `LinkDeps.check_page`, never
 `check_link`) re-verifies all of that: 404/410 from the SAME host with no cross-host
 redirect → closed; 200 with the linked JobPosting still trusted → open unless
 `validThrough` is past (then no evidence); anything else → no evidence. Every request
@@ -883,7 +915,12 @@ in the user's Claude config (334 tools on the owner's machine, GitHub writes
 pre-allowed) while its prompt carries attacker-controllable postings. Output is
 decoded incrementally (a multibyte character can straddle a read), the run has a
 timeout (`CLI_TIMEOUT_SECONDS`), a non-zero exit or `is_error` raises `CLIError`, and
-the child is killed on cancel or exit.
+the child is killed on cancel or exit. Its environment (`llm/child_env.py`, #25) is
+`os.environ` minus every key NAMED in the secrets file (read from the file, whether or
+not the key was already set) and minus `ANTHROPIC_API_KEY`, which would switch the CLI
+from the subscription to API billing. Nothing else is removed, so proxy, CA and
+`CLAUDE_CODE_*` settings still reach it. `open` (Reveal in Finder) and the doctor's
+`claude --version` use the same env.
 
 ## Truth guarantees (read before touching the tailor or scoring path)
 
