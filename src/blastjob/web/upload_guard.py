@@ -23,6 +23,21 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 MAX_NETWORK_UPLOAD_BYTES = 400 * 1024 * 1024
 
 
+def parse_content_length(value: str | bytes | None) -> int | None:
+    """Safely parse a Content-Length header.
+
+    Returns a non-negative integer length or None if absent or malformed
+    (non-numeric, negative, or invalid type).
+    """
+    if value is None:
+        return None
+    try:
+        length = int(value)
+        return length if length >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 class MaxBodySizeMiddleware:
     """413 an over-cap body, by declared Content-Length or by counting bytes."""
 
@@ -36,14 +51,10 @@ class MaxBodySizeMiddleware:
             return
 
         headers = dict(scope.get("headers") or [])
-        declared = headers.get(b"content-length")
-        if declared is not None:
-            try:
-                if int(declared) > self.max_bytes:
-                    await _reject(send)
-                    return
-            except ValueError:
-                pass  # malformed header — fall through to the streaming count
+        declared = parse_content_length(headers.get(b"content-length"))
+        if declared is not None and declared > self.max_bytes:
+            await _reject(send)
+            return
 
         seen = 0
 
