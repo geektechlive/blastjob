@@ -357,6 +357,7 @@ class WorkdayAdapter:
         seen: dict[str, dict] = {}
         for q in self.queries:
             offset = 0
+            total = 0
             for _ in range(self.max_pages):
                 payload = await request_json(
                     client,
@@ -373,9 +374,11 @@ class WorkdayAdapter:
                 items = parse_listing(payload)
                 for it in items:
                     seen.setdefault(it["external_path"], it)
-                total = int(payload.get("total") or 0)
+                # Workday may report `total` on the first page only (later pages say 0),
+                # so keep the largest one seen; an unknown total (0) never ends the walk.
+                total = max(total, int(payload.get("total") or 0))
                 offset += self.page_size
-                if len(items) < self.page_size or offset >= total:
+                if len(items) < self.page_size or (total > 0 and offset >= total):
                     break
         return list(seen.values())
 
