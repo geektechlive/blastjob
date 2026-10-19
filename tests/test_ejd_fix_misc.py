@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from blastjob import daily_employer_jd as dej
-from blastjob.core import closure
+from blastjob.core import closure, employer_domains
 from blastjob.core import closure_links as cl
 from blastjob.core import employer_jd as ej
 from blastjob.core import page_fetch as pf
@@ -132,6 +132,16 @@ def test_the_note_counts_a_revert_in_both_steps_once():
 PAGE_URL = "https://careers.acme.com/jobs/1"
 TODAY = datetime.date(2026, 10, 16)
 COMPANY, TITLE, REGION = "Acme", "VP of Operations", "OH"
+
+
+@pytest.fixture(autouse=True)
+def _acme_owns_its_careers_domain():
+    """careers.acme.com is confirmed as Acme's own domain: a page there may
+    supply text. An unlisted page bound only by its apply form never does (#23,
+    tests/test_page_form_trust.py)."""
+    employer_domains.set_employer_domains({"Acme": ["acme.com"]})
+
+
 TEXT = "Lead the operations organization for the whole company. " * 20
 
 

@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from blastjob.core import employer_domains as _employer_domains
 from blastjob.discovery.textutil import us_state_code
 
 DATA_DIR_ENV = "BLASTJOB_DATA_DIR"
@@ -236,6 +237,11 @@ class DiscoveryConfig(BaseModel):
     # e.g. {"Contoso Mutual Life Insurance Company" = "Contoso Mutual"}.
     # See core/company.py; re-key stored rows with `rekey_companies` after a change.
     company_aliases: dict[str, str] = Field(default_factory=dict)
+    # Domains you confirm belong to an employer: company name -> bare hostnames,
+    # e.g. {"Acme Widgets" = ["acmewidgets.example"]}. A careers page on one of
+    # them (or a subdomain) is trusted like the employer's own ATS; a page bound
+    # only through an off-domain apply form gets limited trust (core/page_links).
+    employer_domains: dict[str, list[str]] = Field(default_factory=dict)
     # Staffing agencies and job-board resellers in your feed (beyond the
     # built-in platforms): their postings are never treated as the employer's.
     agency_companies: list[str] = Field(default_factory=list)
@@ -287,6 +293,11 @@ class DiscoveryConfig(BaseModel):
                 "(e.g. OH) or its full name"
             )
         return code
+
+    @field_validator("employer_domains")
+    @classmethod
+    def _employer_domains_are_hostnames(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        return _employer_domains.normalize(value)
 
     @field_validator("towns")
     @classmethod

@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 import tests.agency_fixture as agency_fixture
 import tests.geo_fixture as geo_fixture
 from blastjob import daily
+from blastjob.core import employer_domains
 from blastjob.core import role_clusters as rc
 from blastjob.db import client as dbc
 from blastjob.models.config import BlastJobConfig
@@ -52,6 +53,9 @@ def test_authoritative_own_posting_wins_with_its_board_named():
 
 
 def test_order_after_the_board_posting():
+    # careers.acme.com is listed as Acme's own domain, so its page link is shown
+    # (an unlisted off-domain page shows only its ATS root, #23).
+    employer_domains.set_employer_domains({"Acme": ["acme.com"]})
     board_link = _m(
         "linkedin",
         "https://www.linkedin.com/jobs/view/1/",

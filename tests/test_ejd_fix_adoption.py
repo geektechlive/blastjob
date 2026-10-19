@@ -11,6 +11,7 @@ import datetime
 
 import pytest
 
+from blastjob.core import employer_domains
 from blastjob.core import employer_jd as ej
 from blastjob.core import page_fetch as pf
 from blastjob.core import page_links as pl
@@ -454,6 +455,7 @@ def _page_html() -> str:
 
 
 async def test_the_careers_page_fallback_adopts_the_trusted_postings_text(cfg, conn):
+    employer_domains.set_employer_domains({"Acme": ["acme.com"]})  # full trust (#23)
     agg = _job(conn, review="kept")
     link = Link(f"page:{PAGE_HOST}", PAGE_URL, PAGE_URL)
 
@@ -491,6 +493,7 @@ async def _async_list():
 
 
 async def test_a_page_adoption_whose_posting_was_retitled_is_reverted(cfg, conn):
+    employer_domains.set_employer_domains({"Acme": ["acme.com"]})  # full trust (#23)
     agg = _job(conn, review="kept")
     conn.execute(
         "UPDATE jobs SET raw_jd=?, jd_source=?, jd_source_ref=?, jd_prior=?, jd_fetched_at=? "

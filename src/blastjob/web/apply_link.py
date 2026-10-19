@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from blastjob.core.agencies import is_agency
-from blastjob.core.closure_links import is_authoritative
+from blastjob.core.closure_links import Link, is_authoritative
+from blastjob.core.page_links import apply_url
 from blastjob.web.urls import safe_external_url
 
 # The user's pasted employer posting URL (web/routes_employer_link.py). DISPLAY-ONLY:
@@ -46,7 +47,8 @@ _TIER_OTHER = 3 + len(_AGGREGATOR_ORDER)
 _TIER_AGENCY = _TIER_OTHER + 1
 
 APPLY_COLS = (
-    "id, source, company, url, employer_link_source, employer_link_url, source_state, cluster_id"
+    "id, source, company, url, employer_link_source, employer_link_external_id, "
+    "employer_link_url, source_state, cluster_id"
 )
 
 
@@ -81,8 +83,12 @@ def _candidates(row: Any) -> list[tuple[int, str, str]]:
     link_url = _get(row, "employer_link_url")
     if link_source and is_authoritative(link_source):
         out.append((1, link_url, _board_label(link_source)))
-    elif link_source == MANUAL_LINK or link_source.startswith(PAGE_LINK_PREFIX):
+    elif link_source == MANUAL_LINK:
         out.append((2, link_url, EMPLOYER_SITE))
+    elif link_source.startswith(PAGE_LINK_PREFIX):
+        # Limited trust (#23) shows the ATS tenant root, never the page.
+        link = Link(link_source, _get(row, "employer_link_external_id"), link_url)
+        out.append((2, apply_url(link, _get(row, "company")), EMPLOYER_SITE))
     own = _get(row, "url")
     if is_authoritative(source):
         out.append((0, own, _board_label(source)))

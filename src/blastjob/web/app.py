@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from blastjob import config as cfg_mod
-from blastjob.core import closure, filing_lock
+from blastjob.core import closure, filing_lock, page_links
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
@@ -78,6 +78,9 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 # Jinja escapes quotes but not URL schemes, and base.html carries the CSRF token
 # on <body>, so a javascript: href would be a full takeover on a LAN-bound page.
 templates.env.filters["safe_url"] = safe_external_url
+# The employer link to show: a limited-trust careers page shows its ATS root (#23).
+templates.env.filters["employer_href"] = page_links.employer_href
+templates.env.filters["employer_label"] = page_links.employer_label
 # One rule for "we only hold a snippet", shared by the page and the tailor build.
 templates.env.globals["is_jd_snippet"] = dbc.is_jd_snippet
 # Employer-JD lookup (web/employer_jd.py): provenance label + whether the button may show.

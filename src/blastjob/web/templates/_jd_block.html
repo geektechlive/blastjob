@@ -10,7 +10,7 @@
   </h3>
   <pre class="jd">{{ job.raw_jd }}</pre>
   {# The employer's own posting beats the aggregator's page when we know it. #}
-  {% set full = (job.employer_link_url | safe_url) or (job.url | safe_url) %}
+  {% set full = (job | employer_href | safe_url) or (job.url | safe_url) %}
   {% if is_snippet %}
     {% if full %}
       <a class="ext" href="{{ full }}" target="_blank" rel="noopener noreferrer">open the full posting &rarr;</a>

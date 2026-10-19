@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import tests.geo_fixture as geo_fixture
-from blastjob.core import closure
+from blastjob.core import closure, employer_domains
 from blastjob.core.closure_links import Link, LinkDeps
 from blastjob.db import client as dbc
 from blastjob.discovery.base import RawPosting
@@ -632,6 +632,13 @@ def _li(conn, ext: str, *, review: str, company: str = "Fabrikam Services", **co
     return jid
 
 
+def _list_fabrikam(cfg) -> None:
+    """Confirm the careers host as Fabrikam's own: only then is its page evidence
+    (an unlisted page bound by its apply form proves nothing either way, #23)."""
+    cfg.discovery.employer_domains = {"Fabrikam Services": ["fabrikam-services.example"]}
+    employer_domains.set_employer_domains(cfg.discovery.employer_domains)
+
+
 def _page_linked(conn, review: str, app: str = "") -> int:
     return _li(
         conn,
@@ -651,6 +658,7 @@ def test_caps_were_raised_for_the_wider_sweep():
 
 
 async def test_surfaced_job_whose_employer_page_is_gone_is_closed_but_not_moved(cfg, conn):
+    _list_fabrikam(cfg)
     jid = _page_linked(conn, "surfaced")
     rec = Recorder(page_check=False)
 
@@ -668,6 +676,7 @@ async def test_surfaced_job_whose_employer_page_is_gone_is_closed_but_not_moved(
 
 
 async def test_kept_job_whose_employer_page_is_gone_moves_to_posting_closed(cfg, conn):
+    _list_fabrikam(cfg)
     jid = _page_linked(conn, "kept")
 
     await _run(cfg, conn, Recorder(page_check=False))
@@ -676,6 +685,7 @@ async def test_kept_job_whose_employer_page_is_gone_moves_to_posting_closed(cfg,
 
 
 async def test_an_inconclusive_page_check_keeps_the_verdict(cfg, conn):
+    _list_fabrikam(cfg)
     jid = _page_linked(conn, "queued")
 
     await _run(cfg, conn, Recorder(page_check=None))
@@ -694,6 +704,7 @@ async def test_a_queued_job_gets_searched(cfg, conn):
 
 
 async def test_a_page_link_found_for_a_surfaced_job_is_saved_and_verified(cfg, conn):
+    _list_fabrikam(cfg)
     jid = _li(conn, "s1", review="surfaced")
     link = Link("page:careers.fabrikam-services.example", FABRIKAM_URL, FABRIKAM_URL)
 
@@ -796,6 +807,7 @@ async def test_the_default_page_check_closes_on_a_410_from_the_employer(cfg, con
     page_links._safe_get (faked here, answering 410 from the linked host)."""
     from blastjob.core import page_fetch, page_links
 
+    _list_fabrikam(cfg)
     jid = _page_linked(conn, "surfaced")
     fetched: list[str] = []
 

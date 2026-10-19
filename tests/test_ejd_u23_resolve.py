@@ -13,6 +13,7 @@ import json
 import pytest
 
 from blastjob.core import closure_links as cl
+from blastjob.core import employer_domains
 from blastjob.core import page_fetch as pf
 from blastjob.core import page_links as pl
 from blastjob.core.closure_links import Link, LinkDeps
@@ -287,6 +288,16 @@ def test_workday_tenant_not_the_company_is_company_mismatch():
 # --- page links --------------------------------------------------------------------
 
 HOST = "careers.acme.com"
+
+
+@pytest.fixture(autouse=True)
+def _acme_owns_its_careers_domain():
+    """careers.acme.com is confirmed as Acme's own domain: a page there may
+    supply text. An unlisted page bound only by its apply form never does (#23,
+    tests/test_page_form_trust.py)."""
+    employer_domains.set_employer_domains({"Acme": ["acme.com"]})
+
+
 PAGE_URL = f"https://{HOST}/apply/jobs/details/AbC123"
 OTHER_URL = f"https://{HOST}/apply/jobs/details/ZzZ999"
 TRUSTED_TEXT = "<p>Run all of operations for Acme.</p>" + "<p>Own the P&L.</p>" * 50

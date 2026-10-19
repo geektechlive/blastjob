@@ -104,7 +104,8 @@ def pending_jobs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT id, company, title, url, alignment_score, review_state, "
         "geo_location_raw, geo_remote, comp_min, comp_max, comp_provenance, "
-        "cluster_id, source, source_state, employer_link_source, employer_link_url "
+        "cluster_id, source, source_state, employer_link_source, employer_link_external_id, "
+        "employer_link_url "
         "FROM jobs j WHERE source_state='active' AND notified_at='' "
         "AND review_state IN ('surfaced','queued') "
         "AND NOT (cluster_id IS NOT NULL AND EXISTS (SELECT 1 FROM jobs d "

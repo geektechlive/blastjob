@@ -416,6 +416,23 @@ async def check_page(link: Link, company: str, title: str, region: str) -> bool 
     return await page_links.check_page(link, company, title, region)
 
 
+@dataclass(frozen=True)
+class PageCheck:
+    """A careers-page probe: the verdict (True open, False gone, None no
+    evidence) and, for a limited page (#23) whose row lacks it, the ATS tenant
+    root read off that page ("" = nothing to store)."""
+
+    verdict: bool | None
+    tenant_root: str = ""
+
+
+async def probe_page(link: Link, company: str, title: str, region: str) -> PageCheck:
+    """core/page_links.probe_page: check_page plus the tenant root it saw."""
+    from blastjob.core import page_links
+
+    return await page_links.probe_page(link, company, title, region)
+
+
 async def page_description(
     link: Link, company: str, title: str, region: str
 ) -> tuple[str | None, str]:
@@ -484,6 +501,9 @@ class LinkDeps:
     check_link: Callable[[Link], Awaitable[bool | None]] = check_link
     find_page: Callable[..., Awaitable[Link | None]] = find_page
     check_page: Callable[[Link, str, str, str], Awaitable[bool | None]] = check_page
+    # The closure pass's page probe (verdict + tenant root, #23). None = derive
+    # it from `check_page` with no root, which is what a test fake gets.
+    probe_page: Callable[[Link, str, str, str], Awaitable[PageCheck]] | None = None
     fetch_workday_detail: Callable[[str, str], Awaitable[RawPosting | None]] = fetch_workday_detail
     page_description: Callable[[Link, str, str, str], Awaitable[tuple[str | None, str]]] = (
         page_description
@@ -591,6 +611,9 @@ def budgeted(deps: LinkDeps, budget: RequestBudget) -> LinkDeps:
         check_link=_metered_async(deps.check_link, budget, _link_units),
         find_page=_metered_async(deps.find_page, budget, UNITS_FIND_PAGE),
         check_page=_metered_async(deps.check_page, budget, UNITS_PAGE_FETCH),
+        probe_page=(
+            _metered_async(deps.probe_page, budget, UNITS_PAGE_FETCH) if deps.probe_page else None
+        ),
         fetch_workday_detail=_metered_async(deps.fetch_workday_detail, budget, 1),
         page_description=_metered_async(deps.page_description, budget, UNITS_PAGE_FETCH),
     )
@@ -618,6 +641,7 @@ def default_deps() -> LinkDeps:
         jina_api_key=os.environ.get("JINA_API_KEY", ""),
         fetch_board=cached_fetch,
         check_link=cached_check,
+        probe_page=probe_page,
     )
 
 
@@ -684,6 +708,10 @@ async def verified_description(
         return None, "manual"
     try:
         if link.source.startswith("page:"):
+            from blastjob.core import page_links  # late: it imports this module
+
+            if not page_links.full_trust(page_links.page_url(link), company):
+                return None, "company_mismatch"  # limited trust (#23); spend nothing
             return await deps.page_description(link, company, title, region)
         return await _board_description(link, company, title, region, deps)
     except BudgetExhausted:

@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
 
+from blastjob.core import page_links
 from blastjob.core import role_clusters as rc
 from blastjob.core import same_role as sr
 from blastjob.core.agencies import is_agency
@@ -144,7 +145,8 @@ def _cluster_rows(conn: sqlite3.Connection, job_id: int) -> list[sqlite3.Row]:
     """The job itself plus every other member of its cluster, in id order."""
     return conn.execute(
         "SELECT id, company, title, geo_city, geo_location_raw, source, url, cluster_id, "
-        "employer_link_source, employer_link_url, review_state, source_state, "
+        "employer_link_source, employer_link_external_id, employer_link_url, review_state, "
+        "source_state, "
         "COALESCE(application_state,'') AS application_state "
         "FROM jobs WHERE id = ? OR cluster_id = (SELECT cluster_id FROM jobs WHERE id = ?) "
         "ORDER BY id",
@@ -204,7 +206,10 @@ def detail_context(
             if own is not None and link_source == MANUAL_LINK
             else ""
         ),
-        "employer_link_auto": link_source if link_source != MANUAL_LINK else "",
+        # A limited careers page never prints its intermediary host (#23).
+        "employer_link_auto": (
+            page_links.employer_label(own) if own is not None and link_source != MANUAL_LINK else ""
+        ),
         "employer_link_error": "",
     }
 

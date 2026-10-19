@@ -61,6 +61,7 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
             active_model=providers.active_model(cfg),
             towns_text=sf.towns_text(cfg.discovery.towns),
             boards_text=sf.boards_text(cfg.discovery.target_boards),
+            employer_domains_text=sf.employer_domains_text(cfg.discovery.employer_domains),
             revision=cfg.settings_revision or "",
             **extra,
         )

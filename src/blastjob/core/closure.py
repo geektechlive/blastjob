@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from blastjob.core import closure_links
+from blastjob.core import closure_links, page_links
 from blastjob.core import events as app_events
 from blastjob.core.closure_links import Link, LinkDeps
 from blastjob.core.company import company_key
@@ -370,10 +370,17 @@ async def _check_existing_link(ctx: _Pass, row: sqlite3.Row) -> None:
         return
     ctx.probes += 1
     try:
-        is_open = await _probe(ctx, row, link)
+        is_open, root = await _probe(ctx, row, link)
     except Exception as e:  # noqa: BLE001 -- a failed probe is not evidence of closure
         log.warning("closure: probe failed for job %s (%s)", row["id"], type(e).__name__)
         return
+    if link.source.startswith("page:"):
+        _sync_page_url(ctx, row, link, root)
+        if page_links.is_limited(link, row["company"] or ""):
+            # No evidence either way (#23): not closed, and not "verified open"
+            # either; a close this page once caused is undone by _apply.
+            _apply(ctx, row, "unverifiable", checked=True)
+            return
     if is_open is not None:
         _apply(ctx, row, "verified_open" if is_open else "closed", checked=True)
 
@@ -420,13 +427,32 @@ def _revert_adopted_text(ctx: _Pass, row: sqlite3.Row) -> None:
         ctx.result.reverted_jd.append(row["id"])
 
 
-async def _probe(ctx: _Pass, row: sqlite3.Row, link: Link) -> bool | None:
-    """A page link re-verifies the employer, title and region on every check."""
-    if link.source.startswith("page:"):
-        return await ctx.deps.check_page(
-            link, row["company"] or "", row["title"] or "", row["geo_region"] or ""
-        )
-    return await ctx.deps.check_link(link)
+async def _probe(ctx: _Pass, row: sqlite3.Row, link: Link) -> tuple[bool | None, str]:
+    """(verdict, tenant root to store). A page link re-verifies the employer,
+    title and region on every check; only a page probe can report a root."""
+    if not link.source.startswith("page:"):
+        return await ctx.deps.check_link(link), ""
+    args = (link, row["company"] or "", row["title"] or "", row["geo_region"] or "")
+    if ctx.deps.probe_page is None:
+        return await ctx.deps.check_page(*args), ""
+    checked = await ctx.deps.probe_page(*args)
+    return checked.verdict, checked.tenant_root
+
+
+def _sync_page_url(ctx: _Pass, row: sqlite3.Row, link: Link, root: str) -> None:
+    """Keep a page link's shown URL in step with its trust level (#23): the page
+    for full trust, the ATS tenant root for limited. A row stored before #23
+    holds the page itself; its root is `root`, read off the page the probe just
+    fetched, so no search is spent. Never drops or re-keys the link."""
+    want = page_links.apply_url(link, row["company"] or "") or root
+    if not want or want == link.url:
+        return
+    ctx.conn.execute(
+        "UPDATE jobs SET employer_link_url=? WHERE id=? AND employer_link_source=? "
+        f"AND employer_link_external_id=?{_NOT_MANUAL}",
+        (want, row["id"], link.source, link.external_id),
+    )
+    ctx.conn.commit()
 
 
 async def _link_and_check(ctx: _Pass, row: sqlite3.Row) -> None:
@@ -461,6 +487,9 @@ async def _link_and_check(ctx: _Pass, row: sqlite3.Row) -> None:
         _apply(ctx, row, _fallback_verdict(row), checked=True)
         return
     _save_link(ctx, row["id"], link)
+    if page_links.is_limited(link, row["company"] or ""):
+        _apply(ctx, row, "unverifiable", checked=True)  # linked, but no evidence (#23)
+        return
     _apply(ctx, row, "verified_open", checked=True)  # just listed on the live board
 
 

@@ -18,6 +18,7 @@ import json
 import httpx
 import pytest
 
+from blastjob.core import employer_domains
 from blastjob.core import page_fetch as pf
 from blastjob.core import page_links as pl
 from blastjob.core.closure_links import Link
@@ -210,7 +211,14 @@ async def _check(page, **kw):
 
 @pytest.mark.parametrize("status", [404, 410])
 async def test_gone_status_from_the_same_host_is_closed(status):
+    # Only a page on the employer's own (listed) domain proves absence (#23).
+    employer_domains.set_employer_domains({COMPANY: ["groundmasters.com"]})
     assert await _check(_page(status, html="")) is False
+
+
+@pytest.mark.parametrize("status", [404, 410])
+async def test_gone_status_from_an_unlisted_form_bound_host_is_no_evidence(status):
+    assert await _check(_page(status, html="")) is None
 
 
 async def test_gone_after_a_cross_host_redirect_is_no_evidence():
@@ -220,7 +228,12 @@ async def test_gone_after_a_cross_host_redirect_is_no_evidence():
 
 
 async def test_open_posting_is_verified_open():
+    employer_domains.set_employer_domains({COMPANY: ["groundmasters.com"]})  # full trust (#23)
     assert await _check(_page()) is True
+
+
+async def test_an_unlisted_form_bound_page_is_not_verified_open():
+    assert await _check(_page()) is None
 
 
 async def test_past_valid_through_is_no_evidence():
@@ -299,7 +312,8 @@ async def test_aggregator_results_are_skipped():
     link, calls, _ = await _find(urls, {POSTING_URL: _page()})
 
     assert calls == [POSTING_URL]
-    assert link == Link(f"page:{HOST}", POSTING_URL, POSTING_URL)
+    # Bound only by its apply form: the link shows the ATS tenant root (#23).
+    assert link == Link(f"page:{HOST}", POSTING_URL, "https://northwindservices1.applytojob.com/")
 
 
 async def test_only_the_first_three_candidates_are_fetched():

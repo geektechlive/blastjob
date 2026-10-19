@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from blastjob.core import employer_domains
 from blastjob.models.config import BlastJobConfig, TargetBoard
 
 SECTIONS = ("core", "profile", "location", "search", "service")
@@ -39,6 +40,25 @@ def towns_text(towns: Mapping[str, list[float]]) -> str:
 
 def boards_text(boards: list[TargetBoard]) -> str:
     return "\n".join(f"{b.company}, {b.ats}, {b.token}" for b in boards)
+
+
+def employer_domains_text(domains: Mapping[str, list[str]]) -> str:
+    return "\n".join(", ".join([name, *hosts]) for name, hosts in domains.items())
+
+
+def parse_employer_domains(text: str) -> dict[str, list[str]]:
+    """'company, domain[, domain...]' per line. Bare hostnames only (#23)."""
+    out: dict[str, list[str]] = {}
+    for n, line in enumerate(lines(text), 1):
+        name, *hosts = [p.strip() for p in line.split(",")]
+        hosts = [h for h in hosts if h]
+        if not name or not hosts:
+            raise FormError(f"employer domains line {n}: expected 'company, domain[, domain...]'")
+        try:
+            out[name] = [employer_domains.normalize_domain(h) for h in hosts]
+        except ValueError as e:
+            raise FormError(f"employer domains line {n}: {e}") from e
+    return out
 
 
 def parse_towns(text: str) -> dict[str, list[float]]:
@@ -108,6 +128,7 @@ def _location(cfg: BlastJobConfig, form: Form) -> None:
 def _search(cfg: BlastJobConfig, form: Form) -> None:
     d = cfg.discovery
     d.target_boards = parse_boards(form.get("target_boards", ""))
+    d.employer_domains = parse_employer_domains(form.get("employer_domains", ""))
     d.adzuna_queries = lines(form.get("adzuna_queries", ""))
     d.adzuna_where = form.get("adzuna_where", "").strip()
     d.title_keep_terms = lines(form.get("title_keep_terms", ""))

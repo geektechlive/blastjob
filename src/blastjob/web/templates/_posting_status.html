@@ -19,8 +19,8 @@
   {% endif %}
   {% if job.employer_link_source %}
     <div class="posting-link">
-      checked on {{ job.employer_link_source }}
-      {% set href = job.employer_link_url | safe_url %}
+      checked on {{ job | employer_label }}
+      {% set href = job | employer_href | safe_url %}
       {% if href %}<a href="{{ href }}" target="_blank" rel="noopener noreferrer">employer posting</a>{% endif %}
     </div>
   {% endif %}

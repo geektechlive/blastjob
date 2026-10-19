@@ -73,6 +73,10 @@
     <textarea name="target_boards" rows="6">{{ boards_text }}</textarea>
     <small>ats is greenhouse, lever, ashby, workday or dayforce. Find tokens with <code>python -m blastjob.discovery.resolve "Company"</code>.</small>
   </label>
+  <label>Employer domains (one per line: <code>company, domain, domain...</code>)
+    <textarea name="employer_domains" rows="3">{{ employer_domains_text }}</textarea>
+    <small>Domains you have confirmed belong to that employer, bare hostnames only (e.g. <code>careers.example.com</code>). A careers page on one of them can close a job and supply its description; a page elsewhere that only carries the employer's apply form links to the employer's ATS instead and proves nothing.</small>
+  </label>
   <label class="checkbox">
     <input type="checkbox" name="enable_aggregators" {% if cfg.discovery.enable_aggregators %}checked{% endif %}> Enable Adzuna aggregator (needs a free key in your secrets file)
   </label>

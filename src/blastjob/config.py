@@ -58,11 +58,12 @@ def apply_runtime_settings(cfg: BlastJobConfig) -> BlastJobConfig:
     subject words, the secrets file). Called by every config load, so each
     request or run sees the current values; returns `cfg` for chaining."""
     from blastjob import secrets
-    from blastjob.core import agencies, company, network_views
+    from blastjob.core import agencies, company, employer_domains, network_views
     from blastjob.discovery import mailalerts
 
     d = cfg.discovery
     company.set_company_aliases(d.company_aliases)
+    employer_domains.set_employer_domains(d.employer_domains)
     agencies.set_extra_agencies(d.agency_companies)
     network_views.set_extra_agency_keywords(d.network_agency_keywords)
     mailalerts.set_alert_subject_terms(d.mail_alert_subject_terms)
