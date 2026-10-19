@@ -69,6 +69,9 @@ Two layers, both required before a PR:
    lower-confidence ones (common company names, long word-for-word overlaps with
    your work history). It exits non-zero on any FAIL. False positives can be
    listed, one per line, in `local/leak_allowlist.txt` (gitignored).
+   It also fails on the web domains of employers you kept or applied to, so
+   fixtures must invent domains as well as names: use `example.com` or a
+   `.example` host, never a real employer's careers site.
 
 To run the second check on every `git push` and block the push when it fails:
 

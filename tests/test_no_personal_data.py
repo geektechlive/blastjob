@@ -18,6 +18,7 @@ never matches its own scan.
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 import sqlite3
 import subprocess
@@ -539,3 +540,158 @@ def test_git_objects_uses_the_working_checkouts_allowlist(setup, capsys, tmp_pat
 
     assert code == 0, out
     assert f"allowlist: {allow} (1 terms)" in out
+
+
+# --- employer domains (issue #62) ---------------------------------------------
+# Invented domains, assembled at runtime so this file never matches itself.
+
+APPLIED_DOMAIN = "northwind-snow-co" + ".com"
+LISTED_DOMAIN = "tessaly-mills" + ".org"
+UNAPPLIED_DOMAIN = "quillon-grove" + ".net"
+
+
+def _domain_data_dir(root: Path) -> Path:
+    """A kept job on an employer careers host whose company name shares no
+    word with it, a kept job seen only through an aggregator and a shared ATS,
+    an undecided job on another host, and `discovery.employer_domains`."""
+    data = root / "data"
+    data.mkdir()
+    conn = sqlite3.connect(data / "blastjob.db")
+    conn.row_factory = sqlite3.Row
+    migrate(conn)
+    jobs = [
+        ("a1", "Halvorsen Freight", f"https://careers.{APPLIED_DOMAIN}/jobs/1"),
+        ("a2", "Pellworth Dairy", "https://www.indeed.com/viewjob?jk=1"),
+        ("a3", "Marrowby Glass", f"https://jobs.{UNAPPLIED_DOMAIN}/2"),
+    ]
+    for ext, company, url in jobs:
+        upsert_job(conn, source="t", external_id=ext, company=company, title="VP", url=url)
+    conn.execute("UPDATE jobs SET review_state = 'kept' WHERE external_id IN ('a1', 'a2')")
+    conn.execute(
+        "UPDATE jobs SET employer_link_source = 'workday:pellworth',"
+        " employer_link_url = 'https://pellworth.wd5.myworkdayjobs.com/en-US/careers'"
+        " WHERE external_id = 'a2'"
+    )
+    domains = {"Tessaly Mills": [LISTED_DOMAIN], "Example Widgets": ["jobs.example.com"]}
+    conn.execute(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, 'x')",
+        ("discovery.employer_domains", json.dumps(domains)),
+    )
+    conn.commit()
+    conn.close()
+    return data
+
+
+@pytest.fixture
+def domain_setup(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git not installed")
+    data = _domain_data_dir(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "README.md").write_text("A generic tool.\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "init")
+    return data, repo
+
+
+def test_applied_job_domain_in_a_tracked_fixture_fails(domain_setup, capsys):
+    data, repo = domain_setup
+    (repo / "test_page.py").write_text(
+        "ok = 1\n"
+        f'URL = "https://careers.{APPLIED_DOMAIN}/jobs/7"\n'
+        f"HOST = '{APPLIED_DOMAIN.upper()}'\n"
+    )
+    _git(repo, "add", ".")
+
+    code, out = _run(capsys, "--repo", str(repo), "--data-dir", str(data))
+
+    assert code == 1, out
+    assert "L2     FAIL applied_domain" in out
+    assert f"L3     FAIL applied_domain: {APPLIED_DOMAIN}" in out
+
+
+def test_listed_employer_domain_fails(domain_setup, capsys):
+    data, repo = domain_setup
+    (repo / "notes.md").write_text(f"see apply.{LISTED_DOMAIN}/x\n")
+    _git(repo, "add", ".")
+
+    code, out = _run(capsys, "--repo", str(repo), "--data-dir", str(data))
+
+    assert code == 1, out
+    assert f"L1     FAIL employer_domain: {LISTED_DOMAIN}" in out
+
+
+def test_domain_inside_a_longer_hostname_or_word_does_not_match(domain_setup, capsys):
+    data, repo = domain_setup
+    (repo / "notes.md").write_text(
+        f"x{APPLIED_DOMAIN}\n"
+        f"{APPLIED_DOMAIN}munity\n"
+        f"{APPLIED_DOMAIN}.au\n"
+        f"{APPLIED_DOMAIN}-mirror.org\n"
+        "northwind snow co com\n"
+    )
+    _git(repo, "add", ".")
+
+    code, out = _run(capsys, "--repo", str(repo), "--data-dir", str(data))
+
+    assert code == 0, out
+
+
+def test_aggregator_ats_reserved_and_unapplied_hosts_are_never_terms(domain_setup):
+    data, _ = domain_setup
+
+    personal = leak.build_personal(data, leak.VENDOR_ALLOWLIST)
+
+    assert dict(personal.domains) == {
+        f"careers.{APPLIED_DOMAIN}": "applied_domain",
+        APPLIED_DOMAIN: "applied_domain",
+        LISTED_DOMAIN: "employer_domain",
+    }
+
+
+def test_allowlist_suppresses_a_domain(domain_setup, capsys):
+    data, repo = domain_setup
+    (repo / "notes.md").write_text(f"https://{APPLIED_DOMAIN}/\n")
+    _git(repo, "add", ".")
+    allow = repo / "local" / "leak_allowlist.txt"
+    allow.parent.mkdir()
+    allow.write_text(f"{APPLIED_DOMAIN}\ncareers.{APPLIED_DOMAIN}\n")
+
+    code, out = _run(capsys, "--repo", str(repo), "--data-dir", str(data))
+
+    assert code == 0, out
+
+
+def test_no_settings_table_still_reads_job_domains(domain_setup):
+    data, _ = domain_setup
+    conn = sqlite3.connect(data / "blastjob.db")
+    conn.execute("DROP TABLE settings")
+    conn.commit()
+    conn.close()
+
+    personal = leak.build_personal(data, leak.VENDOR_ALLOWLIST)
+
+    assert APPLIED_DOMAIN in dict(personal.domains)
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("careers.acme" + ".com", {"careers.acme" + ".com", "acme" + ".com"}),
+        ("jobs.acme.co" + ".uk", {"jobs.acme.co" + ".uk", "acme.co" + ".uk"}),
+        ("Acme" + ".COM.", {"acme" + ".com"}),
+        ("acme.github" + ".io", {"acme.github" + ".io"}),
+        ("jobs.example" + ".com", set()),
+        ("shop.example", set()),
+        ("api.test", set()),
+        ("localhost", set()),
+        ("10.0.0.1", set()),
+        ("uk.indeed" + ".com", set()),
+        ("acme.wd5.myworkdayjobs" + ".com", set()),
+        ("boards.greenhouse" + ".io", set()),
+    ],
+)
+def test_domain_candidates_take_host_and_registrable_domain(host, expected):
+    assert leak.domain_candidates(host) == expected

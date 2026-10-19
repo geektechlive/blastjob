@@ -26,6 +26,13 @@ Tiers
       job count: your application history is the personal part)
     Company names are also tried without parentheticals and without a
     trailing " - Division" segment.
+    - employer web domains: the hosts of jobs you kept or applied to (posting
+      URL, employer link, careers page; `applied_domain`) and the domains in
+      `discovery.employer_domains` (`employer_domain`). Each host and its
+      registrable domain is a term, matched case-insensitively as a whole
+      hostname (a subdomain matches; a longer name or word does not). Job
+      boards, aggregators, shared ATS hosts and reserved names (example.com,
+      *.example, *.test, *.invalid, localhost) never become terms.
   WARN (review; does not fail):
     - other company names (single common words and names under 4
       characters are skipped: they would fire on ordinary code)
@@ -50,6 +57,8 @@ there, only the generic detectors run.
 from __future__ import annotations
 
 import argparse
+import functools
+import json
 import os
 import re
 import sqlite3
@@ -59,6 +68,10 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+from blastjob.core.employer_domains import SHARED_HOSTS
+from blastjob.core.page_fetch import host_of, is_aggregator_host
+from blastjob.core.page_links import is_shared_ats_host
 
 FAIL = "FAIL"
 WARN = "WARN"
@@ -338,6 +351,75 @@ def owner_terms(name: str, allow: frozenset[str]) -> list[Term]:
     return terms
 
 
+# --- employer domains --------------------------------------------------------
+
+RESERVED_DOMAINS = ("example.com", "example.org", "example.net")
+# Second-level labels under a two-letter country TLD that are public suffixes
+# ("acme.co.uk" is registrable, "co.uk" is not). A heuristic, not the PSL.
+SECOND_LEVEL_LABELS = frozenset({"co", "com", "org", "net", "ac", "gov", "edu"})
+_HOSTNAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
+_HOST_CHAR = r"[a-z0-9_-]"
+
+
+def _clean_host(raw: str) -> str:
+    return raw.strip().lower().rstrip(".")
+
+
+def _under(host: str, domain: str) -> bool:
+    return host == domain or host.endswith("." + domain)
+
+
+def registrable_domain(host: str) -> str:
+    labels = host.split(".")
+    two_part = len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in SECOND_LEVEL_LABELS
+    return ".".join(labels[-3:] if two_part else labels[-2:])
+
+
+def is_personal_host(host: str) -> bool:
+    """Could `host` identify one employer? Never a job board, aggregator,
+    shared ATS or shared hosting domain, IP address or reserved name."""
+    if not _HOSTNAME_RE.fullmatch(host) or not host.rsplit(".", 1)[-1].isalpha():
+        return False  # also rules out IPv4 literals
+    if host.rsplit(".", 1)[-1] in RESERVED_TLDS:
+        return False
+    if any(_under(host, d) for d in RESERVED_DOMAINS) or host in SHARED_HOSTS:
+        return False
+    return not (is_aggregator_host(host) or is_shared_ats_host(host))
+
+
+def domain_candidates(host: str) -> set[str]:
+    """`host` and its registrable domain, each only if it is personal."""
+    host = _clean_host(host)
+    if not is_personal_host(host):
+        return set()
+    return {d for d in (host, registrable_domain(host)) if is_personal_host(d)}
+
+
+def domain_terms(
+    applied: Iterable[str], listed: Iterable[str], allow: frozenset[str]
+) -> tuple[tuple[str, str], ...]:
+    """(domain, kind) pairs; a domain both applied to and listed is `applied_domain`."""
+    out: dict[str, str] = {}
+    for hosts, kind in ((listed, "employer_domain"), (applied, "applied_domain")):
+        for host in hosts:
+            for d in domain_candidates(host):
+                if normalize(d) not in allow:
+                    out[d] = kind
+    return tuple(sorted(out.items()))
+
+
+@functools.lru_cache(maxsize=4)
+def _domain_matcher(domains: tuple[tuple[str, str], ...]) -> tuple[re.Pattern[str], dict[str, str]]:
+    """One pattern over every domain: a subdomain prefix is allowed, a longer
+    hostname or word on either side is not (`acme.com.au`, `xacme.com`)."""
+    names = sorted((d for d, _ in domains), key=len, reverse=True)
+    alt = "|".join(re.escape(d) for d in names)
+    pattern = re.compile(
+        rf"(?<!{_HOST_CHAR})(?:[a-z0-9-]+\.)*(?P<d>{alt})(?!{_HOST_CHAR}|\.[a-z0-9])"
+    )
+    return pattern, dict(domains)
+
+
 # --- reading the user's data -------------------------------------------------
 
 
@@ -372,12 +454,72 @@ class UserData:
     companies: Counter[str]  # display name -> jobs naming it
     applied: frozenset[str]  # companies with a kept or applied job
     people: list[str]
+    applied_hosts: frozenset[str] = frozenset()  # hosts of kept/applied jobs' links
+    listed_hosts: frozenset[str] = frozenset()  # discovery.employer_domains
 
 
-_APPLIED_SQL = (
-    "SELECT DISTINCT company FROM jobs WHERE review_state = 'kept'"
+_APPLIED_COLS = frozenset({"review_state", "application_state", "applied_at"})
+_APPLIED_WHERE = (
+    "review_state = 'kept'"
     " OR COALESCE(application_state, '') != '' OR COALESCE(applied_at, '') != ''"
 )
+_APPLIED_SQL = f"SELECT DISTINCT company FROM jobs WHERE {_APPLIED_WHERE}"
+# Job columns that can hold an employer URL; `employer_link_source` holds
+# `page:<host>` for a careers-page link.
+JOB_URL_COLUMNS = (
+    "url",
+    "employer_link_url",
+    "employer_link_external_id",
+    "jd_source_ref",
+    "employer_link_source",
+)
+PAGE_LINK_PREFIX = "page:"
+EMPLOYER_DOMAINS_KEY = "discovery.employer_domains"
+
+
+def _host_in(value: object) -> str:
+    """The host a stored link value names, or ""."""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if value.startswith(PAGE_LINK_PREFIX):
+        return _clean_host(value[len(PAGE_LINK_PREFIX) :])
+    if value.lower().startswith(("http://", "https://")):
+        return host_of(value)
+    return ""
+
+
+def _applied_hosts(conn: sqlite3.Connection, job_cols: set[str]) -> frozenset[str]:
+    cols = [c for c in JOB_URL_COLUMNS if c in job_cols]
+    if not cols or not _APPLIED_COLS <= job_cols:
+        return frozenset()
+    sql = f"SELECT {', '.join(cols)} FROM jobs WHERE {_APPLIED_WHERE}"  # noqa: S608
+    hosts = {_host_in(v) for row in conn.execute(sql) for v in row}
+    return frozenset(h for h in hosts if h)
+
+
+def _listed_hosts(conn: sqlite3.Connection) -> frozenset[str]:
+    """Every domain in `discovery.employer_domains` (company -> [domain])."""
+    if not {"key", "value"} <= _columns(conn, "settings"):
+        return frozenset()
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (EMPLOYER_DOMAINS_KEY,))
+    found = row.fetchone()
+    if not found:
+        return frozenset()
+    try:
+        mapping = json.loads(found[0])
+    except (TypeError, json.JSONDecodeError) as exc:
+        print(f"warning: {EMPLOYER_DOMAINS_KEY} is not valid JSON ({exc})", file=sys.stderr)
+        return frozenset()
+    if not isinstance(mapping, dict):
+        return frozenset()
+    return frozenset(
+        d.strip().lower()
+        for domains in mapping.values()
+        if isinstance(domains, list)
+        for d in domains
+        if isinstance(d, str) and d.strip()
+    )
 
 
 def read_db(db: Path) -> UserData:
@@ -404,9 +546,11 @@ def read_db(db: Path) -> UserData:
             people += [n for (n,) in conn.execute("SELECT name FROM contacts") if n]
         if "full_name" in _columns(conn, "network_contacts"):
             people += [n for (n,) in conn.execute("SELECT full_name FROM network_contacts") if n]
+        applied_hosts = _applied_hosts(conn, job_cols)
+        listed_hosts = _listed_hosts(conn)
     finally:
         conn.close()
-    return UserData(companies, applied, people)
+    return UserData(companies, applied, people, applied_hosts, listed_hosts)
 
 
 def load_allowlist(path: Path) -> frozenset[str]:
@@ -422,12 +566,14 @@ class Personal:
     terms: dict[str, list[Term]]  # first word -> terms starting with it
     literals: tuple[str, ...]  # raw, case-insensitive (a non-macOS home dir)
     shingles: frozenset[tuple[str, ...]]
+    domains: tuple[tuple[str, str], ...] = ()  # (domain, kind)
 
 
 def build_personal(data_dir: Path, allow: frozenset[str]) -> Personal:
     terms: list[Term] = []
     literals: set[str] = set()
     shingles: frozenset[tuple[str, ...]] = frozenset()
+    domains: tuple[tuple[str, str], ...] = ()
     wh_path = data_dir / "work_history.md"
     if wh_path.is_file():
         text = wh_path.read_text(encoding="utf-8", errors="replace")
@@ -443,6 +589,7 @@ def build_personal(data_dir: Path, allow: frozenset[str]) -> Personal:
         user = read_db(db)
         terms += company_terms(user.companies, allow, user.applied)
         terms += person_terms(user.people, "contact", allow, MIN_CONTACT_NAME_WORDS)
+        domains = domain_terms(user.applied_hosts, user.listed_hosts, allow)
     # macOS homes are already caught by the /Users/<name> detector.
     home = str(Path.home())
     if home not in ("/", "") and not home.startswith("/Users/"):
@@ -450,7 +597,7 @@ def build_personal(data_dir: Path, allow: frozenset[str]) -> Personal:
     index: dict[str, list[Term]] = defaultdict(list)
     for t in terms:
         index[t.words[0]].append(t)
-    return Personal(dict(index), tuple(sorted(literals)), shingles)
+    return Personal(dict(index), tuple(sorted(literals)), shingles, domains)
 
 
 # --- scanning ----------------------------------------------------------------
@@ -492,6 +639,10 @@ def scan_text(source: str, text: str, personal: Personal, allow: frozenset[str])
         for lit in personal.literals:
             if lit in lowered:
                 add(lineno, FAIL, "literal", lit)
+        if personal.domains:
+            pattern, domain_kinds = _domain_matcher(personal.domains)
+            for m in pattern.finditer(lowered):
+                add(lineno, FAIL, domain_kinds[m.group("d")], m.group("d"))
         words = normalize(line).split()
         for term in _term_hits(words, personal.terms):
             add(lineno, term.tier, term.kind, term.display)
