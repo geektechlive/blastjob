@@ -12,10 +12,82 @@ resume, cover letter and interview prep pack for the ones you keep.
 - **Local-only.** It runs on your machine, binds to `127.0.0.1` by default, and
   keeps your data out of this repo.
 
-> **Start with [SETUP.md](SETUP.md).** The app ships empty: no candidate profile,
-> no location, no target companies. SETUP.md is written so an AI assistant can run
-> the setup interview with you and write your answers into your settings. Matching
-> makes no LLM calls until your target titles are set.
+The app ships empty: no candidate profile, no location, no target companies.
+Follow the Quickstart below, or open [SETUP.md](SETUP.md) with an AI assistant
+and let it walk you through the full setup interview.
+
+## Quickstart
+
+You need macOS or Linux, Python 3.11 to 3.14, [uv](https://docs.astral.sh/uv/),
+and one LLM: a logged-in [Claude Code](https://claude.ai/code) `claude` CLI (no
+key needed), or an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. PDF export also
+needs pango (`brew install pango`); Markdown and DOCX work without it.
+
+1. Install, and check what's missing:
+
+   ```bash
+   git clone https://github.com/geektechlive/blastjob && cd blastjob
+   uv sync
+   uv run blastjob setup doctor
+   ```
+
+   The doctor lists what still needs doing, with a fix for each item.
+
+2. Create the secrets file, even if it stays empty for now:
+
+   ```bash
+   mkdir -p ~/.blastjob && touch ~/.blastjob/secrets.env && chmod 600 ~/.blastjob/secrets.env
+   ```
+
+3. Say what you're looking for and where you live (your own values here):
+
+   ```bash
+   uv run blastjob setup set candidate.target_titles '["Director of Data Engineering", "Head of Data"]'
+   uv run blastjob setup set candidate.seniority "director"
+   uv run blastjob setup set candidate.field "data engineering"
+   uv run blastjob setup set discovery.home_location "Springfield, OH"
+   uv run blastjob setup set discovery.home_state OH
+   uv run blastjob setup set discovery.home_lat 39.92
+   uv run blastjob setup set discovery.home_lon -83.81
+   uv run blastjob setup set discovery.towns '{"springfield": [39.92, -83.81]}'
+   uv run blastjob setup set discovery.remote_ok true
+   ```
+
+   Nothing is scored until `candidate.target_titles` is set. `discovery.towns`
+   lists every town you'd work in, lowercased, with its coordinates. You can
+   also fill these in on the cockpit's Settings page after step 5.
+
+4. Decide where your documents go. The default is `~/Documents/blastjob`, which
+   syncs to iCloud on a Mac with "Desktop & Documents" turned on. To use another
+   folder:
+
+   ```bash
+   uv run blastjob setup set paths.output_dir ~/blastjob-packets
+   ```
+
+5. Start the cockpit, then add your resumes at
+   http://127.0.0.1:8765/work-history/ingest:
+
+   ```bash
+   uv run blastjob-web
+   ```
+
+   Read the merged work history it produces and correct it at `/work-history`.
+   Every resume is built from it.
+
+6. Add job sources in the cockpit's Settings page (`/settings`) or with
+   `setup set`: company job boards, job-alert email, Adzuna. SETUP.md section
+   3c covers each one.
+
+7. Optional: run discovery every morning and keep the cockpit always on (macOS):
+
+   ```bash
+   sh scripts/install-launchd.sh
+   ```
+
+Run `uv run blastjob setup doctor` again at any point. Once your work history
+and target titles are in, the only items it still lists are for features you
+haven't turned on.
 
 ---
 
@@ -116,8 +188,8 @@ file (if you moved it) and the output folder.
 **The privacy rule:** this repository holds code and generic docs only. Your work
 history, settings, database, documents, contacts and secrets never go into it.
 If you fork it, keep personal notes in `CLAUDE.local.md` and `local/` (both
-gitignored), and run `uv run python scripts/check_no_personal_data.py` before you
-push.
+gitignored), and run `sh scripts/install-git-hooks.sh` once so every push runs
+`scripts/check_no_personal_data.py` first and stops if it finds your data.
 
 The cockpit has no login. It binds `127.0.0.1` unless you choose otherwise.
 

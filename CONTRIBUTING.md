@@ -70,6 +70,16 @@ Two layers, both required before a PR:
    your work history). It exits non-zero on any FAIL. False positives can be
    listed, one per line, in `local/leak_allowlist.txt` (gitignored).
 
+To run the second check on every `git push` and block the push when it fails:
+
+```bash
+sh scripts/install-git-hooks.sh
+```
+
+It installs a pre-push hook in your clone only. If you already have a pre-push
+hook, it adds one line to the top of it rather than replacing it. Skip it for
+one push with `git push --no-verify`, after you have read the findings.
+
 These are pattern and list checks. They catch the common ways personal data
 leaks; they are not a general secret scanner. Review your own diff too.
 

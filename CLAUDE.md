@@ -144,6 +144,7 @@ uv run --extra dev ruff check src tests
 uv run --extra dev ruff format src tests
 uv run --extra dev mypy                     # whole tree; zero errors
 uv run python scripts/check_no_personal_data.py   # leak check against YOUR data (see CONTRIBUTING.md)
+sh scripts/install-git-hooks.sh                    # run that check on every git push (clone-local hook)
 
 # Coverage (no omit config: everything counts)
 uv run --extra dev pytest --cov=src/blastjob --cov-report=term-missing tests/
