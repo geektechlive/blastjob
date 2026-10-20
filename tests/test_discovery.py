@@ -55,6 +55,12 @@ def test_split_location():
     assert split_location("Remote - US") == ("US", "")
 
 
+def test_split_location_takes_first_semicolon_segment():
+    assert split_location("Columbus, OH; Austin, TX") == ("Columbus", "OH")
+    assert split_location("Columbus, OH ;") == ("Columbus", "OH")
+    assert split_location("; Austin, TX") == ("Austin", "TX")
+
+
 # ---------- adapter parsers ----------
 
 

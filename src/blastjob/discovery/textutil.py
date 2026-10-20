@@ -129,10 +129,12 @@ def normalize_region(region: str) -> str:
 
 def split_location(location_raw: str) -> tuple[str, str]:
     """Best-effort (city, region) from a free-form location string like
-    'Springfield, OH' or 'Remote - US'. Returns ('', '') when unclear."""
-    if not location_raw:
+    'Springfield, OH' or 'Remote - US'. Returns ('', '') when unclear. A multi-location
+    string joined with ';' ('Columbus, OH; Austin, TX') yields its first segment only."""
+    first = next((s for s in location_raw.split(";") if s.strip()), "")
+    if not first:
         return "", ""
-    cleaned = location_raw.replace("Remote", "").strip(" -–,")
+    cleaned = first.replace("Remote", "").strip(" -–,")
     parts = [p.strip() for p in cleaned.split(",") if p.strip()]
     if len(parts) >= 2:
         return parts[0], normalize_region(parts[1])
