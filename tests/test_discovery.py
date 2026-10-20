@@ -467,3 +467,19 @@ def test_cluster_fingerprint_ignores_corporate_suffixes():
         city="Springfield",
     )
     assert cluster_fingerprint(a) == cluster_fingerprint(b)
+
+
+def test_is_excluded_matches_whole_words_only():
+    from blastjob.discovery.pipeline import _is_excluded
+
+    assert _is_excluded("Meta Platforms", ["Meta"])
+    assert _is_excluded("META", ["meta"])
+    assert not _is_excluded("Metavante", ["Meta"])
+    assert not _is_excluded("Intelerad", ["Intel"])
+    # multi-word terms match as a phrase on word boundaries
+    assert _is_excluded("The Woodhaven Analytics Group", ["Woodhaven Analytics"])
+    assert not _is_excluded("Woodhaven Analyticsco", ["Woodhaven Analytics"])
+    # punctuation in a term is literal and still bounded by non-word characters
+    assert _is_excluded("AT&T Services", ["AT&T"])
+    assert _is_excluded("Acme, Inc.", ["Acme, Inc."])
+    assert not _is_excluded("Acme", ["", "  "])

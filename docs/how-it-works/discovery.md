@@ -20,7 +20,7 @@ Every source is optional and every default is empty or off, so a fresh install f
 
 ATS boards are listed in `discovery.target_boards` (company, ATS, token). Adzuna runs only when `discovery.enable_aggregators` is on, alert email only when `discovery.mail_alerts_enabled` is on, and Apple only when `discovery.apple_queries` is set. The Apple source exists because one user asked for it; it reads the public search pages through the Jina reader.
 
-There is no scraping and no browser automation. Every source is a public JSON endpoint, an email the user receives, or a page read through the Jina reader. `discovery.exclude_companies` (a case-insensitive substring match on the company name) drops postings before they reach the database.
+There is no scraping and no browser automation. Every source is a public JSON endpoint, an email the user receives, or a page read through the Jina reader. `discovery.exclude_companies` (a case-insensitive whole-word match on the company name: "Meta" drops "Meta Platforms" but not "Metavante") drops postings before they reach the database.
 
 The source is namespaced per board (`workday:{tenant}`, `greenhouse:{token}`), so one board's outage can never stale-mark another board's postings.
 

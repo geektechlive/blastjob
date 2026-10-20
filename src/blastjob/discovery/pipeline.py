@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -282,8 +283,15 @@ def build_search_firm_adapter(
 
 
 def _is_excluded(company: str, excludes: list[str]) -> bool:
+    """Whole-word match, case-insensitive: 'Meta' drops 'Meta Platforms', not 'Metavante'.
+    Like the title drop terms, but bounded by non-word characters rather than `\\b`, so a
+    term that starts or ends in punctuation ('Acme, Inc.') still matches."""
     c = company.lower()
-    return any(x.lower() in c for x in excludes if x)
+    for x in excludes:
+        term = (x or "").strip().lower()
+        if term and re.search(rf"(?<!\w){re.escape(term)}(?!\w)", c):
+            return True
+    return False
 
 
 def _assign_cluster(conn: sqlite3.Connection, fingerprint: str) -> int:
