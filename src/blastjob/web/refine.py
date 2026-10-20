@@ -19,7 +19,7 @@ import logging
 from blastjob import config as cfg_mod
 from blastjob.core import filing_lock
 from blastjob.core.paths import locate
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.web.runtime import Run
 
 log = logging.getLogger(__name__)
@@ -178,12 +178,13 @@ def make_refine_work(
         async with filing_lock.shared_async(root):
             run_dir = locate(artifact_dir, root)
         run.emit("log", f"Revising the resume in {run_dir.name}...")
+        tracker = CostTracker()
         try:
             new_path, fit = await run_refine(
                 run_dir,
                 feedback,
                 cfg,
-                CostTracker(),
+                tracker,
                 on_text=lambda t: run.emit("output", t),
                 **who,
             )
@@ -204,7 +205,8 @@ def make_refine_work(
         run.emit(
             "log",
             f"Saved {new_path.name}"
-            + (f" — groundedness now {score}" if score is not None else " — not re-scored"),
+            + (f" — groundedness now {score}" if score is not None else " — not re-scored")
+            + f". Cost {describe_cost(tracker.total_call_cost)}.",
         )
         if new_path.parent.name == "quarantine":
             run.emit(

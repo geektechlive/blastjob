@@ -136,7 +136,7 @@ async def employer_jd_cli(
     and stale kept rows. No daily_runs row, nothing sent."""
     from blastjob import secrets as secrets_mod
     from blastjob.core import employer_jd
-    from blastjob.llm.cost import CostTracker
+    from blastjob.llm.cost import CostTracker, describe_cost
     from blastjob.matching import rescore
 
     secrets_mod.load_secrets_env()
@@ -160,7 +160,7 @@ async def employer_jd_cli(
     return (
         f"{report}\n\nStored {len(res.upgraded)}, reverted {len(res.reverted)}; "
         f"re-scored {done} ({len(counts.failed)} failed); "
-        f"{res.requests_used} requests used; cost ${cost.total_cost:.4f}"
+        f"{res.requests_used} requests used; cost {describe_cost(cost.total_call_cost)}"
     )
 
 
@@ -172,7 +172,7 @@ def refetch_workday_locations_cli(
     import asyncio
 
     from blastjob.discovery import workday_locations as wl
-    from blastjob.llm.cost import CostTracker
+    from blastjob.llm.cost import CostTracker, describe_cost
     from blastjob.matching.pipeline import run_matching
 
     fixes = asyncio.run(wl.plan(conn, cfg))
@@ -182,7 +182,10 @@ def refetch_workday_locations_cli(
     report = wl.format_report(fixes, applied=changed)
     if changed:
         res = asyncio.run(run_matching(cfg, conn, CostTracker(), job_ids=changed))
-        report += f"\nscored {res.scored}: surfaced {res.surfaced}, queued {res.queued}"
+        report += (
+            f"\nscored {res.scored}: surfaced {res.surfaced}, queued {res.queued}; "
+            f"cost {describe_cost(res.cost)}"
+        )
     return report
 
 

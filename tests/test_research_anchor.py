@@ -52,6 +52,10 @@ class _Stream:
 
         return _iter()
 
+    async def get_final_message(self):
+        # No usage block: the distill call's cost is unknown, which must not crash.
+        return type("Final", (), {"usage": None})()
+
 
 def _profile_reply(**over) -> str:
     d = {

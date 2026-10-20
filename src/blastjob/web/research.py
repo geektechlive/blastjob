@@ -44,7 +44,7 @@ from blastjob.core.research_facts import strip_instructions
 from blastjob.core.research_match import JobContext
 from blastjob.db import client as dbc
 from blastjob.llm import caching
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, cost_from_usage, describe_cost
 from blastjob.llm.providers import make_stream
 from blastjob.matching.scorer import _extract_json
 from blastjob.models.config import BlastJobConfig
@@ -208,7 +208,23 @@ async def research_company(
     """Profile `company` from pages anchored to it. `contexts` are the company's
     postings (`web/research_context.company_job_contexts`); the first one's
     description is what an identity judgment reads. Raises IdentityNotConfirmed
-    when no page is tied to the employer."""
+    when no page is tied to the employer. Whatever the run's model calls cost is
+    logged on every exit, even a refusal (docs/how-it-works/llm.md)."""
+    tracker = CostTracker()
+    try:
+        return await _research_company(cfg, company, contexts, emit, tracker)
+    finally:
+        if tracker.calls:
+            emit("log", f"Cost {describe_cost(tracker.total_call_cost)}.")
+
+
+async def _research_company(
+    cfg: BlastJobConfig,
+    company: str,
+    contexts: Sequence[JobContext],
+    emit,
+    tracker: CostTracker,
+) -> co.CompanyProfile | None:
     from blastjob.secrets import load_secrets_env
 
     load_secrets_env()
@@ -239,9 +255,7 @@ async def research_company(
     if not fetched:
         raise IdentityNotConfirmed(company)
     emit("log", "Checking which pages are about this company...")
-    matched, notes = await packet_research.match_pages(
-        cfg, ctxs[0], anchor_list, fetched, CostTracker()
-    )
+    matched, notes = await packet_research.match_pages(cfg, ctxs[0], anchor_list, fetched, tracker)
     if not matched:
         raise IdentityNotConfirmed(company)
     judged = bool(notes)
@@ -259,6 +273,8 @@ async def research_company(
     async with stream:
         async for chunk in stream.text_stream:
             text += chunk
+        final = await stream.get_final_message()
+    tracker.record(cost_from_usage(final.usage, cfg.pricing))
     profile = parse_profile(text, company, set(results))
     if profile is None:
         return None

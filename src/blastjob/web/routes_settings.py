@@ -278,14 +278,18 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
 def _make_ingest_work(spool_dir: Path, load_config: Callable[[], BlastJobConfig]):
     async def work(run: Run):
         from blastjob.core.ingest import run_ingestion
-        from blastjob.llm.cost import CostTracker
+        from blastjob.llm.cost import CostTracker, describe_cost
 
         cfg = load_config()
         try:
+            tracker = CostTracker()
             path = await run_ingestion(
-                spool_dir, cfg, CostTracker(), on_text=lambda t: run.emit("output", t)
+                spool_dir, cfg, tracker, on_text=lambda t: run.emit("output", t)
             )
-            run.emit("log", f"Work history saved to {path}")
+            run.emit(
+                "log",
+                f"Work history saved to {path}. Cost {describe_cost(tracker.total_call_cost)}.",
+            )
             return {"path": str(path)}
         finally:
             shutil.rmtree(spool_dir, ignore_errors=True)

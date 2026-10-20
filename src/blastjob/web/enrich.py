@@ -11,7 +11,7 @@ from __future__ import annotations
 from blastjob import config as cfg_mod
 from blastjob.core import network_enrich as ne
 from blastjob.db import client as dbc
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.web import progress as progress_mod
 from blastjob.web.runtime import Run
 
@@ -43,12 +43,12 @@ def make_enrich_work(load_config=cfg_mod.load_config, limit: int | None = None):
                     ),
                 )
 
-            res = await ne.run_enrichment(
-                cfg, conn, CostTracker(), on_progress=on_progress, limit=limit
-            )
+            tracker = CostTracker()
+            res = await ne.run_enrichment(cfg, conn, tracker, on_progress=on_progress, limit=limit)
             summary = (
                 f"Classified {res.pairs_classified} of {res.pairs_sent} pairs "
-                f"across {res.batches} batches; {res.contacts_updated} contacts updated."
+                f"across {res.batches} batches; {res.contacts_updated} contacts updated. "
+                f"Cost {describe_cost(tracker.total_call_cost)}."
             )
             if res.failed_batches:
                 summary += f" {res.failed_batches} batch(es) failed and stay pending."

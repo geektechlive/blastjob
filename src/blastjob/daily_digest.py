@@ -218,6 +218,7 @@ def format_run_footer(res: DailyResult) -> str:
         scoring_str = (
             f" · scored {res.scored} in {res.scoring_batches} batches"
             f" / {format_duration(res.scoring_s)}"
-            f" · cost {describe_cost(res.scoring_cost)}"
         )
+    if res.has_cost:
+        scoring_str += f" · cost {describe_cost(res.total_cost)}"
     return f"_Run {format_duration(res.duration_s)} · {fetched_str}{scoring_str}_"

@@ -59,7 +59,7 @@ from blastjob.daily_digest import (  # noqa: F401 -- re-exported: daily.build_di
 )
 from blastjob.daily_tools import recluster_cli
 from blastjob.db import client as dbc
-from blastjob.llm.cost import CallCost, CostTracker, describe_cost
+from blastjob.llm.cost import CallCost, CostTracker, aggregate_calls, describe_cost
 from blastjob.models.config import BlastJobConfig
 from blastjob.web.apply_link import apply_links_for
 from blastjob.web.stage_lists import followups_due
@@ -94,6 +94,8 @@ class DailyResult:
     # What this run's scoring calls cost (unknown if any usage was unknown). Shown in
     # the footer and the run log; not stored in daily_runs.
     scoring_cost: CallCost = field(default_factory=CallCost)
+    # The employer-description re-score pass (daily_employer_jd.lookup_step), same rules.
+    rescore_cost: CallCost = field(default_factory=CallCost)
     new_jobs: int = 0
     followups: int = 0
     errors: dict[str, str] = field(default_factory=dict)
@@ -106,6 +108,21 @@ class DailyResult:
     backup_path: str = ""
     closed_postings: list[dict] = field(default_factory=list)
     replies: list[ReplyMatch] = field(default_factory=list)
+
+    @property
+    def total_cost(self) -> CallCost:
+        """Everything the run's model passes cost (unknown if any part was)."""
+        return aggregate_calls([self.scoring_cost, self.rescore_cost])
+
+    @property
+    def has_cost(self) -> bool:
+        """Whether a model call ran, so the footer may show a cost. The rescore
+        pass keeps no call count: a known zero means it made none."""
+        return (
+            bool(self.scoring_batches)
+            or self.rescore_cost.cost_usd > 0
+            or (not self.rescore_cost.known)
+        )
 
 
 def cockpit_base(cfg: BlastJobConfig) -> str:
@@ -685,7 +702,7 @@ def main(argv: list[str] | None = None) -> int:
     summary = (
         f"fetched {res.fetched} ({_top_sources(res.per_source)}), "
         f"scored {res.scored} in {res.scoring_batches} batches "
-        f"({format_duration(res.scoring_s)}, cost {describe_cost(res.scoring_cost)}), "
+        f"({format_duration(res.scoring_s)}, cost {describe_cost(res.total_cost)}), "
         f"new {res.new_jobs}, "
         f"follow-ups {res.followups}, errors {len(res.errors)}, sent {res.sent}, "
         f"duration {format_duration(res.duration_s)}, "

@@ -21,7 +21,7 @@ from blastjob import secrets as secrets_mod
 from blastjob.core import employer_jd
 from blastjob.core.closure import ClosureResult
 from blastjob.core.closure_links import LinkDeps
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.matching import rescore
 from blastjob.models.config import BlastJobConfig
 
@@ -111,6 +111,7 @@ async def lookup_step(
     d = cfg.discovery
     secrets_mod.load_secrets_env()
     rescored = failed = 0
+    tracker = CostTracker()
     try:
         net = await employer_jd.run_upgrade(
             cfg,
@@ -123,16 +124,17 @@ async def lookup_step(
             deps=deps,
         )
         if score and not dry_run:
-            counts = await rescore.rescore_jobs(
-                cfg, conn, CostTracker(), _rescore_ids(net, closure_res)
-            )
+            counts = await rescore.rescore_jobs(cfg, conn, tracker, _rescore_ids(net, closure_res))
             rescored, failed = counts.undecided + counts.kept, len(counts.failed)
     except Exception as e:
         conn.rollback()
         log.exception("employer description lookup failed")
         res.errors[ERROR_KEY] = applog.redact(f"{type(e).__name__}: {e}")
         return
+    finally:
+        # Calls made before a failure were still paid for: they count in the footer.
+        res.rescore_cost = tracker.total_call_cost
     note = _note(free, net, rescored=rescored, rescore_failed=failed)
     if note:
         res.notes[ERROR_KEY] = note
-        log.info(note)
+        log.info("%s Cost %s.", note, describe_cost(res.rescore_cost))

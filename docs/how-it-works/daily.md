@@ -39,7 +39,7 @@ The digest is built by `build_digest`. Sections appear only when they have somet
 - **Source errors.** One line per failing source or step, cut to 160 characters.
 - **Notes.** Things worth a human's attention that are not failures: a snapshot the stale-marking guard refused to act on, or an employer-description summary. Cut to 200 characters each.
 - **Weekly heartbeat.** On Mondays (`HEARTBEAT_WEEKDAY`): active and kept counts, plus the last seven days' runs, fetched, scored, new roles and average duration.
-- **Footer.** An italic line with the run duration, the top five sources by fetch count and scoring throughput and cost (`cost unknown` when the provider reported no usage). It is added only when the digest is actually sent.
+- **Footer.** An italic line with the run duration, the top five sources by fetch count and scoring throughput and cost (`cost unknown` when the provider reported no usage). The cost covers matching plus the employer-description re-score pass of step 8; it is unknown if any call in either was. It is added only when the digest is actually sent.
 
 **Quiet days send nothing.** With no roles, errors, follow-ups, notes, closures, replies or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
 

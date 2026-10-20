@@ -83,6 +83,8 @@ Cost is recorded per call from the final message's usage (`llm/cost.py`). On `cl
 usage comes from the CLI's terminal `result` line; when that line never arrives, usage is
 `None` and the cost is reported as unknown, never as $0.00. The `openai` provider does the same when the stream carries no usage block. `cost.describe_cost` renders a total as `$0.0123` or `unknown`; a total is unknown if any call in it was.
 
+Every cockpit run that calls a model ends its run log with `Cost $X` or `Cost unknown`: Find + Score, re-score, manual add, paste, employer-JD re-scores, enrich, research, ingest and refine. The daily run adds its employer-description re-score pass to the scoring cost for its footer and log line, and the maintenance reports (`--employer-jd`, Workday location refetch) print theirs. Cost is never stored in the database.
+
 ## Research call
 
 `providers.make_research_call` is now only the **fallback** for packet research. A build first
