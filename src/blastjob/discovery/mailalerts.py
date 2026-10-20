@@ -411,6 +411,8 @@ def parse_indeed_alert(html: str) -> list[RawPosting]:
     return list(out.values())
 
 
+# Apple Hide My Email's forwarding domain (exact match; its subdomains are not it).
+APPLE_RELAY_DOMAIN = "privaterelay.appleid.com"
 _RELAY_AT = re.compile(r"([a-z0-9.+-]+)_at_([a-z0-9_]+)@")
 
 
@@ -441,7 +443,9 @@ def sender_domains(sender: str) -> tuple[str, ...]:
     if "@" not in addr:
         return ()
     domains = [addr.rsplit("@", 1)[1]]
-    m = _RELAY_AT.search(addr)
+    # Only Apple's relay vouches for the original sender; on any other domain a
+    # '_at_' fold is just text the sender chose.
+    m = _RELAY_AT.search(addr) if domains[0] == APPLE_RELAY_DOMAIN else None
     if m:
         domains.append(m.group(2).replace("_", "."))
     return tuple(domains)
@@ -465,8 +469,13 @@ def looks_like_alert(sender: str, subject: str) -> bool:
     mails from linkedin.com (impressions, comments, messages), so for LinkedIn
     the sender must be the job-alerts mailbox; Indeed mail is alerts only."""
     if _from_domain(sender, "linkedin.com"):
-        s = normalize_sender(sender)
-        return "jobalerts" in s or "jobs-noreply" in s or bool(_ALERT_SUBJECT.search(subject or ""))
+        # The marker must be in the address itself; a display name is free text.
+        local = parseaddr(sender or "")[1].lower().rsplit("@", 1)[0]
+        return (
+            "jobalerts" in local
+            or "jobs-noreply" in local
+            or bool(_ALERT_SUBJECT.search(subject or ""))
+        )
     if _from_domain(sender, "indeed.com"):
         return True
     return bool(_ALERT_SUBJECT.search(subject or ""))

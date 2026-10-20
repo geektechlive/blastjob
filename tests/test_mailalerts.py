@@ -202,6 +202,10 @@ def test_html_body_falls_back_to_plaintext_when_no_html_part():
     assert "plain text body" in body
 
 
+# Apple Hide My Email relay: the only domain whose folded local part is honored.
+RELAY = "privaterelay.appleid.com"
+
+
 def test_parse_alert_routes_by_sender_then_by_body():
     li = "LinkedIn Job Alerts <jobs-noreply@linkedin.com>"
     assert ma.parse_alert(li, LINKEDIN_HTML)[0] == "linkedin"
@@ -212,7 +216,7 @@ def test_parse_alert_routes_by_sender_then_by_body():
 
 
 def test_normalize_sender_undoes_hide_my_email_rewrite():
-    relay = "Indeed <donotreply_at_jobalert_indeed_com_a1b2c3d4e5_f6a7b8c@relay.example.com>"
+    relay = f"Indeed <donotreply_at_jobalert_indeed_com_a1b2c3d4e5_f6a7b8c@{RELAY}>"
     assert "jobalert.indeed.com" in ma.normalize_sender(relay)
     assert ma.normalize_sender("Plain <a@example.com>") == "plain <a@example.com>"
     # '_at_' somewhere that is not a relay fold must not crash or rewrite
@@ -227,11 +231,11 @@ def test_normalize_sender_undoes_hide_my_email_rewrite():
 def test_relay_display_name_and_mixed_case_headers_route_to_indeed():
     """The real inbox form: display name kept, relay local-part rewritten.
     Also confirm a mixed-case header (relay or otherwise) still routes."""
-    relay = '"Indeed" <donotreply_at_jobalert_indeed_com_a1b2c3d4e5_f6a7b8c@relay.example.com>'
+    relay = '"Indeed" <donotreply_at_jobalert_indeed_com_a1b2c3d4e5_f6a7b8c@{RELAY}>'
     assert ma.looks_like_alert(relay, "3 new jobs match your search")
     assert ma.parse_alert(relay, INDEED_HTML)[0] == "indeed"
 
-    mixed_case = '"INDEED" <DoNotReply_At_JobAlert_Indeed_Com_x@relay.example.com>'
+    mixed_case = f'"INDEED" <DoNotReply_At_JobAlert_Indeed_Com_x@{RELAY}>'
     assert ma.looks_like_alert(mixed_case, "whatever")
     assert ma.parse_alert(mixed_case, INDEED_HTML)[0] == "indeed"
 
@@ -944,10 +948,34 @@ def test_sender_domain_matches_exactly_or_as_subdomain():
 
 
 def test_relay_fold_must_end_at_the_domain_plus_relay_id():
-    ok = "Indeed <donotreply_at_indeed_com_a1b2c3d4e5_f6a7b8c@relay.example.com>"
+    ok = f"Indeed <donotreply_at_indeed_com_a1b2c3d4e5_f6a7b8c@{RELAY}>"
     assert ma.looks_like_alert(ok, "Dinner Sunday?")
     for tail in ("evil", "au", "evil_net"):
-        spoof = f"Indeed <donotreply_at_indeed_com_{tail}_a1b2c3@relay.example.com>"
+        spoof = f"Indeed <donotreply_at_indeed_com_{tail}_a1b2c3@{RELAY}>"
         assert not ma.looks_like_alert(spoof, "Dinner Sunday?")
     assert not ma.looks_like_alert("", "Dinner Sunday?")
     assert not ma.looks_like_alert("not an address", "Dinner Sunday?")
+
+
+def test_fold_on_a_non_relay_domain_is_not_honored():
+    """Anyone can write '_at_indeed_com_' in a local part; only Apple's relay vouches
+    for the original sender."""
+    spoof = "Indeed <donotreply_at_indeed_com_a1b2c3@attacker.example>"
+    assert not ma.looks_like_alert(spoof, "Dinner Sunday?")
+    assert ma.parse_alert(spoof, "<a href='x'>y</a>") == ("", [])
+    genuine = f"Indeed <donotreply_at_indeed_com_a1b2c3@{RELAY}>"
+    assert ma.looks_like_alert(genuine, "Dinner Sunday?")
+    assert (
+        ma.looks_like_alert(f"Indeed <x_at_indeed_com_a1@SUB.{RELAY}>", "Dinner Sunday?") is False
+    )
+
+
+def test_linkedin_jobalerts_marker_must_be_in_the_address_not_the_display_name():
+    notice = "Dinner Sunday?"
+    assert not ma.looks_like_alert('"jobalerts" <messages-noreply@linkedin.com>', notice)
+    assert not ma.looks_like_alert('"jobs-noreply" <notifications-noreply@linkedin.com>', notice)
+    assert ma.looks_like_alert("LinkedIn <jobalerts-noreply@linkedin.com>", notice)
+    assert ma.looks_like_alert("LinkedIn <jobs-noreply@linkedin.com>", notice)
+    # through the relay the folded local part carries the marker
+    folded = f"LinkedIn <jobalerts-noreply_at_linkedin_com_a1b2@{RELAY}>"
+    assert ma.looks_like_alert(folded, notice)
