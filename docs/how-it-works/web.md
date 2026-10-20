@@ -140,7 +140,7 @@ Stage lists collapse cross-source duplicates to one row with a `+N sources` badg
 
 ## Compare
 
-`GET /compare?state=surfaced|queued|kept&source=` renders a side-by-side table through `compare.compare_rows`, with no LLM call: comp, location, company-profile facts, strengths and gaps, and computed red flags, including aggregator postings. `state` is a review state, so `kept` covers the Shortlist, Applied and Closed together. Rows are ranked by alignment and collapsed to one per cluster.
+`GET /compare?state=surfaced|queued|shortlist|applied|closed&source=` renders a side-by-side table through `compare.compare_rows`, with no LLM call: comp, location, company-profile facts, strengths and gaps, and computed red flags, including aggregator postings. `state` is a pipeline stage name. The rows come from the stage lists in `web/stage_lists.py`, so Compare applies the same membership and cluster rules as the page it mirrors: a job hidden on Surfaced because a sibling is kept or archived is hidden here, and a kept job whose posting went stale still shows. Rows are re-ranked by alignment. The old `state=kept` of earlier links is read as `shortlist`; an unknown value falls back to `surfaced`.
 
 ## Funnel
 

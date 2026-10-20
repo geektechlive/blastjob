@@ -893,11 +893,11 @@ def test_compare_collapses_duplicate_kept_cluster(client_cfg):
     title, tracked, _ = _kept_cluster_pair(cfg)
 
     conn = dbc.init_db(cfg)
-    rows = compare.compare_rows(conn, state="kept")
+    rows = compare.compare_rows(conn, state="applied")
     conn.close()
     assert [r["id"] for r in rows] == [tracked]
 
-    r = client.get("/compare?state=kept")
+    r = client.get("/compare?state=applied")
     assert r.status_code == 200
     assert r.text.count(title) == 1
 

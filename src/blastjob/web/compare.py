@@ -1,6 +1,6 @@
-"""Generic "Compare" view: a side-by-side table of surfaced (or queued/kept)
-jobs with red flags called out — aggregator postings, unverified/below-floor
-comp, vague location. Pure SQL + dict building; no LLM calls here."""
+"""Generic "Compare" view: a side-by-side table of the jobs in one pipeline stage,
+with red flags called out — aggregator postings, unverified/below-floor
+comp, vague location. Rows come from `web/stage_lists`; no LLM calls here."""
 
 from __future__ import annotations
 
@@ -15,16 +15,9 @@ from blastjob.core.agencies import AGGREGATOR_COMPANIES as AGGREGATOR_COMPANIES
 from blastjob.core.agencies import is_agency as is_agency
 from blastjob.matching.gate import below_floor
 from blastjob.web import stage_lists
+from blastjob.web import stages as st
 
 _COUNTRY_ONLY = {"united states", "usa", "us"}
-
-
-_COLS = (
-    "id, source, company, title, url, alignment_score, rationale, match_strengths, "
-    "match_gaps, comp_min, comp_max, comp_currency, comp_provenance, geo_remote, "
-    "geo_location_raw, "
-    "geo_city, geo_region, review_state, application_state, first_seen, cluster_id"
-)
 
 
 # These helpers read a job row by key and are handed either a sqlite3.Row (from
@@ -80,26 +73,43 @@ def _split_lines(text: str | None) -> list[str]:
     return [line.strip() for line in (text or "").split("\n") if line.strip()]
 
 
+# Old links said `kept`, which mixed Shortlist, Applied and Closed; it means Shortlist now.
+_LEGACY_STATE = {"kept": st.SHORTLIST}
+
+
+def normalize_state(state: str) -> str:
+    """A stage name from the URL; the old `kept` maps to Shortlist, anything
+    unknown falls back to Surfaced."""
+    state = _LEGACY_STATE.get(state, state)
+    return state if state in st.STAGES else st.SURFACED
+
+
+def _stage_rows(conn: sqlite3.Connection, stage: str) -> list[dict]:
+    """The stage list's own rows, so Compare applies the same membership and
+    cluster rules as the page it mirrors (a job hidden there is hidden here)."""
+    fetch = {
+        st.SURFACED: stage_lists.surfaced_jobs,
+        st.QUEUED: stage_lists.queued_jobs,
+        st.SHORTLIST: stage_lists.shortlist_jobs,
+        st.APPLIED: stage_lists.applied_jobs,
+        st.CLOSED: stage_lists.closed_jobs,
+    }[stage]
+    return fetch(conn)
+
+
 def compare_rows(
     conn: sqlite3.Connection,
     *,
     source: str = "",
-    state: str = "surfaced",
+    state: str = st.SURFACED,
     floor: int = 0,  # the caller passes discovery.comp_floor_usd; 0 = no floor
 ) -> list[dict]:
-    """Active jobs in `state` (optionally filtered to one `source`), ranked by
-    alignment, each enriched with its company profile and computed flags."""
-    sql = f"SELECT {_COLS} FROM jobs WHERE source_state='active' AND review_state=?"
-    params: list = [state]
+    """Jobs in pipeline stage `state` (optionally filtered to one `source`),
+    ranked by alignment, each enriched with its company profile and computed flags."""
+    rows = _stage_rows(conn, normalize_state(state))
     if source:
-        sql += " AND source=?"
-        params.append(source)
-    sql += " ORDER BY alignment_score DESC, id"
-    rows = conn.execute(sql, params).fetchall()
-    # One row per cross-source cluster. Rows are already ranked by alignment, so
-    # for a review state the first member wins; for kept, application progress
-    # decides (see stage_lists.collapse_kept).
-    rows = stage_lists.collapse_kept(rows)
+        rows = [r for r in rows if r["source"] == source]
+    rows = sorted(rows, key=lambda r: (-(r["alignment_score"] or 0), r["id"]))
 
     out: list[dict] = []
     for row in rows:

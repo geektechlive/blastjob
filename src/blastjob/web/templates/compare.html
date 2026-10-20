@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Compare — blastjob{% endblock %}
 {% block content %}
-<h1 class="view-title">Compare &mdash; {{ rows|length }} {{ state }} roles{% if source %} from {{ source }}{% endif %}</h1>
+<h1 class="view-title">Compare &mdash; {{ rows|length }} {{ state_label }} roles{% if source %} from {{ source }}{% endif %}</h1>
 
 <form class="filter-form" method="get" action="/compare">
   <label>Source <input type="text" name="source" value="{{ source }}" placeholder="e.g. greenhouse"></label>
   <label>State
     <select name="state">
-      <option value="surfaced" {% if state == 'surfaced' %}selected{% endif %}>surfaced</option>
-      <option value="queued" {% if state == 'queued' %}selected{% endif %}>queued</option>
-      <option value="kept" {% if state == 'kept' %}selected{% endif %}>kept</option>
+      {% for value, label in stage_choices %}
+      <option value="{{ value }}" {% if state == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
     </select>
   </label>
   <button type="submit">Filter</button>
@@ -51,6 +51,6 @@
 </table>
 </div>
 {% else %}
-<p class="empty">No {{ state }} roles{% if source %} from {{ source }}{% endif %} to compare yet.</p>
+<p class="empty">No {{ state_label }} roles{% if source %} from {{ source }}{% endif %} to compare yet.</p>
 {% endif %}
 {% endblock %}

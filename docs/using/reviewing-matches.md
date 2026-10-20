@@ -82,7 +82,7 @@ For the rules behind all of this, see [same role, different route](../how-it-wor
 
 ## Compare side by side
 
-Open **More**, then **Compare**. The table lists roles with fit, pay, location, company facts, strengths, gaps, red flags (such as an agency posting) and a link to the posting. Use the **Source** box and the state list (surfaced, queued or kept) and click **Filter** to narrow it. Company facts appear only for companies you have researched.
+Open **More**, then **Compare**. The table lists roles with fit, pay, location, company facts, strengths, gaps, red flags (such as an agency posting) and a link to the posting. Use the **Source** box and the stage list (Surfaced, Queue, Shortlist, Applied or Closed) and click **Filter** to narrow it. Company facts appear only for companies you have researched.
 
 ## Add a job by hand
 

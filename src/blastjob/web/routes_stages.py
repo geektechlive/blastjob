@@ -77,8 +77,7 @@ def register(app: FastAPI, deps: Deps) -> None:
     async def compare_view(request: Request, source: str = "", state: str = "surfaced"):
         from blastjob.web import compare as cmp
 
-        if state not in ("surfaced", "queued", "kept"):
-            state = "surfaced"
+        state = cmp.normalize_state(state)
         c = deps.conn()
         try:
             return deps.render(
@@ -92,6 +91,8 @@ def register(app: FastAPI, deps: Deps) -> None:
                 ),
                 source=source,
                 state=state,
+                state_label=st.LABELS[state],
+                stage_choices=[(s, st.LABELS[s]) for s in st.STAGES],
             )
         finally:
             c.close()
