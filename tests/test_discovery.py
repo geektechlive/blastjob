@@ -483,3 +483,40 @@ def test_is_excluded_matches_whole_words_only():
     assert _is_excluded("AT&T Services", ["AT&T"])
     assert _is_excluded("Acme, Inc.", ["Acme, Inc."])
     assert not _is_excluded("Acme", ["", "  "])
+
+
+def _cluster_ids(c, postings: list[RawPosting]) -> list[int]:
+    from blastjob.discovery.pipeline import _cluster_for
+
+    return [_cluster_for(c, p, p.source) for p in postings]
+
+
+def test_placeholder_indeed_postings_each_get_their_own_cluster(conn):
+    c, _cfg = conn
+    a, b, titled = (
+        RawPosting(source="indeed", external_id="jk1", title="Indeed posting"),
+        RawPosting(source="indeed", external_id="jk2", title="Indeed posting"),
+        # titled, but no company and no location: still not evidence of the same role
+        RawPosting(source="indeed", external_id="jk3", title="Director of IT"),
+    )
+    titled_twin = RawPosting(source="indeed", external_id="jk4", title="Director of IT")
+    ids = _cluster_ids(c, [a, b, titled, titled_twin])
+    assert len(set(ids)) == 4
+    # the same placeholder posting seen again lands in the same cluster
+    assert _cluster_ids(c, [a]) == [ids[0]]
+
+
+def test_normal_postings_still_share_a_cluster_by_fingerprint(conn):
+    c, _cfg = conn
+    one = RawPosting(
+        source="greenhouse", external_id="1", company="Acme", title="VP Ops", city="Springfield"
+    )
+    two = RawPosting(
+        source="adzuna", external_id="9", company="Acme Inc", title="VP Ops", city="Springfield"
+    )
+    # company but no location is still a normal (fingerprinted) posting
+    no_loc_a = RawPosting(source="indeed", external_id="a", company="Acme", title="CIO")
+    no_loc_b = RawPosting(source="linkedin", external_id="b", company="Acme", title="CIO")
+    ids = _cluster_ids(c, [one, two, no_loc_a, no_loc_b])
+    assert ids[0] == ids[1]
+    assert ids[2] == ids[3]

@@ -37,7 +37,12 @@ from blastjob.discovery.base import Adapter, RawPosting, is_snapshot, stale_afte
 from blastjob.discovery.dayforce import DayforceAdapter
 from blastjob.discovery.greenhouse import GreenhouseAdapter
 from blastjob.discovery.lever import LeverAdapter
-from blastjob.discovery.mailalerts import LedgerEntry, MailAlertAdapter, known_company_names
+from blastjob.discovery.mailalerts import (
+    INDEED_PLACEHOLDER_TITLE,
+    LedgerEntry,
+    MailAlertAdapter,
+    known_company_names,
+)
 from blastjob.discovery.normalize import cluster_fingerprint, to_job_columns
 from blastjob.discovery.searchfirms import SearchFirmAdapter, due_today
 from blastjob.discovery.workday import WorkdayAdapter
@@ -505,6 +510,15 @@ async def run_discovery(
     return result
 
 
+def _lacks_identity(p: RawPosting) -> bool:
+    """The placeholder title of an Indeed text alert, or a posting with neither a
+    company nor any location: its fingerprint says nothing about the role."""
+    if p.title.strip().lower() == INDEED_PLACEHOLDER_TITLE.lower():
+        return True
+    has_place = bool(p.city.strip() or p.region.strip() or p.location_raw.strip())
+    return not p.company.strip() and not has_place
+
+
 def _cluster_for(conn: sqlite3.Connection, p: RawPosting, job_source: str) -> int:
     """The cluster this posting belongs to.
 
@@ -525,6 +539,10 @@ def _cluster_for(conn: sqlite3.Connection, p: RawPosting, job_source: str) -> in
     if row is not None and row["cluster_id"]:
         return int(row["cluster_id"])
     fingerprint = cluster_fingerprint(p)
+    if _lacks_identity(p):
+        # No company/title/place to fingerprint on: it would join every other
+        # such posting. Its own cluster; a human merge can still join it later.
+        return _assign_cluster(conn, f"{fingerprint}#{job_source}:{p.external_id}")
     cluster_id = _assign_cluster(conn, fingerprint)
     if is_authoritative(job_source) and _board_sibling(conn, cluster_id, job_source, p.external_id):
         return _assign_cluster(conn, f"{fingerprint}#{job_source}:{p.external_id}")

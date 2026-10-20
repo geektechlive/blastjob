@@ -354,6 +354,11 @@ def _indeed_posting(jk: str, a: _Anchor) -> RawPosting:
     )
 
 
+# Title given to a text/plain alert link with no title line before it. pipeline.py
+# keeps such a posting out of fingerprint clustering (see docs/how-it-works/same-role.md).
+INDEED_PLACEHOLDER_TITLE = "Indeed posting"
+
+
 def _parse_indeed_plaintext(text: str) -> list[RawPosting]:
     """Fallback for a text/plain alert (no anchors at all): scan raw lines for
     a viewjob/rc-click URL carrying jk=, using the nearest preceding
@@ -370,7 +375,7 @@ def _parse_indeed_plaintext(text: str) -> list[RawPosting]:
         if m:
             jk = m.group(1)
             if jk not in out:
-                title = pending_title or "Indeed posting"
+                title = pending_title or INDEED_PLACEHOLDER_TITLE
                 out[jk] = RawPosting(
                     source="indeed",
                     external_id=jk,
