@@ -194,7 +194,7 @@ def test_security_headers_on_every_response(env):
     bad_host = client.get("/", headers={"host": "evil.example.com"})
     for r in (client.get("/"), client.get("/runs/active"), bad_host):
         assert r.headers["X-Frame-Options"] == "DENY"
-        assert r.headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+        assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
         assert r.headers["X-Content-Type-Options"] == "nosniff"
         assert r.headers["Referrer-Policy"] == "same-origin"
 

@@ -55,7 +55,13 @@ from blastjob.web import stages as st
 from blastjob.web import view_helpers as vh
 from blastjob.web.deps import Deps
 from blastjob.web.runtime import RUNTIME, Run
-from blastjob.web.security import CSRF_HEADER, LAUNCH_TOKEN, LocalRequestGuard, require_csrf
+from blastjob.web.security import (
+    CSP_STATE_KEY,
+    CSRF_HEADER,
+    LAUNCH_TOKEN,
+    LocalRequestGuard,
+    require_csrf,
+)
 from blastjob.web.upload_guard import MaxBodySizeMiddleware
 from blastjob.web.urls import safe_external_url
 
@@ -124,6 +130,8 @@ def render(request: Request, name: str, **extra):
         "csrf_header": CSRF_HEADER,
         "archive_reasons": ARCHIVE_REASON_LABELS,
         "stage_nav": STAGE_NAV,
+        # Set per request by security.LocalRequestGuard; empty where it is absent.
+        "csp_nonce": getattr(request.state, CSP_STATE_KEY, ""),
         **extra,
     }
     nav_counts = getattr(request.app.state, "nav_counts", None)

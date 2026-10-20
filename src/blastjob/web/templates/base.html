@@ -6,6 +6,7 @@
   <title>{% block title %}blastjob cockpit{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/cockpit.js" defer></script>
 </head>
 <body hx-headers='{"{{ csrf_header }}": "{{ token }}"}'>
   <header class="topbar">
@@ -45,7 +46,7 @@
   </header>
   <div id="stale-notice"></div>
   <div id="run-status" hx-get="/runs/active" hx-trigger="load, refresh-run-status from:body" hx-swap="innerHTML"></div>
-  <script>
+  <script nonce="{{ csp_nonce }}">
     // The CSRF token is per server launch. A tab left open across a cockpit
     // restart (launchd, a deploy) carries a dead token, so every Keep/Archive
     // click 403s and HTMX swaps nothing — the click looks ignored. Reload to

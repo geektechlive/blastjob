@@ -37,11 +37,25 @@ The cockpit has no login. By default it binds `127.0.0.1`, so only your own comp
 
 Three layers enforce that, in this order.
 
-**1. `security.LocalRequestGuard`.** It is the outermost middleware (added last, so it runs first). On every HTTP request, GETs included, the `Host` header must be loopback or a private address literal (RFC1918, link-local, unique-local); anything else gets a 421. A DNS-rebinding page always arrives under its own domain name, so this is what stops it reading pages. A write (anything but GET, HEAD or OPTIONS) whose `Origin` or `Referer` is not local gets a 403 before any body is read. The same guard adds `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin` to every response. There is no script policy yet; that needs nonces on the inline scripts.
+**1. `security.LocalRequestGuard`.** It is the outermost middleware (added last, so it runs first). On every HTTP request, GETs included, the `Host` header must be loopback or a private address literal (RFC1918, link-local, unique-local); anything else gets a 421. A DNS-rebinding page always arrives under its own domain name, so this is what stops it reading pages. A write (anything but GET, HEAD or OPTIONS) whose `Origin` or `Referer` is not local gets a 403 before any body is read. The same guard adds `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and a Content-Security-Policy to every response (see [Content-Security-Policy](#content-security-policy)).
 
 **2. `upload_guard.MaxBodySizeMiddleware`.** It rejects an over-cap body (413) by declared length or by counting bytes. It has to be middleware: `require_csrf` reads the form, and Starlette spools a whole upload to disk to build it, before any route code runs, so a size check inside the route can never fire first. The cap is `upload_guard.MAX_NETWORK_UPLOAD_BYTES`, sized for a full LinkedIn archive.
 
 **3. `security.require_csrf`.** Every state-changing route depends on it. It requires the per-launch token, sent as the `x-blastjob-token` header (`web/templates/base.html` puts it on every HTMX request) or as a `_token` form field, compared in constant time, plus a local `Origin` or `Referer` when one is present. The token is new on each launch. A tab left open across a cockpit restart therefore carries a dead token; `web/templates/base.html` catches the 403, reloads the page and says why.
+
+### Content-Security-Policy
+
+Defense in depth for a cockpit with no login: if an escaping slip ever let untrusted job, alert or model text become markup, the policy stops it running script that holds the CSRF token. The guard makes a fresh nonce per request (`security.csp_policy`) and sends:
+
+`default-src 'self'; script-src 'self' 'nonce-<n>'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`
+
+`app.render` exposes the nonce to templates as `csp_nonce`. What that means when you edit a template:
+
+- An inline `<script>` needs `nonce="{{ csp_nonce }}"`. There is one, in `base.html`.
+- Inline event handlers (`onclick=` and the like), `hx-on` attributes in any spelling and `javascript:` URLs are blocked. `tests/test_web_csp.py` fails if a template has one. Put the behaviour in `web/static/cockpit.js` and mark the element with a data attribute instead (`data-after-request="reload"` or `"home"` replaces `hx-on::after-request`).
+- A script inside an htmx-swapped partial is checked against the nonce of the page already loaded, not the partial's response, so partials carry no script. The run panels (`_build_panel.html`, `_followup_panel.html`) hold only data attributes, and `cockpit.js` wires them from `htmx.onLoad`. Do not use htmx's `inlineScriptNonce` setting to work around this: it stamps the page nonce on every script in swapped content, which is the hole the policy closes.
+- `style-src` keeps `'unsafe-inline'` because templates use `style` attributes and htmx injects an indicator style. It has no nonce on purpose: a nonce there makes browsers ignore `'unsafe-inline'`.
+- No directive allows `'unsafe-eval'`. htmx only evaluates strings for `hx-on`, `js:`-prefixed `hx-vals` or `hx-headers`, and `[filter]` expressions in `hx-trigger`, and the templates use none of them (`hx-vals` and `hx-headers` are plain JSON). Adding one needs `'unsafe-eval'`, so do not.
 
 "Local" in the Origin check includes private LAN addresses, because a device on your LAN sends its own view of the server as the origin. That means the check cannot tell the host machine from another LAN device. Reveal-in-Finder is therefore gated separately on `request.client.host` being loopback (`packets.is_local_request`).
 

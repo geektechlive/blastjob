@@ -23,7 +23,7 @@
       <td class="c-act">
         {% if job.review_state not in ('kept', 'archived') %}
           <button class="btn-keep sm" hx-post="/jobs/{{ job.id }}/keep" hx-swap="none"
-                  hx-on::after-request="window.location.reload()">keep</button>
+                  data-after-request="reload">keep</button>
         {% endif %}
         {% if job.review_state == 'kept' or job.work_key != 'not_tailored' %}
           <span class="badge work work-{{ job.work_key }}">{{ job.work_label }}</span>

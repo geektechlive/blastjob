@@ -69,7 +69,7 @@
   <div class="detail-actions" id="detail-actions">
     {% if job.review_state in ('new', 'surfaced', 'queued') %}
       <button class="btn-keep" hx-post="/jobs/{{ job.id }}/keep" hx-target="body" hx-swap="none"
-              hx-on::after-request="window.location.reload()">Keep &amp; tailor</button>
+              data-after-request="reload">Keep &amp; tailor</button>
       <span class="archive-ctl">
         <select name="reason" id="reason-{{ job.id }}" class="reason-select">
           <option value="">why?</option>
@@ -77,7 +77,7 @@
         </select>
         <input type="text" name="note" id="note-{{ job.id }}" class="reason-note" placeholder="note (optional)" maxlength="300">
         <button class="btn-archive" hx-post="/jobs/{{ job.id }}/archive" hx-include="#reason-{{ job.id }}, #note-{{ job.id }}"
-                hx-target="body" hx-swap="none" hx-on::after-request="window.location='/'">Archive</button>
+                hx-target="body" hx-swap="none" data-after-request="home">Archive</button>
       </span>
     {% elif job.review_state == 'kept' %}
       <span class="kept-badge">{{ (stage or 'kept') | upper }} &#10003;</span>
@@ -99,12 +99,12 @@
       {% if stage == 'shortlist' %}
       <button class="btn-archive" hx-post="/jobs/{{ job.id }}/unkeep" hx-target="body" hx-swap="none"
               hx-confirm="Remove from the shortlist? It goes back to Surfaced or the Queue by its fit score (or out of view if the fit is low or the posting is gone). Your notes are kept."
-              hx-on::after-request="window.location.reload()">Remove from shortlist</button>
+              data-after-request="reload">Remove from shortlist</button>
       {% endif %}
     {% elif job.review_state == 'archived' %}
       <span class="badge state">archived{% if job.archive_reason %} &middot; {{ job.archive_reason }}{% endif %}</span>
       <button hx-post="/jobs/{{ job.id }}/unarchive" hx-target="body" hx-swap="none"
-              hx-on::after-request="window.location.reload()">Unarchive</button>
+              data-after-request="reload">Unarchive</button>
     {% endif %}
   </div>
   <div id="action-panel"></div>

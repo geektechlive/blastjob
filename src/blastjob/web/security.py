@@ -117,24 +117,56 @@ class LocalRequestGuard:
             if origin and not _host_ok(origin):
                 await _refuse(send, 403, b"bad origin")
                 return
-        await self.app(scope, receive, _with_security_headers(send))
+        # request.state reads scope["state"], which is how render() hands the nonce
+        # to the templates.
+        nonce = secrets.token_urlsafe(_NONCE_BYTES)
+        scope.setdefault("state", {})[CSP_STATE_KEY] = nonce
+        await self.app(scope, receive, _with_security_headers(send, nonce))
 
 
-# Sent on every response. frame-ancestors only: a full script policy needs
-# nonces on the templates' inline scripts, which is a separate change.
+# Sent on every response. The Content-Security-Policy is built per request (it
+# carries the script nonce), so it is not in this tuple. See
+# docs/how-it-works/web.md for what each directive protects.
 SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
     (b"x-frame-options", b"DENY"),
-    (b"content-security-policy", b"frame-ancestors 'none'"),
     (b"x-content-type-options", b"nosniff"),
     (b"referrer-policy", b"same-origin"),
 )
 
+CSP_STATE_KEY = "csp_nonce"
+_CSP_HEADER = b"content-security-policy"
+_NONCE_BYTES = 18  # 144 bits; base64url, so 24 characters
 
-def _with_security_headers(send: Send) -> Send:
+
+def csp_policy(nonce: str | None) -> bytes:
+    """The Content-Security-Policy value. Scripts: same-origin files plus inline
+    scripts carrying this request's nonce; inline event handlers and `eval` are
+    off. Styles stay `'unsafe-inline'` (templates use style attributes and a
+    `<style>` block, and htmx injects an indicator style); a nonce there would make
+    browsers ignore `'unsafe-inline'`. `nonce=None` is for refusals, which are
+    plain text and run no script."""
+    script = "script-src 'self'" + (f" 'nonce-{nonce}'" if nonce else "")
+    return "; ".join(
+        (
+            "default-src 'self'",
+            script,
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data:",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'self'",
+            "frame-ancestors 'none'",
+        )
+    ).encode("ascii")
+
+
+def _with_security_headers(send: Send, nonce: str) -> Send:
     async def wrapped(message: Message) -> None:
         if message["type"] == "http.response.start":
             present = {k.lower() for k, _ in message.get("headers", [])}
             extra = [(k, v) for k, v in SECURITY_HEADERS if k not in present]
+            if _CSP_HEADER not in present:
+                extra.append((_CSP_HEADER, csp_policy(nonce)))
             message = {**message, "headers": [*message.get("headers", []), *extra]}
         await send(message)
 
@@ -146,7 +178,11 @@ async def _refuse(send: Send, status: int, body: bytes) -> None:
         {
             "type": "http.response.start",
             "status": status,
-            "headers": [(b"content-type", b"text/plain; charset=utf-8"), *SECURITY_HEADERS],
+            "headers": [
+                (b"content-type", b"text/plain; charset=utf-8"),
+                (_CSP_HEADER, csp_policy(None)),
+                *SECURITY_HEADERS,
+            ],
         }
     )
     await send({"type": "http.response.body", "body": body})
