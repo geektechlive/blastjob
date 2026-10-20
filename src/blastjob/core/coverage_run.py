@@ -39,20 +39,24 @@ sees it must pass a claim-level diff first (see `coverage_gap.py`) — do not
 add one casually.
 
 CACHING AND ITS INVALIDATION RULE: `analyze_coverage` is one LLM call, and
-its answer depends only on the job description text and `work_history.md`
-(which does not change mid-build). A re-tailor of the same job reuses the
-same job description, so re-running the analysis on a re-tailor is a wasted
-call. The cache is content-addressed: the key is
-`sha256(job_description)[:20]`, stored as one JSON file per distinct JD text
-under `cache_dir` (default: `{data_dir}/coverage_cache/`, stable across
+its answer depends on the job description text and `work_history.md`
+(which does not change mid-build, but can be edited between builds). A
+re-tailor of the same job reuses the same job description, so re-running the
+analysis on a re-tailor is a wasted call. The cache is content-addressed: the key is
+`sha256(sha256(work_history) + ":" + job_description)[:20]`, stored as one JSON
+file per distinct (history, JD) pair under `cache_dir` (default:
+`{data_dir}/coverage_cache/`, stable across
 builds and re-tailors — NOT the per-run packet folder, which changes date
 and would defeat reuse across a re-tailor). Invalidation is therefore
-automatic and exact: any change to the JD text, even one character of
-whitespace, hashes to a different filename and is a clean cache miss, never
-a stale hit. Entries are never evicted or expired — a hit is always correct
-for that exact text, and one file per distinct JD this app has ever seen is
-not enough volume to matter. A corrupt or unreadable cache file is treated
-as a miss (re-run the analysis, overwrite the file) rather than an error.
+automatic and exact: any change to the JD text or the work history, even one
+character of whitespace, hashes to a different filename and is a clean cache
+miss, never a stale hit (a history edit used to reuse the old analysis, whose
+"your own words" quotes could no longer be in the history). Entries are never
+evicted or expired — a hit is always correct for those exact texts, and one
+file per distinct pair this app has ever seen is not enough volume to matter.
+Files keyed by the old JD-only scheme are simply never read again. A corrupt
+or unreadable cache file is treated as a miss (re-run the analysis, overwrite
+the file) rather than an error.
 """
 
 from __future__ import annotations
@@ -73,12 +77,22 @@ from blastjob.models.coverage import CoverageReport
 __all__ = ["coverage_gaps_for", "render_gaps_md"]
 
 
-def _cache_key(job_description: str) -> str:
-    return hashlib.sha256(job_description.encode("utf-8")).hexdigest()[:20]
+def _cache_key(job_description: str, work_history_md: str) -> str:
+    history_hash = hashlib.sha256(work_history_md.encode("utf-8")).hexdigest()
+    combined = f"{history_hash}:{job_description}"
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:20]
 
 
-def _cache_path(cache_dir: Path, job_description: str) -> Path:
-    return cache_dir / f"{_cache_key(job_description)}.json"
+def _cache_path(cache_dir: Path, job_description: str, work_history_md: str) -> Path:
+    return cache_dir / f"{_cache_key(job_description, work_history_md)}.json"
+
+
+def _read_work_history(cfg: BlastJobConfig) -> str:
+    """Current history text for the cache key. Missing reads as empty: the key
+    still differs from any real history, and `analyze_coverage` raises (so the
+    caller fails soft) before anything is cached."""
+    path = cfg_mod.data_dir(cfg) / "work_history.md"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
 def _load_cached_report(path: Path) -> CoverageReport | None:
@@ -124,7 +138,7 @@ async def coverage_gaps_for(
         resolved_cache_dir = (
             cache_dir if cache_dir is not None else cfg_mod.data_dir(cfg) / "coverage_cache"
         )
-        cache_path = _cache_path(resolved_cache_dir, job_description)
+        cache_path = _cache_path(resolved_cache_dir, job_description, _read_work_history(cfg))
 
         report = _load_cached_report(cache_path)
         if report is None:

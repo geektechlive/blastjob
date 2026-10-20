@@ -12,6 +12,7 @@ the same pattern) — no network call is ever made.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from blastjob.core import coverage_run
 from blastjob.core.coverage_run import coverage_gaps_for, render_gaps_md
@@ -243,13 +244,42 @@ def test_analyze_coverage_failure_yields_empty_list_not_an_exception(tmp_path, m
     assert gaps == []
 
 
+def _write_history(cfg: BlastJobConfig, text: str) -> None:
+    data_dir = Path(cfg.paths.data_dir)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "work_history.md").write_text(text, encoding="utf-8")
+
+
+def test_cache_misses_after_a_work_history_edit_and_hits_when_unchanged(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    stub = _CountingStub(_report_with(used=True, unused=True))
+    monkeypatch.setattr(coverage_run, "analyze_coverage", stub)
+    cache_dir = tmp_path / "cache"
+
+    def run() -> None:
+        asyncio.run(
+            coverage_gaps_for(
+                JOB_DESCRIPTION, RESUME_MD, cfg=cfg, cost_tracker=CostTracker(), cache_dir=cache_dir
+            )
+        )
+
+    _write_history(cfg, "Ran the data platform team.")
+    run()
+    run()
+    assert len(stub.calls) == 1  # unchanged history -> hit
+
+    _write_history(cfg, "Ran the data platform team. Also led a cloud migration.")
+    run()
+    assert len(stub.calls) == 2  # edited history -> miss
+
+
 def test_corrupt_cache_file_is_treated_as_a_miss(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     stub = _CountingStub(_report_with(used=True, unused=True))
     monkeypatch.setattr(coverage_run, "analyze_coverage", stub)
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir(parents=True)
-    bad_path = coverage_run._cache_path(cache_dir, JOB_DESCRIPTION)
+    bad_path = coverage_run._cache_path(cache_dir, JOB_DESCRIPTION, "")
     bad_path.write_text("not valid json {{{", encoding="utf-8")
 
     gaps = asyncio.run(

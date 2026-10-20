@@ -66,8 +66,8 @@ reuses it (see [Build claims](#build-claims)). In order:
 10. **Fit score** (`scoring.score_resume`, fail-soft), written to
     `{role-slug}.fit_score.json` and `.md`: groundedness plus JD alignment.
 11. **Coverage gaps**: requirements the history proves but the resume never used
-    (`coverage_run.coverage_gaps_for`, one model call per distinct job description, cached
-    in `<data_dir>/coverage_cache/`), written to `{role-slug}.coverage_gaps.md`.
+    (`coverage_run.coverage_gaps_for`, one model call per distinct job description and work-history text, cached
+    in `<data_dir>/coverage_cache/`; editing the history misses the cache), written to `{role-slug}.coverage_gaps.md`.
 12. **Verify, gate and hold.** The deterministic checks read the exported `.docx`, which is
     why export comes first. Held documents move to `quarantine/`. See
     [Packet verification](../truth-guarantees.md#packet-verification).
