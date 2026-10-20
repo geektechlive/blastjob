@@ -6,13 +6,12 @@ pulling in the full build module (which would create a circular import).
 
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Callable, Sequence
 
 from blastjob.core import resume_dates
 from blastjob.llm import caching, prompts
 from blastjob.llm.cost import CostTracker, cost_from_usage
+from blastjob.llm.jsonio import find_json_value
 from blastjob.llm.providers import make_stream
 from blastjob.models.config import BlastJobConfig
 from blastjob.models.fit_score import ClaimCheck, FitScore
@@ -122,10 +121,9 @@ def parse_score(text: str, work_history_md: str, resume_md: str = "") -> FitScor
     it the employment-date check cannot run, and dates are the part of a resume
     most easily disproved.
     """
-    match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
+    data = find_json_value(text, "{", dict)
+    if data is None:
         raise ValueError("No JSON object found in scoring response.")
-    data = json.loads(match.group())
     score = FitScore.model_validate(data)
 
     # Python-side verification: downgrade any claim whose evidence_quote is not an

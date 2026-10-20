@@ -10,10 +10,29 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 _FENCE_RE = re.compile(r"```(?:json)?")
-_ARRAY_RE = re.compile(r"\[[\s\S]*\]")
-_OBJECT_RE = re.compile(r"\{[\s\S]*\}")
+_DECODER = json.JSONDecoder()
+
+
+def find_json_value(text: str, opener: str, expected: type) -> Any | None:
+    """First JSON value of type `expected` that starts at an `opener` character.
+
+    Tries `raw_decode` from each `opener` in turn, so bracketed prose ("see [below]")
+    or a trailing "[1]" cannot hide or poison the real payload the way a greedy
+    first-to-last-bracket match did. Returns None when nothing parses to the shape.
+    """
+    pos = text.find(opener)
+    while pos != -1:
+        try:
+            value, _ = _DECODER.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, expected):
+            return value
+        pos = text.find(opener, pos + 1)
+    return None
 
 
 def extract_json_list(text: str, *, error_message: str) -> list:
@@ -34,13 +53,13 @@ def extract_json_list(text: str, *, error_message: str) -> list:
         pass
 
     # 2) An array embedded in prose.
-    m = _ARRAY_RE.search(cleaned)
-    if m:
-        return json.loads(m.group())
+    array = find_json_value(cleaned, "[", list)
+    if array is not None:
+        return array
 
     # 3) A single object embedded in prose.
-    m = _OBJECT_RE.search(cleaned)
-    if m:
-        return [json.loads(m.group())]
+    obj = find_json_value(cleaned, "{", dict)
+    if obj is not None:
+        return [obj]
 
     raise ValueError(error_message)
