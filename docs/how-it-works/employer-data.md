@@ -57,11 +57,11 @@ An adopted description records where it came from, so it can be shown, re-checke
 - `jd_fetched_at` is when the text was taken. Re-verification uses it to pick the oldest first.
 - `jd_prior` holds the aggregator text the adoption replaced, kept for undo. A refused aggregator refresh updates it, so an undo restores the latest aggregator text, not a stale one.
 - `jd_lookup_at`, `jd_lookup_status` (`found`, `no_match`, `transient`) and `jd_lookup_failures` drive the retry backoff described above. A `found` row is never looked up again unless its text is reverted.
-- `score_stale` marks a kept row whose description changed under its score.
+- `score_stale` marks a kept row whose description changed under its score. `score_stale_attempted_at` (migration 55) records when a re-score of it last failed.
 
 Descriptions have a quality class (`db/client.py`, `jd_class`): stub, snippet, full, employer, pasted. The class `JD_EMPLOYER` sits above full and below pasted, so no aggregator refresh replaces an employer text, and a text you paste always does. See [discovery](discovery.md#jd-quality-classes) for how refreshes compare classes.
 
-A changed description means the old score no longer describes the job. An undecided row's score is cleared, so the next scoring pass picks it up. A kept row keeps its score but is flagged `score_stale`, and is re-scored on a following run. Each run re-scores the oldest ten stale kept rows (`rescore.stale_kept_ids`), so a long backlog drains over several days.
+A changed description means the old score no longer describes the job. An undecided row's score is cleared, so the next scoring pass picks it up. A kept row keeps its score but is flagged `score_stale`, and is re-scored on a following run. Each run re-scores ten stale kept rows (`rescore.stale_kept_ids`): never-attempted rows first, then the least recently failed, ties to the oldest text change. A row that keeps failing therefore rotates to the back and cannot starve the rest; there is no give-up count, so it stays stale until it scores. A long backlog drains over several days.
 
 ## Writes
 

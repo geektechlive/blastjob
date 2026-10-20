@@ -33,7 +33,9 @@ def conn(cfg) -> sqlite3.Connection:
 
 
 def _rerun_migration(conn: sqlite3.Connection, version: int) -> None:
-    conn.execute("DELETE FROM schema_migrations WHERE version=?", (version,))
+    # migrate() resumes after the highest recorded version, so forget it and every
+    # later one; a later ADD COLUMN that already exists is tolerated.
+    conn.execute("DELETE FROM schema_migrations WHERE version>=?", (version,))
     conn.commit()
     dbc.migrate(conn)
 

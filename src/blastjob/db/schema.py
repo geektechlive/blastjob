@@ -555,4 +555,8 @@ MIGRATIONS: list[tuple[int, str]] = [
     # not SQL), so the work is `db.client._POST_MIGRATION_STEPS[54]`; this entry
     # only records that the step ran.
     (54, "SELECT 1;"),
+    # 55: when a stale kept row's re-score last FAILED (#31). The daily pass takes
+    # at most 10 rows, so rows that always fail would hold every slot forever.
+    # Never-attempted ('') sort first, then the oldest attempt.
+    (55, "ALTER TABLE jobs ADD COLUMN score_stale_attempted_at TEXT DEFAULT '';"),
 ]

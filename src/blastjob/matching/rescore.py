@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from blastjob.db.client import UNDECIDED_STATES
 from blastjob.llm.cost import CostTracker
@@ -74,20 +75,32 @@ async def rescore_jobs(
             counts.kept += 1
         else:
             counts.failed.append(int(row["id"]))
+            _mark_attempted(conn, int(row["id"]))
     return counts
 
 
-def stale_kept_ids(conn: sqlite3.Connection, limit: int = 10) -> list[int]:
-    """Kept rows whose JD changed under their score, at most `limit`, the OLDEST
-    text change first (blank stamp, a paste, before any dated one), then id.
+def _mark_attempted(conn: sqlite3.Connection, job_id: int) -> None:
+    """Stamp a failed stale re-score so `stale_kept_ids` rotates past it."""
+    conn.execute(
+        "UPDATE jobs SET score_stale_attempted_at=? WHERE id=?",
+        (datetime.now().isoformat(timespec="seconds"), job_id),
+    )
+    conn.commit()
 
-    Ordering by id alone starved: the lowest ids were retried first forever. This
-    is only a partial rotation: a re-score that keeps failing leaves the row's
-    stamp unchanged, so `limit` or more permanently failing rows would still crowd
-    out the rest. A durable fix needs an attempt marker column (a migration)."""
+
+def stale_kept_ids(conn: sqlite3.Connection, limit: int = 10) -> list[int]:
+    """Kept rows whose JD changed under their score, at most `limit`: rows never
+    attempted first, then the least recently attempted; ties go to the OLDEST text
+    change (blank stamp, a paste, before any dated one), then id.
+
+    A failed re-score stamps `score_stale_attempted_at` (`rescore_jobs`), so rows
+    that always fail rotate to the back instead of holding every slot while later
+    rows are never tried. There is no give-up count: a row stays stale until it
+    scores or the user acts."""
     rows = conn.execute(
         "SELECT id FROM jobs WHERE review_state='kept' AND score_stale=1 "
-        "ORDER BY COALESCE(jd_fetched_at,'') ASC, id LIMIT ?",
+        "ORDER BY COALESCE(score_stale_attempted_at,'') ASC, COALESCE(jd_fetched_at,'') ASC, id "
+        "LIMIT ?",
         (limit,),
     ).fetchall()
     return [int(r["id"]) for r in rows]
