@@ -1,6 +1,6 @@
 # The daily run
 
-**What this covers:** What `blastjob-daily` does each morning, what the digest contains, how delivery works, what a run records, the kill switch and the command flags. It is for anyone changing `daily.py`, `daily_tools.py`, `daily_filing.py` or `notify/`. To schedule it, see [services](../operations/services.md#the-daily-run-service).
+**What this covers:** What `blastjob-daily` does each morning, what the digest contains, how delivery works, what a run records, the kill switch and the command flags. It is for anyone changing `daily.py`, `daily_digest.py`, `daily_tools.py`, `daily_filing.py` or `notify/`. To schedule it, see [services](../operations/services.md#the-daily-run-service).
 
 ## What a run does
 
