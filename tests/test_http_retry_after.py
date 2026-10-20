@@ -57,3 +57,46 @@ async def test_429_without_hint_keeps_linear_backoff():
 async def test_retry_after_ignored_on_non_429():
     slept = await _run([httpx.Response(503, headers={"Retry-After": "9"}), OK])
     assert slept == [1]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_budget():
+    http.reset_retry_budget()
+    yield
+    http.reset_retry_budget()
+
+
+async def test_a_deeply_nested_429_body_is_not_a_hint():
+    body = httpx.Response(429, content=b"[" * 200_000)
+    slept = await _run([body, OK])
+    assert slept == [1]
+
+
+async def test_retry_after_waits_stop_once_the_per_host_budget_is_spent():
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    for _ in range(3):
+        hinted = [httpx.Response(429, headers={"Retry-After": "30"}) for _ in range(2)]
+        async with _client([*hinted, OK]) as client:
+            await http.request_json(client, "GET", "https://example.com/x", sleep=fake_sleep)
+
+    # 120s budget = four 30s waits; the fifth and sixth fall back to 1s, 2s backoff.
+    assert slept == [30.0, 30.0, 30.0, 30.0, 1, 2]
+
+
+async def test_the_budget_is_per_host():
+    slept: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    for host in ("a.example.com", "b.example.com"):
+        for _ in range(2):
+            hinted = [httpx.Response(429, headers={"Retry-After": "30"}) for _ in range(2)]
+            async with _client([*hinted, OK]) as client:
+                await http.request_json(client, "GET", f"https://{host}/x", sleep=fake_sleep)
+
+    assert slept == [30.0] * 8

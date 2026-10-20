@@ -22,7 +22,29 @@ RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 # misbehaving host cannot stall a run.
 MAX_RETRY_AFTER_S = 30.0
 
+# Total Retry-After waiting allowed per host per process. Once spent, a 429 fails
+# fast on the plain short backoff instead of waiting out another server-set delay.
+RETRY_AFTER_BUDGET_S = 120.0
+_retry_after_spent: dict[str, float] = {}
+
 Sleep = Callable[[float], Awaitable[None]]
+
+
+def reset_retry_budget() -> None:
+    """Forget all spent Retry-After time (tests; a long-lived process may call it too)."""
+    _retry_after_spent.clear()
+
+
+def _budgeted_wait(host: str, hinted: float | None, attempt: int) -> float:
+    """The seconds to sleep: the hint if there is one and the host's budget covers
+    it (charging the budget), else the plain `attempt`-second backoff."""
+    if hinted is None:
+        return attempt
+    spent = _retry_after_spent.get(host, 0.0)
+    if spent + hinted > RETRY_AFTER_BUDGET_S:
+        return attempt
+    _retry_after_spent[host] = spent + hinted
+    return hinted
 
 
 def retry_after_seconds(resp: httpx.Response) -> float | None:
@@ -37,7 +59,7 @@ def retry_after_seconds(resp: httpx.Response) -> float | None:
     if raw is None:
         try:
             body = resp.json()
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: a hostile deeply nested body
             return None
         raw = body.get("retry_after") if isinstance(body, dict) else None
     try:
@@ -91,7 +113,7 @@ async def request_json(
             last_exc = e
             if attempt < max_retries:
                 hinted = retry_after_seconds(e.response)
-                await nap(attempt if hinted is None else hinted)  # 1s, 2s, ...
+                await nap(_budgeted_wait(e.response.request.url.host, hinted, attempt))
         except (httpx.TimeoutException, httpx.TransportError) as e:
             last_exc = e
             if attempt < max_retries:
