@@ -1392,3 +1392,16 @@ def test_keep_row_response_keeps_alumni_badge(client_cfg):
 
     assert r.status_code == 200
     assert ALUMNI_BADGE in r.text
+
+
+def test_alumni_badge_shows_on_all_page_for_former_employer(client_cfg):
+    client, cfg, _, ids = client_cfg
+    cfg.candidate.former_employers = ["Acme Corporation, Inc."]
+
+    assert ALUMNI_BADGE in client.get("/all").text
+
+
+def test_alumni_badge_absent_on_all_page_without_former_employers(client_cfg):
+    client, _, _, _ = client_cfg
+
+    assert ALUMNI_BADGE not in client.get("/all").text

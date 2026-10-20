@@ -17,7 +17,7 @@
     <tr class="disp-{{ job.disposition | replace(' ', '-') }}">
       <td class="c-fit">{% if job.alignment_score is not none %}{{ job.alignment_score }}%{% else %}&mdash;{% endif %}</td>
       <td class="c-title"><a href="/jobs/{{ job.id }}">{{ job.title }}</a></td>
-      <td class="c-co">{{ job.company }}</td>
+      <td class="c-co">{{ job.company }} {% include "_network_badges.html" %}</td>
       <td class="c-loc">{% if job.geo_remote %}remote{% elif job.geo_city %}{{ job.geo_city }}{% else %}&mdash;{% endif %}</td>
       <td class="c-disp"><span class="disp-badge">{{ job.disposition }}</span> <span class="disp-reason">{{ job.reason }}</span></td>
       <td class="c-act">

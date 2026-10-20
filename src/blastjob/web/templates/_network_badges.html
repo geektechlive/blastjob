@@ -1,0 +1,7 @@
+{# The network count and alumni badge, shared by the stage-list rows and /all. #}
+{% if job.warm_count is defined and job.warm_count %}
+  <span class="badge fit fit-hi" title="connections at this company">{{ job.warm_count }} in your network</span>
+{% endif %}
+{% if job.is_alumni is defined and job.is_alumni %}
+  <span class="badge fit fit-hi" title="a former employer">you worked here</span>
+{% endif %}

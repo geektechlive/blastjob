@@ -29,7 +29,7 @@ Every list is sorted best fit first. On **Surfaced** and **Matches** a line unde
 | "staffing agency" | The poster is an agency, not the employer. |
 | "employer hidden" | The posting does not name the employer. |
 | "3 in your network" | You have that many connections at the company, from your network import. |
-| "you worked here" | The company is a former employer you listed in settings. |
+| "you worked here" | The company is a former employer you listed in settings. Both network badges also show beside the company on the All discovered page. |
 | "posting closed", "likely closed", "open · checked 2026-10-03" | The posting check. See [pipeline stages](stages.md#when-a-posting-closes). |
 
 Open the job and you will also see "Why this scored", the **Strengths** the match found and the **Gaps to probe**.

@@ -48,12 +48,7 @@
       {% if job.employer_hidden is defined and job.employer_hidden %}
         <span class="badge comp-unknown" title="the posting does not name the employer">employer hidden</span>
       {% endif %}
-      {% if job.warm_count is defined and job.warm_count %}
-        <span class="badge fit fit-hi" title="connections at this company">{{ job.warm_count }} in your network</span>
-      {% endif %}
-      {% if job.is_alumni is defined and job.is_alumni %}
-        <span class="badge fit fit-hi" title="a former employer">you worked here</span>
-      {% endif %}
+      {% include "_network_badges.html" %}
     </div>
     {% if job.rationale %}<p class="job-rationale">{{ job.rationale }}</p>{% endif %}
     {% if job.followup_reason is defined and job.followup_reason %}<p class="followup-flag">&#9200; {{ job.followup_reason }}</p>{% endif %}
