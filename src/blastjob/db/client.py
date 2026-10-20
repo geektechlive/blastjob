@@ -665,9 +665,13 @@ def backup_db(
     work-history overwrite (same `backups/` folder) but never touches them: pruning only matches the
     `blastjob-*.db` glob this function writes, so those snapshots are left alone.
     """
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    cfg_mod.ensure_private_dir(dest_dir)
     ts = now or datetime.now()
     target = dest_dir / f"blastjob-{ts:%Y%m%d-%H%M%S}.db"
+    # Create the file owner-only BEFORE sqlite writes into it (a plain connect would
+    # follow the umask: 0644 applications, contacts and comp data).
+    os.close(os.open(target, os.O_CREAT | os.O_WRONLY, PRIVATE_FILE_MODE))
+    os.chmod(target, PRIVATE_FILE_MODE)  # a same-second leftover keeps its old mode otherwise
     dest = sqlite3.connect(target)
     try:
         conn.backup(dest)

@@ -36,9 +36,9 @@ Nothing else is sent anywhere, and nothing is ever submitted on your behalf.
 
 ## Backups
 
-At the start of every daily run, including `--dry-run`, blastjob copies the database to `backups/blastjob-YYYYMMDD-HHMMSS.db` in the data folder, using SQLite's own backup method, which is safe while the cockpit is open. The newest 14 copies are kept and older ones are deleted. A run stopped by the `PAUSE` file takes no backup.
+At the start of every daily run, including `--dry-run`, blastjob copies the database to `backups/blastjob-YYYYMMDD-HHMMSS.db` in the data folder, using SQLite's own backup method, which is safe while the cockpit is open. The `backups/` folder is created owner-only (0700) and each copy is owner-only (0600), whatever the umask; a `backups/` folder that already exists keeps the mode you gave it. The newest 14 copies are kept and older ones are deleted. A run stopped by the `PAUSE` file takes no backup.
 
-Separately, whenever you save your work history on the **Work History** page or ingest resumes, the file being replaced is first copied to `backups/work_history-YYYYMMDD-HHMMSS.md` (ingest adds `-ingest` to the name). These are never deleted by the database rotation, and blastjob never prunes them.
+Separately, whenever you save your work history on the **Work History** page or ingest resumes, the file being replaced is first copied to `backups/work_history-YYYYMMDD-HHMMSS.md` (ingest adds `-ingest` to the name). Each snapshot is owner-only (0600). These are never deleted by the database rotation, and blastjob never prunes them.
 
 To restore the database:
 

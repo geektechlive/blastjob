@@ -33,7 +33,7 @@ To pause the daily run without changing any setting, create a file named `PAUSE`
 
 ## The secrets file
 
-API keys and app passwords live in a plain text file, never in the repository and never in your settings. The setting `paths.secrets_file` names it; if empty it is `<data folder>/secrets.env`. Make it readable only by you (`chmod 600`).
+API keys and app passwords live in a plain text file, never in the repository and never in your settings. The setting `paths.secrets_file` names it; if empty it is `<data folder>/secrets.env`. Make it readable only by you (`chmod 600`). blastjob still loads a file that other users can read or write, or that another user owns, but logs a warning (never the contents) and `blastjob setup doctor` shows a `secrets file mode` warning.
 
 The file has one `KEY=value` per line. Blank lines and lines starting with `#` are ignored, and quotes around a value are removed:
 

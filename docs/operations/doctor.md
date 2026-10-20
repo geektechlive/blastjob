@@ -36,6 +36,7 @@ Required checks (a failure is `FAIL`):
 Warnings (a failure is `warn` and does not fail the run):
 
 - **secrets file**. The file named by `paths.secrets_file` (default `<data folder>/secrets.env`) does not exist. Fine if you use no keys.
+- **secrets file mode**. The secrets file can be read or written by other users, or belongs to another user. Fix it with `chmod 600` on the file. Shown only when the file exists.
 - **unknown settings**. The database holds settings this version does not know. They are kept and ignored. Remove them only if you know they are obsolete.
 - **`JINA_API_KEY set`**. Shown when search firms or Apple discovery are on. Those need the key to search.
 - **`<setting> naming`**, for example `mail_user_env naming`. One line per saved mail variable name that breaks the [mail naming rule](settings-and-secrets.md#mail-accounts). To clear the warning, rename the variable in your secrets file and on the **Settings** page. The doctor does not print the name itself.

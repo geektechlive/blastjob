@@ -12,8 +12,11 @@ before any load it is `<resolved data dir>/secrets.env`.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 _configured: Path | None = None
 
@@ -68,11 +71,50 @@ def secret_names(path: Path | None = None) -> frozenset[str]:
         return frozenset()
 
 
+LOOSE_MODE_BITS = 0o077  # any group or other permission bit
+
+
+def secrets_file_problems(path: Path) -> list[str]:
+    """Plain-language problems with the secrets file's mode or owner (empty when
+    it is fine or missing). Looks at metadata only; never reads the contents."""
+    try:
+        st = path.stat()
+    except OSError:
+        return []
+    problems: list[str] = []
+    if st.st_mode & LOOSE_MODE_BITS:
+        problems.append(f"readable or writable by other users (mode {st.st_mode & 0o777:03o})")
+    if st.st_uid != os.geteuid():
+        problems.append("owned by another user")
+    return problems
+
+
+_warned: set[tuple[Path, tuple[str, ...]]] = set()
+
+
+def _warn_if_loose(path: Path) -> None:
+    """Log (once per process per file and problem) that the secrets file is loose.
+    Warn only: refusing to load could stop the unattended daily run."""
+    problems = secrets_file_problems(path)
+    key = (path, tuple(problems))
+    if not problems or key in _warned:
+        return
+    _warned.add(key)
+    log.warning(
+        "secrets file %s is %s; run `chmod 600` on it (values are not logged)",
+        path,
+        " and ".join(problems),
+    )
+
+
 def load_secrets_env(path: Path | None = None) -> int:
     """Parse KEY=VALUE lines into os.environ (without overriding). Returns how
-    many new keys were set. Missing file is fine (returns 0)."""
+    many new keys were set. Missing file is fine (returns 0). A file with a loose
+    mode or another owner is still loaded, with a logged warning."""
     added = 0
-    for key, value in _parse(secrets_path() if path is None else path):
+    target = secrets_path() if path is None else path
+    _warn_if_loose(target)
+    for key, value in _parse(target):
         if key not in os.environ:
             os.environ[key] = value
             added += 1

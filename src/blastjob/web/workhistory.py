@@ -33,6 +33,7 @@ from blastjob import config as cfg_mod
 from blastjob.models.config import BlastJobConfig
 
 FILENAME = "work_history.md"
+BACKUP_FILE_MODE = 0o600  # backups hold a person's history: owner-only
 
 
 class EmptyWorkHistoryError(ValueError):
@@ -101,8 +102,7 @@ def backup_work_history(
     is about to overwrite work_history.md (the web save route, the ingest
     route) uses the one backup implementation rather than a second copy of it.
     """
-    backups_dir = data_dir / "backups"
-    backups_dir.mkdir(parents=True, exist_ok=True)
+    backups_dir = cfg_mod.ensure_private_dir(data_dir / "backups")
     ts = now or datetime.now()
     base_name = f"work_history-{ts:%Y%m%d-%H%M%S}"
     if label:
@@ -110,11 +110,20 @@ def backup_work_history(
 
     dest = backups_dir / f"{base_name}.md"
     suffix = 1
-    while dest.exists():
-        dest = backups_dir / f"{base_name}-{suffix}.md"
-        suffix += 1
+    while True:
+        try:
+            # O_EXCL: never overwrite, and the copy is born owner-only (0600) whatever
+            # the source's mode or the umask (copy2 would carry the source's mode over).
+            fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, BACKUP_FILE_MODE)
+            break
+        except FileExistsError:
+            dest = backups_dir / f"{base_name}-{suffix}.md"
+            suffix += 1
 
-    shutil.copy2(path, dest)
+    with open(path, "rb") as src, os.fdopen(fd, "wb") as out:
+        shutil.copyfileobj(src, out)
+    st = path.stat()
+    os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns))  # keep the source's times, as copy2 did
     return dest
 
 

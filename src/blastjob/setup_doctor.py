@@ -151,7 +151,7 @@ def _secret_names(cfg: BlastJobConfig) -> list[tuple[str, str, bool]]:
 
 
 def check_secrets(cfg: BlastJobConfig) -> list[Check]:
-    from blastjob.secrets import load_secrets_env
+    from blastjob.secrets import load_secrets_env, secrets_file_problems
 
     path = cfg_mod.secrets_path(cfg)
     load_secrets_env(path)
@@ -162,7 +162,19 @@ def check_secrets(cfg: BlastJobConfig) -> list[Check]:
         f"create {path} (chmod 600) with KEY=VALUE lines, if you use any keys",
         required=False,
     )
-    return [exists] + [
+    mode_checks = []
+    if path.is_file():
+        problems = secrets_file_problems(path)
+        mode_checks.append(
+            Check(
+                "secrets file mode",
+                not problems,
+                "; ".join(problems) or "owner-only",
+                f"run: chmod 600 {path}",
+                required=False,
+            )
+        )
+    return [exists, *mode_checks] + [
         Check(
             f"{name} set",
             bool(os.environ.get(name)),
