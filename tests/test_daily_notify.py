@@ -22,6 +22,7 @@ import pytest
 from blastjob import daily
 from blastjob.db import client as dbc
 from blastjob.discovery.pipeline import DiscoveryResult
+from blastjob.llm.cost import CallCost
 from blastjob.models.config import BlastJobConfig
 
 N_JOBS = 30
@@ -60,6 +61,7 @@ def _stub_pipeline(monkeypatch, errors=None):
         return DiscoveryResult(fetched=0, per_source={}, errors=dict(errors or {}))
 
     class M:
+        cost = CallCost()
         scored = 0
         surfaced = 0
         queued = 0

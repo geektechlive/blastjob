@@ -25,7 +25,7 @@ from blastjob import secrets as secrets_mod
 from blastjob.core import employer_jd as ejd
 from blastjob.core.company import company_key
 from blastjob.db import client as dbc
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.matching import rescore
 from blastjob.models.config import BlastJobConfig
 from blastjob.web import service
@@ -168,8 +168,13 @@ async def _work(run: Run, load_config: LoadCfg, job_id: int) -> dict:
         if not changed:
             run.emit("log", res.summary())
             return {"upgraded": 0, "scored": 0}
-        counts = await rescore.rescore_jobs(cfg, conn, CostTracker(), changed)
-        run.emit("log", f"{res.summary()} Re-scored {counts.undecided + counts.kept}.")
+        tracker = CostTracker()
+        counts = await rescore.rescore_jobs(cfg, conn, tracker, changed)
+        run.emit(
+            "log",
+            f"{res.summary()} Re-scored {counts.undecided + counts.kept}. "
+            f"Cost {describe_cost(tracker.total_call_cost)}.",
+        )
         return {"upgraded": len(res.upgraded), "scored": counts.undecided + counts.kept}
     finally:
         conn.close()
@@ -191,7 +196,9 @@ async def _rescore_work(run: Run, load_config: LoadCfg, job_ids: list[int]) -> d
     conn = dbc.init_db(cfg)
     try:
         run.emit("log", f"Re-scoring {len(job_ids)} job(s) after a split...")
-        counts = await rescore.rescore_jobs(cfg, conn, CostTracker(), job_ids)
+        tracker = CostTracker()
+        counts = await rescore.rescore_jobs(cfg, conn, tracker, job_ids)
+        run.emit("log", f"Cost {describe_cost(tracker.total_call_cost)}.")
         return {"scored": counts.undecided + counts.kept}
     finally:
         conn.close()

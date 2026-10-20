@@ -17,6 +17,7 @@ import pytest
 from blastjob import daily
 from blastjob.db import client as dbc
 from blastjob.discovery.pipeline import DiscoveryResult
+from blastjob.llm.cost import CallCost
 from blastjob.models.config import BlastJobConfig
 from blastjob.notify import discord
 
@@ -63,6 +64,7 @@ def _stub_pipeline(monkeypatch, errors=None):
         )
 
     class M:
+        cost = CallCost()
         scored = 2
         notes: list[str] = []
         surfaced = 1
@@ -878,3 +880,14 @@ async def test_send_message_raises_on_error_status():
             max_retries=1,
             transport=httpx.MockTransport(handler),
         )
+
+
+def test_run_footer_shows_cost_known_and_unknown():
+    base = {"duration_s": 60, "fetched": 3, "scored": 2, "scoring_batches": 2, "scoring_s": 30}
+    known = daily.DailyResult(**base, scoring_cost=CallCost(cost_usd=0.1234))
+    unknown = daily.DailyResult(**base, scoring_cost=CallCost(cost_usd=0.1, known=False))
+    no_batches = daily.DailyResult(duration_s=60, fetched=3, scoring_cost=CallCost(cost_usd=0.1))
+
+    assert "cost $0.1234" in daily.format_run_footer(known)
+    assert "cost unknown" in daily.format_run_footer(unknown)
+    assert "cost" not in daily.format_run_footer(no_batches)

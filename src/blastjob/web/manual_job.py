@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from blastjob.db import client as dbc
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.models.config import BlastJobConfig
 from blastjob.web.runtime import RUNTIME, Run
 from blastjob.web.security import require_csrf
@@ -92,7 +92,10 @@ async def _score_new_job(run: Run, load_config: LoadCfg, job_id: int) -> dict:
     try:
         run.emit("log", f"Scoring manually added job {job_id}...")
         res = await run_matching(cfg, c, CostTracker(), job_ids=[job_id])
-        run.emit("log", f"Considered {res.considered}, scored {res.scored}.")
+        run.emit(
+            "log",
+            f"Considered {res.considered}, scored {res.scored}. Cost {describe_cost(res.cost)}.",
+        )
         for note in res.notes:
             run.emit("log", note)
         return {"scored": res.scored}

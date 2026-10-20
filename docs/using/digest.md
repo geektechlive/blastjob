@@ -41,7 +41,7 @@ Source errors and notes. Under "Source errors", a source that failed this run. U
 
 Monday heartbeat. On Mondays an italic line confirms the run is alive and gives seven-day totals.
 
-Footer. An italic line at the end gives how long the run took, how many postings it fetched from which sources, and how many it scored.
+Footer. An italic line at the end gives how long the run took, how many postings it fetched from which sources, how many it scored and what scoring cost (`cost unknown` when the model provider did not report usage).
 
 ## Cockpit links
 

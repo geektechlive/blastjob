@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from blastjob.db import client as dbc
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.matching import rescore
 from blastjob.models.config import BlastJobConfig
 from blastjob.web.manual_job import MANUAL_SCORE_RUN
@@ -25,8 +25,9 @@ async def _work(run: Run, load_config: Callable[[], BlastJobConfig], job_id: int
     conn = dbc.init_db(cfg)
     try:
         run.emit("log", f"Re-scoring job {job_id} against the pasted description...")
-        scored = await rescore.rescore_job(cfg, conn, CostTracker(), job_id)
-        run.emit("log", f"Scored {scored}.")
+        tracker = CostTracker()
+        scored = await rescore.rescore_job(cfg, conn, tracker, job_id)
+        run.emit("log", f"Scored {scored}. Cost {describe_cost(tracker.total_call_cost)}.")
         return {"scored": scored}
     finally:
         conn.close()

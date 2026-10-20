@@ -87,6 +87,12 @@ def aggregate_calls(calls: Sequence[CallCost]) -> CallCost:
     )
 
 
+def describe_cost(call: CallCost) -> str:
+    """A cost for people to read: "$0.0123", or "unknown" when any call's usage was
+    unknown (a partial sum is not a cost). Docs: docs/how-it-works/llm.md."""
+    return f"${call.cost_usd:.4f}" if call.known else "unknown"
+
+
 @dataclass
 class CostTracker:
     calls: list[CallCost] = field(default_factory=list)

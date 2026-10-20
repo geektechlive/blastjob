@@ -723,3 +723,73 @@ def test_new_build_only_fields_being_null_does_not_confuse_the_legacy_reader(tmp
     # Unknown, not free -- scan_history prefers build_cost_usd.
     assert entries[0].cost_usd is None
     assert entries[0].cache_hit_ratio is None
+
+
+# ---------- #30: OpenAI with no usage block is unknown, not a known $0 ----------
+
+
+class _FakeOpenAICompletionStream:
+    """Stands in for `client.chat.completions.stream(...)`; `usage` is what the
+    final completion carries (None = the provider sent no usage block)."""
+
+    def __init__(self, usage):
+        self._usage = usage
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    def __aiter__(self):
+        async def gen():
+            delta = type("D", (), {"content": "hi"})
+            yield type("Chunk", (), {"choices": [type("C", (), {"delta": delta})]})
+
+        return gen()
+
+    async def get_final_completion(self):
+        return type("Final", (), {"usage": self._usage})
+
+
+class _FakeOpenAIClient:
+    def __init__(self, usage):
+        completions = type(
+            "Comp", (), {"stream": lambda _s, **kw: _FakeOpenAICompletionStream(usage)}
+        )
+        self.chat = type("Chat", (), {"completions": completions()})()
+
+
+async def _openai_final(usage):
+    stream = providers._OpenAIStream(_FakeOpenAIClient(usage), "m", "sys", "user")
+    async with stream:
+        async for _ in stream.text_stream:
+            pass
+        return await stream.get_final_message()
+
+
+async def test_openai_stream_without_usage_block_costs_unknown_not_zero():
+    final = await _openai_final(None)
+
+    cost = cost_from_usage(final.usage, PricingConfig())
+
+    assert final.usage is None
+    assert cost.known is False
+
+
+async def test_openai_stream_with_usage_block_costs_known():
+    usage = type("U", (), {"prompt_tokens": 100, "completion_tokens": 20})()
+
+    final = await _openai_final(usage)
+
+    cost = cost_from_usage(final.usage, PricingConfig())
+    assert cost.known is True
+    assert cost.input_tokens == 100
+    assert cost.output_tokens == 20
+
+
+def test_describe_cost_known_and_unknown():
+    from blastjob.llm.cost import describe_cost
+
+    assert describe_cost(CallCost(cost_usd=0.1234)) == "$0.1234"
+    assert describe_cost(CallCost(cost_usd=0.5, known=False)) == "unknown"

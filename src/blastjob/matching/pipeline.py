@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 from blastjob import config as cfg_mod
 from blastjob.core.company import company_key
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CallCost, CostTracker, aggregate_calls
 from blastjob.matching.fingerprint import scoring_fingerprint
 from blastjob.matching.gate import decide
 from blastjob.matching.geo import assess_geo
@@ -45,6 +45,9 @@ class MatchResult:
     # Run-level notes for the cockpit run panel / blastjob-daily digest -- never
     # raised as an exception, since an unconfigured install is not a failure.
     notes: list[str] = field(default_factory=list)
+    # Everything the model calls of THIS run cost; `.known` is False if any call's
+    # usage was unknown. A run that made no call is a known zero.
+    cost: CallCost = field(default_factory=CallCost)
 
 
 # States the matcher owns. kept/archived belong to the user and are never
@@ -320,7 +323,32 @@ async def run_matching(
 
     By default a score stamped with the current fingerprint is replayed (free).
     `rescore_all` replays none, so every candidate that passes geo and the
-    prefilter goes to the model (the cockpit's Re-score all)."""
+    prefilter goes to the model (the cockpit's Re-score all). `MatchResult.cost`
+    totals only the calls this run recorded, so a shared tracker is safe."""
+    first_call = len(cost_tracker.calls)
+    res = await _run_matching(
+        cfg,
+        conn,
+        cost_tracker,
+        on_progress,
+        only_unscored=only_unscored,
+        job_ids=job_ids,
+        rescore_all=rescore_all,
+    )
+    res.cost = aggregate_calls(cost_tracker.calls[first_call:])
+    return res
+
+
+async def _run_matching(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    cost_tracker: CostTracker,
+    on_progress: Callable[[int, int], None] | None,
+    *,
+    only_unscored: bool,
+    job_ids: Collection[int] | None,
+    rescore_all: bool,
+) -> MatchResult:
     res = MatchResult()
     wh = work_history_text(cfg)
     # Computed from the same `wh` the scorer is given, once per run.

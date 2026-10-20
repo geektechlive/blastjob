@@ -26,7 +26,7 @@ from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
 from blastjob.db import client as dbc
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.models.job import ARCHIVE_REASON_LABELS, ARCHIVE_REASONS, ReviewState
 from blastjob.models.tracking import STATUSES
@@ -205,7 +205,8 @@ def create_app(
             run.emit(
                 "log",
                 f"Done: {mres.surfaced} surfaced, {mres.queued} queued "
-                f"(scored {mres.scored} of {dres.fetched} fetched).",
+                f"(scored {mres.scored} of {dres.fetched} fetched, "
+                f"cost {describe_cost(mres.cost)}).",
             )
             for note in mres.notes:
                 run.emit("log", note)
@@ -244,7 +245,7 @@ def create_app(
                 f"Considered {res.considered}, scored {res.scored} -> surfaced "
                 f"{res.surfaced}, queued {res.queued}, rejected {res.rejected} "
                 f"(prefiltered {res.prefiltered_out}, geo-rejected {res.geo_rejected}, "
-                f"location unclear {res.geo_unknown}).",
+                f"location unclear {res.geo_unknown}). Cost {describe_cost(res.cost)}.",
             )
             for note in res.notes:
                 run.emit("log", note)

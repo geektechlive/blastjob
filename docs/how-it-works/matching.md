@@ -16,6 +16,8 @@ Matching reads what [discovery](discovery.md) stored and decides which review st
 
 Matching makes no LLM call until `candidate.target_titles` is set (`is_configured` in `models/config.py`), so a fresh install cannot spend money scoring against nobody. Geo and the prefilter still run; every survivor stays unscored, and the run reports a note that no candidate profile is set.
 
+`MatchResult.cost` totals what this run's model calls cost (only the calls it recorded, so a shared tracker is safe); it is unknown if any call's usage was unknown. The cockpit run logs, the daily log line and the digest footer show it (see [llm](llm.md)).
+
 The daily run scores only unscored rows (`only_unscored`). The cockpit's **Find + Score** does the same, while **Re-score changed** also redoes scores whose fingerprint is old (see [score fingerprint](#score-fingerprint)). **Re-score all** is `run_matching(rescore_all=True)`: no prior score is replayed, so every candidate that passes geo and the prefilter goes to the model (byte-identical postings still share one call). The cockpit asks for confirmation first, naming `pipeline.count_candidates` jobs, and the POST (`/run/matching/all`) is CSRF-checked. Both buttons share the one `matching` run slot, and the run log's first line names the mode.
 
 ## Geo

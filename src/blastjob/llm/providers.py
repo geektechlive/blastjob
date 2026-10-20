@@ -174,9 +174,11 @@ class _OpenAIFakeUsage:
 
 
 class _OpenAIFinalMessage:
-    def __init__(self, text: str, prompt_tokens: int, completion_tokens: int):
+    def __init__(self, text: str, usage: _OpenAIFakeUsage | None):
         self.content = [type("Block", (), {"text": text})]
-        self.usage = _OpenAIFakeUsage(prompt_tokens, completion_tokens)
+        # None = the provider sent no usage block: cost_from_usage reports that as
+        # unknown, never as a known $0 (docs/how-it-works/llm.md).
+        self.usage = usage
 
 
 async def openai_stream(
@@ -233,14 +235,12 @@ class _OpenAIStream:
                     yield delta
             final = await stream.get_final_completion()
             usage = final.usage
-            self._usage = _OpenAIFakeUsage(
-                usage.prompt_tokens if usage else 0,
-                usage.completion_tokens if usage else 0,
+            self._usage = (
+                _OpenAIFakeUsage(usage.prompt_tokens, usage.completion_tokens) if usage else None
             )
 
     async def get_final_message(self):
-        usage = self._usage or _OpenAIFakeUsage(0, 0)
-        return _OpenAIFinalMessage(self._full_text, usage.input_tokens, usage.output_tokens)
+        return _OpenAIFinalMessage(self._full_text, self._usage)
 
 
 # ---------------------------------------------------------------------------

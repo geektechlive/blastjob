@@ -81,7 +81,7 @@ stream manager. OpenAI and the CLI are wrapped to match.
 
 Cost is recorded per call from the final message's usage (`llm/cost.py`). On `claude-cli` the
 usage comes from the CLI's terminal `result` line; when that line never arrives, usage is
-`None` and the cost is reported as unknown, never as $0.00.
+`None` and the cost is reported as unknown, never as $0.00. The `openai` provider does the same when the stream carries no usage block. `cost.describe_cost` renders a total as `$0.0123` or `unknown`; a total is unknown if any call in it was.
 
 ## Research call
 

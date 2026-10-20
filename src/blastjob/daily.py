@@ -41,7 +41,7 @@ from blastjob.core import closure, closure_links
 from blastjob.core.closure_links import LinkDeps, is_authoritative
 from blastjob.daily_tools import recluster_cli
 from blastjob.db import client as dbc
-from blastjob.llm.cost import CostTracker
+from blastjob.llm.cost import CallCost, CostTracker, describe_cost
 from blastjob.models.config import BlastJobConfig
 from blastjob.web.apply_link import ApplyLink, apply_links_for
 from blastjob.web.stage_lists import followups_due
@@ -77,6 +77,9 @@ class DailyResult:
     scored: int = 0
     scoring_batches: int = 0
     scoring_s: float = 0.0
+    # What this run's scoring calls cost (unknown if any usage was unknown). Shown in
+    # the footer and the run log; not stored in daily_runs.
+    scoring_cost: CallCost = field(default_factory=CallCost)
     new_jobs: int = 0
     followups: int = 0
     errors: dict[str, str] = field(default_factory=dict)
@@ -320,6 +323,7 @@ def format_run_footer(res: DailyResult) -> str:
         scoring_str = (
             f" · scored {res.scored} in {res.scoring_batches} batches"
             f" / {format_duration(res.scoring_s)}"
+            f" · cost {describe_cost(res.scoring_cost)}"
         )
     return f"_Run {format_duration(res.duration_s)} · {fetched_str}{scoring_str}_"
 
@@ -466,6 +470,7 @@ async def run_daily(
             )
             res.scoring_s = time.monotonic() - scoring_start
             res.scored = mres.scored
+            res.scoring_cost = mres.cost
             if mres.scoring_failures:
                 res.errors["scoring"] = (
                     f"{mres.scoring_failures} batch(es) failed; retried next run"
@@ -473,10 +478,11 @@ async def run_daily(
             for note in mres.notes:
                 res.errors["candidate_profile"] = note
             log.info(
-                "matching: scored %d surfaced %d queued %d",
+                "matching: scored %d surfaced %d queued %d cost %s",
                 mres.scored,
                 mres.surfaced,
                 mres.queued,
+                describe_cost(mres.cost),
             )
         except Exception as e:
             conn.rollback()
@@ -861,7 +867,8 @@ def main(argv: list[str] | None = None) -> int:
     summary = (
         f"fetched {res.fetched} ({_top_sources(res.per_source)}), "
         f"scored {res.scored} in {res.scoring_batches} batches "
-        f"({format_duration(res.scoring_s)}), new {res.new_jobs}, "
+        f"({format_duration(res.scoring_s)}, cost {describe_cost(res.scoring_cost)}), "
+        f"new {res.new_jobs}, "
         f"follow-ups {res.followups}, errors {len(res.errors)}, sent {res.sent}, "
         f"duration {format_duration(res.duration_s)}, "
         f"backup {res.backup_path or 'failed'}"

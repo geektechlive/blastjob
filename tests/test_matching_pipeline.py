@@ -603,3 +603,43 @@ async def test_configured_candidate_profile_still_scores(cfg_conn, monkeypatch):
     assert res.notes == []
     row = conn.execute("SELECT alignment_score FROM jobs WHERE id=?", (jid,)).fetchone()
     assert row["alignment_score"] == 90
+
+
+async def test_run_matching_reports_this_runs_cost_only(cfg_conn, monkeypatch):
+    """MatchResult.cost totals the calls THIS run recorded, not a shared tracker's
+    earlier ones, and is unknown if any call's usage was unknown (#30)."""
+    from blastjob.llm.cost import CallCost, CostTracker
+
+    cfg, conn = cfg_conn
+    dbc.upsert_job(
+        conn,
+        source="t",
+        external_id="1",
+        title="VP, Operations",
+        company="Acme",
+        raw_jd=VP,
+        geo_remote=1,
+    )
+    tracker = CostTracker()
+    tracker.record(CallCost(cost_usd=9.0))  # an earlier run's call
+
+    async def fake_score(cfg_, wh, candidates, ct, **kw):
+        ct.record(CallCost(cost_usd=0.25))
+        ct.record(CallCost(known=False))
+        return ScoringResult(scores={})
+
+    monkeypatch.setattr(mp, "score_candidates", fake_score)
+
+    res = await mp.run_matching(cfg, conn, tracker)
+
+    assert res.cost.known is False
+    assert res.cost.cost_usd == 0.25
+
+    async def known_score(cfg_, wh, candidates, ct, **kw):
+        ct.record(CallCost(cost_usd=0.25))
+        return ScoringResult(scores={})
+
+    monkeypatch.setattr(mp, "score_candidates", known_score)
+    res2 = await mp.run_matching(cfg, conn, tracker, rescore_all=True)
+    assert res2.cost.known is True
+    assert res2.cost.cost_usd == 0.25

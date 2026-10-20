@@ -180,7 +180,11 @@ def test_openai_fake_usage_attributes():
 
 
 def test_openai_final_message_attributes():
-    msg = _OpenAIFinalMessage("resume text", 100, 50)
+    msg = _OpenAIFinalMessage("resume text", _OpenAIFakeUsage(100, 50))
     assert msg.content[0].text == "resume text"
     assert msg.usage.input_tokens == 100
     assert msg.usage.output_tokens == 50
+
+
+def test_openai_final_message_without_usage_keeps_usage_none():
+    assert _OpenAIFinalMessage("resume text", None).usage is None
