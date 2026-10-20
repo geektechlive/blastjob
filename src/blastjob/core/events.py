@@ -10,6 +10,8 @@ recruiter reply, the posting closing. Writers:
 - the reply scanner in `discovery/replies.py` (source 'replies'; ref is the
   Message-ID);
 - the history backfill in `core/backfill.py` (source 'backfill');
+- the same-role merge in `web/same_role.py` (source 'same_role'), a `note` on the
+  survivor and on each duplicate it retires, inside the merge's transaction;
 - the user, from the job page (source 'manual' -- the only events a delete may
   remove, and only on the job they belong to).
 
@@ -41,7 +43,7 @@ EVENT_KINDS: tuple[str, ...] = (
     "note",
 )
 
-EVENT_SOURCES: tuple[str, ...] = ("manual", "state", "closure", "replies", "backfill")
+EVENT_SOURCES: tuple[str, ...] = ("manual", "state", "closure", "replies", "backfill", "same_role")
 
 KIND_LABELS: dict[str, str] = {
     "applied": "Applied",

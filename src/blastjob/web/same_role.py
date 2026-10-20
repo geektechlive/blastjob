@@ -21,7 +21,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse
 
-from blastjob.core import page_links
+from blastjob.core import events, page_links
 from blastjob.core import role_clusters as rc
 from blastjob.core import same_role as sr
 from blastjob.core.agencies import is_agency
@@ -339,6 +339,23 @@ def reconcile_applications(conn: sqlite3.Connection, job_id: int) -> str:
         lines.append(
             f"Merged #{dup['id']} ({dup['source']}, state {dup['application_state'] or '-'}, "
             f"applied_at {dup['applied_at'] or '-'}) as a duplicate on {today}"
+        )
+        # Both timelines show the merge. The duplicate's own events stay on it.
+        events.insert_event(
+            conn,
+            int(survivor["id"]),
+            "note",
+            today,
+            note=f"Merged duplicate application #{dup['id']} ({dup['source']}) into this one",
+            source="same_role",
+        )
+        events.insert_event(
+            conn,
+            int(dup["id"]),
+            "note",
+            today,
+            note=f"Retired as a duplicate; the application continues on #{survivor['id']}",
+            source="same_role",
         )
     old = survivor["app_notes"]
     new = "\n".join([old, *lines]) if old else "\n".join(lines)

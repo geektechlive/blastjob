@@ -14,6 +14,7 @@
 | `closure` | `closure.close_transition`, `closure.sweep_filled` and `closure.reopen_transition` |
 | `replies` | the recruiter-reply scanner; `ref` is the Message-ID |
 | `backfill` | the history backfill (see [Backfill](#backfill)) |
+| `same_role` | `same_role.reconcile_applications`: a `note` on the surviving application and one on each duplicate it retires, in the merge's transaction (see [same-role](same-role.md)) |
 | `manual` | you, from the job page |
 
 `events.insert_event` never commits; `events.add_event` commits. The first form is how a writer joins its own transaction.

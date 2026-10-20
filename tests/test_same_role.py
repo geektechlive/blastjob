@@ -659,6 +659,35 @@ def test_merging_into_a_cluster_with_two_applications_archives_both_duplicates(c
     assert not conn.in_transaction
 
 
+def _events(conn, job_id):
+    return [
+        (r["kind"], r["source"], r["note"])
+        for r in conn.execute(
+            "SELECT kind, source, note FROM application_events WHERE job_id=? ORDER BY id",
+            (job_id,),
+        )
+    ]
+
+
+def test_a_merge_writes_a_note_event_on_the_survivor_and_each_duplicate(conn):
+    a, b, c = _three_applications(conn)
+    b_events_before = _events(conn, b)
+
+    assert srv.decide(conn, a, c, rc.SAME, RADIUS, GEO) == ""
+
+    survivor_events = [e for e in _events(conn, a) if e[1] == "same_role"]
+    assert len(survivor_events) == 2
+    assert all(kind == "note" for kind, _, _ in survivor_events)
+    joined = " ".join(note for _, _, note in survivor_events)
+    assert f"#{b}" in joined and f"#{c}" in joined
+    for dup in (b, c):
+        dup_events = [e for e in _events(conn, dup) if e[1] == "same_role"]
+        assert len(dup_events) == 1
+        assert dup_events[0][0] == "note" and f"#{a}" in dup_events[0][2]
+    # The duplicate's own earlier events stay where they were (not re-pointed).
+    assert _events(conn, b)[: len(b_events_before)] == b_events_before
+
+
 def test_a_failure_on_the_second_duplicate_rolls_the_whole_merge_back(conn, monkeypatch):
     a, b, c = _three_applications(conn)
     clusters_before = {j: _cluster_of(conn, j) for j in (a, b, c)}
@@ -682,6 +711,7 @@ def test_a_failure_on_the_second_duplicate_rolls_the_whole_merge_back(conn, monk
         ("kept", "screen"),
     ]
     assert _notes(conn, a) == ""
+    assert conn.execute("SELECT COUNT(*) FROM application_events").fetchone()[0] == 0
     assert not conn.in_transaction
 
 
