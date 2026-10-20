@@ -464,6 +464,12 @@ def _from_domain(sender: str, domain: str) -> bool:
     return any(pattern.search(f) for f in folded)
 
 
+def is_alert_domain_sender(sender: str) -> bool:
+    """True when the sender ADDRESS is at a known alert domain (or a subdomain, or
+    folded in by Apple's relay). Display names never count."""
+    return any(_from_domain(sender, d) for d in ALERT_SENDER_DOMAINS)
+
+
 def looks_like_alert(sender: str, subject: str) -> bool:
     """Header-only gate before a body fetch. LinkedIn sends many notification
     mails from linkedin.com (impressions, comments, messages), so for LinkedIn

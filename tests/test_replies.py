@@ -66,6 +66,9 @@ def _no_dates(**kw):
 
 # ---------- header-level candidate gate ----------
 
+LINKEDIN = "linkedin.com"
+INDEED = "indeed.com"
+
 
 def test_linkedin_alert_sender_is_not_a_reply_candidate():
     assert not rp._is_reply_candidate("LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>", "x")
@@ -73,6 +76,22 @@ def test_linkedin_alert_sender_is_not_a_reply_candidate():
 
 def test_indeed_alert_sender_is_not_a_reply_candidate():
     assert not rp._is_reply_candidate("Indeed <alert@indeed.com>", "x")
+
+
+def test_alert_domain_in_a_display_name_or_local_part_is_still_a_reply_candidate():
+    assert rp._is_reply_candidate('"Jane (ex-linkedin.com)" <jane@example.com>', "RE: role")
+    assert rp._is_reply_candidate("Jane <jane.indeed.com@example.org>", "RE: role")
+    assert rp._is_reply_candidate(f"Jane <jane@not{LINKEDIN}>", "RE: role")
+
+
+def test_alert_sender_subdomain_is_not_a_reply_candidate():
+    assert not rp._is_reply_candidate(f"Indeed <hello@jobalert.{INDEED}>", "x")
+
+
+def test_alert_sender_behind_the_apple_relay_is_not_a_reply_candidate():
+    relay = "privaterelay.appleid.com"
+    sender = f"LinkedIn <updates_at_linkedin_com_a1b2c3d4e5_f6a7b8c@{relay}>"
+    assert not rp._is_reply_candidate(sender, "x")
 
 
 def test_ats_no_reply_sender_is_not_a_reply_candidate():

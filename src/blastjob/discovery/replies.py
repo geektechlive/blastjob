@@ -159,11 +159,12 @@ def replies_configured(cfg: BlastJobConfig) -> bool:
 
 def _is_reply_candidate(sender: str, subject: str) -> bool:
     """Header-only gate: not a known alert sender, not an obviously automated
-    address. Necessary but not sufficient -- see `reply_gate`."""
-    s = ma.normalize_sender(sender)
-    if any(domain in s for domain in ma.ALERT_SENDER_DOMAINS):
+    address. Necessary but not sufficient -- see `reply_gate`. The alert test reads
+    the parsed address only, so a recruiter whose display name mentions an alert
+    domain is still read."""
+    if ma.is_alert_domain_sender(sender):
         return False
-    return not _AUTOMATED_SENDER.search(s)
+    return not _AUTOMATED_SENDER.search(ma.normalize_sender(sender))
 
 
 def reply_gate(jobs: list[sqlite3.Row]) -> Callable[[str, str], bool]:
