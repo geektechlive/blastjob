@@ -125,7 +125,7 @@ A search-chosen URL is a request-forgery vector, so every page request goes thro
 - The body is capped at 2 MB.
 - A refused hop is no page, never an error.
 
-`allow_aggregators=True` is used only by `discovery/enrich.py`, for Adzuna and Indeed pages. It admits job boards but never LinkedIn (`LINKEDIN_HOSTS`). The rule is in [never contact LinkedIn](../truth-guarantees.md#never-contact-linkedin).
+`allow_aggregators=True` is used only by `discovery/enrich.py`, for alert-email postings (Indeed pages). The Adzuna adapter no longer fetches pages. It admits job boards but never LinkedIn (`LINKEDIN_HOSTS`). The rule is in [never contact LinkedIn](../truth-guarantees.md#never-contact-linkedin).
 
 ## Known risk
 

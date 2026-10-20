@@ -1,6 +1,6 @@
 """Fetch the full JD for aggregator postings.
 
-Adzuna's API returns only a ~500-char snippet, but its details page embeds the
+Alert-email postings (mailalerts.py) carry only a snippet, but the posting page embeds the
 complete description as schema.org JSON-LD (JobPosting.description). We parse that
 structured data — reliable, not HTML scraping — so matching scores on the full
 posting instead of a snippet. Fail-soft: on any problem the snippet is kept.

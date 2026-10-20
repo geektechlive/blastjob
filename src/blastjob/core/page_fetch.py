@@ -80,8 +80,8 @@ def is_aggregator_host(host: str) -> bool:
 def fetchable(url: str, *, allow_aggregators: bool = False) -> bool:
     """http(s), a host, and not an aggregator (linkedin.com included). Parsed by
     httpx, the parser that sends the request, so the two cannot disagree.
-    `allow_aggregators` admits job boards (enrich.py reads Adzuna/Indeed pages)
-    but never LinkedIn."""
+    `allow_aggregators` admits job boards (enrich.py reads alert-email postings,
+    e.g. Indeed pages) but never LinkedIn."""
     try:
         parsed = httpx.URL(url)
     except (httpx.InvalidURL, TypeError, ValueError):

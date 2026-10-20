@@ -129,9 +129,7 @@ class AdzunaAdapter:
             for p in parse_jobs(payload):
                 if p.external_id:
                     by_id[p.external_id] = p
-        postings = list(by_id.values())
-        # Upgrade the ~500-char API snippets to full JDs from each details page.
-        from blastjob.discovery.enrich import enrich_full_jds
-
-        await enrich_full_jds(postings, timeout_s=self.timeout_s)
-        return postings
+        # The API returns ~500-char snippets only. Adzuna's details pages sit behind a
+        # human check blastjob never tries to pass, so they are not fetched; the full
+        # description comes from the employer's own posting (docs/how-it-works/employer-data.md).
+        return list(by_id.values())
