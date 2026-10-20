@@ -67,7 +67,7 @@ A regex cannot read "AVP Strategic Sales (Enterprise, Client Sales)", which is a
 Constraints that make it safe and cheap:
 
 - **Titles only.** The model receives distinct title and company strings, never a name, URL or message history. A pair shared by many contacts is classified once, and the result is mapped back locally by string.
-- **The deterministic classifier is the floor.** Where an enrichment verdict exists, the views use it; otherwise they use `classify_seniority`. The finer tiers map back onto the four the cockpit ranks on.
+- **The deterministic classifier is the floor.** Where an enrichment verdict exists, every view uses it (warm-path order, the summary counts, the Dormant ties filter and the warmth score); otherwise they use `classify_seniority`. The finer tiers map back onto the four the cockpit ranks on.
 - **`canonical_company` is a suggestion, never an identity join.** If the model mapped an ambiguous employer to the wrong brand, a real person would be joined to a target employer and the cockpit would recommend a warm introduction that does not exist. Only deterministic aliases or your own approval affect warm-path matching.
 - **Resumable.** A pair is pending while any contact holding it has no enrichment stamp, so a re-import classifies only the new ones and a crash resumes where it stopped. Titles go in batches of 40; a batch that fails or returns nothing parseable is skipped and reported, and the run continues. A malformed model element is skipped, never written.
 - **Unreadable means unknown.** The prompt tells the model to answer individual contributor, function "other" and an empty company rather than guess.

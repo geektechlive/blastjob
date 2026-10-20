@@ -215,7 +215,7 @@ def recruiter_desk(conn: sqlite3.Connection) -> list[dict]:
             "has_live_jobs": r["company_key"] in live_keys,
             "last_message_at": r["last_message_at"],
             "warmth_score": warmth_score(
-                r["message_count"], r["last_message_at"], r["seniority"], today
+                r["message_count"], r["last_message_at"], _effective_tier(r), today
             ),
         }
         for r in rows
@@ -240,7 +240,7 @@ def dormant_ties(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     rows = conn.execute(
         "SELECT full_name, url, company, company_key, position, seniority, enrich_tier, "
         "last_message_at, message_count FROM network_contacts "
-        f"WHERE seniority IN ({placeholders}) AND message_count > 0",
+        f"WHERE {net._EFFECTIVE_TIER_SQL} IN ({placeholders}) AND message_count > 0",
         tuple(_WARM_SENIORITIES),
     ).fetchall()
     if not rows:
@@ -259,7 +259,7 @@ def dormant_ties(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
             "last_message_at": r["last_message_at"],
             "has_live_jobs": r["company_key"] in live_keys,
             "warmth_score": warmth_score(
-                r["message_count"], r["last_message_at"], r["seniority"], today
+                r["message_count"], r["last_message_at"], _effective_tier(r), today
             ),
         }
         for r in rows

@@ -803,12 +803,13 @@ def advocates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def network_summary(conn: sqlite3.Connection) -> dict:
-    """Totals by seniority, recruiter count, and the companies with the most
+    """Totals by effective tier (the enriched verdict when there is one, else
+    the regex seniority), recruiter count, and the companies with the most
     connections. Feeds the /network page."""
     by_seniority = {
-        r["seniority"]: r["n"]
+        r["tier"]: r["n"]
         for r in conn.execute(
-            "SELECT seniority, COUNT(*) n FROM network_contacts GROUP BY seniority"
+            f"SELECT {_EFFECTIVE_TIER_SQL} AS tier, COUNT(*) n FROM network_contacts GROUP BY tier"
         ).fetchall()
     }
     recruiter_count = conn.execute(

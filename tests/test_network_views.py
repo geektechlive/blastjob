@@ -472,3 +472,90 @@ def test_warmth_score_is_deterministic():
 def test_today_constant_is_a_real_date():
     # sanity check on the fixture constant itself
     assert date.fromisoformat(TODAY)
+
+
+# --------------------------------------------------------------------------
+# effective (enriched) tier in the summary, dormant ties and warmth (#56)
+# --------------------------------------------------------------------------
+
+
+def _set_enrich_tier(conn, contact_id: int, tier: str) -> None:
+    conn.execute("UPDATE network_contacts SET enrich_tier=? WHERE id=?", (tier, contact_id))
+    conn.commit()
+
+
+def test_dormant_ties_include_contact_enriched_to_exec(conn):
+    cid = _add_contact(
+        conn,
+        full_name="Avery Enriched",
+        company="Acme Corp",
+        position="AVP Strategic Sales",
+        seniority="ic",
+        message_count=3,
+        last_message_at="2026-01-01",
+    )
+    _set_enrich_tier(conn, cid, "vp")
+
+    result = nv.dormant_ties(conn)
+
+    assert [r["name"] for r in result] == ["Avery Enriched"]
+    assert result[0]["seniority"] == "exec"
+
+
+def test_dormant_ties_drop_contact_enriched_down_to_ic(conn):
+    cid = _add_contact(
+        conn,
+        full_name="Casey Demoted",
+        company="Acme Corp",
+        seniority="exec",
+        message_count=3,
+        last_message_at="2026-01-01",
+    )
+    _set_enrich_tier(conn, cid, "ic")
+
+    assert nv.dormant_ties(conn) == []
+
+
+def test_dormant_warmth_uses_enriched_tier(conn):
+    ic_id = _add_contact(
+        conn, full_name="Plain Ic", company="Acme Corp", seniority="ic",
+        message_count=3, last_message_at="2026-01-01",
+    )  # fmt: skip
+    _set_enrich_tier(conn, ic_id, "vp")
+    exec_id = _add_contact(
+        conn, full_name="Real Exec", company="Northwind", seniority="exec",
+        message_count=3, last_message_at="2026-01-01",
+    )  # fmt: skip
+    assert exec_id
+
+    scores = {r["name"]: r["warmth_score"] for r in nv.dormant_ties(conn)}
+
+    assert scores["Plain Ic"] == scores["Real Exec"]
+
+
+def test_recruiter_desk_warmth_uses_enriched_tier(conn):
+    a = _add_contact(
+        conn, full_name="Rec Enriched", company="Acme Corp", seniority="ic",
+        is_recruiter=1, message_count=2, last_message_at="2026-01-01",
+    )  # fmt: skip
+    _set_enrich_tier(conn, a, "vp")
+    _add_contact(
+        conn, full_name="Rec Exec", company="Northwind", seniority="exec",
+        is_recruiter=1, message_count=2, last_message_at="2026-01-01",
+    )  # fmt: skip
+
+    scores = {r["name"]: r["warmth_score"] for r in nv.recruiter_desk(conn)}
+
+    assert scores["Rec Enriched"] == scores["Rec Exec"]
+
+
+def test_network_summary_groups_by_effective_tier(conn):
+    from blastjob.core import network as net
+
+    a = _add_contact(conn, full_name="Avery Enriched", company="Acme Corp", seniority="ic")
+    _set_enrich_tier(conn, a, "vp")
+    _add_contact(conn, full_name="Plain Ic", company="Acme Corp", seniority="ic")
+
+    summary = net.network_summary(conn)
+
+    assert summary["by_seniority"] == {"exec": 1, "ic": 1}
