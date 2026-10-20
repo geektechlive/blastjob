@@ -302,3 +302,23 @@ async def test_same_key_starts_a_new_run_once_the_first_failed():
     again = await _park(reg, "prep", "7", asyncio.Event())
     assert again is not first
     assert again.status == "running"
+
+
+# ----- start_run reports whether it scheduled the work (#54) ------------------
+
+
+async def test_start_run_reports_scheduled_then_existing():
+    reg = rt.Runtime()
+    gate = asyncio.Event()
+
+    async def work(run):
+        await gate.wait()
+
+    first, first_scheduled = reg.start_run("ingest", work)
+    second, second_scheduled = reg.start_run("ingest", work)
+
+    assert first_scheduled is True
+    assert second_scheduled is False
+    assert second is first
+    gate.set()
+    await asyncio.sleep(0)

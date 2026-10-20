@@ -190,6 +190,12 @@ class Runtime:
     def start(
         self, name: str, work: Callable[[Run], Awaitable[Any]], key: str | None = None
     ) -> Run:
+        """`start_run` without the scheduled flag, for callers that don't care."""
+        return self.start_run(name, work, key)[0]
+
+    def start_run(
+        self, name: str, work: Callable[[Run], Awaitable[Any]], key: str | None = None
+    ) -> tuple[Run, bool]:
         """Schedule `work(run)` on the event loop. `work` uses run.emit(...) for
         progress/log/output; its return value becomes run.result.
 
@@ -198,12 +204,16 @@ class Runtime:
         panel shows the real run instead of hiding it behind a duplicate. The same
         holds per `(name, key)` when a `key` is given (a job id, a company key): a
         double-click on Prep for one job hands back its running run, while Prep for
-        another job still starts. No key means no deduplication."""
+        another job still starts. No key means no deduplication.
+
+        Returns `(run, scheduled)`: `scheduled` is False when the in-flight run was
+        handed back and `work` will never run, so a caller that spooled resources
+        for `work` (a temp dir of uploads) knows to release them itself."""
         existing = self._running(name) if name in SINGLE_FLIGHT else None
         if existing is None and key is not None:
             existing = self._running_keyed(name, key)
         if existing is not None:
-            return existing
+            return existing, False
         self._prune()
         self._seq += 1
         # Include a random suffix so run_id is unique across server restarts
@@ -228,7 +238,7 @@ class Runtime:
         task = asyncio.create_task(_driver())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        return run
+        return run, True
 
     async def stream(self, run_id: str, last_id: int = 0):
         """Async generator of Events after `last_id`, ending once the run is done

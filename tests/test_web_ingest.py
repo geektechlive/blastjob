@@ -212,3 +212,64 @@ async def test_make_ingest_work_cleans_spool_dir_even_on_error(monkeypatch):
         await routes_settings._make_ingest_work(spool_dir, lambda: cfg)(run)
 
     assert not spool_dir.exists()
+
+
+# ----- temp-dir leaks (#54) -----
+
+
+@pytest.fixture
+def spooled(monkeypatch):
+    """Record every blastjob-ingest-* dir the route creates."""
+    made: list[Path] = []
+    real = tempfile.mkdtemp
+
+    def recording(*args, **kwargs):
+        path = real(*args, **kwargs)
+        if kwargs.get("prefix") == "blastjob-ingest-":
+            made.append(Path(path))
+        return path
+
+    monkeypatch.setattr(routes_settings.tempfile, "mkdtemp", recording)
+    return made
+
+
+def test_ingest_removes_spool_dir_when_a_concurrent_run_won_the_race(
+    client_cfg, spooled, monkeypatch
+):
+    client, *_ = client_cfg
+    winner = Run(id="ingest-winner", name="ingest")
+    RUNTIME._runs[winner.id] = winner
+    # The pre-check passed before the winner started; only start() sees it.
+    monkeypatch.setattr(routes_settings.RUNTIME, "active", lambda *a, **k: None)
+
+    r = client.post(
+        "/work-history/ingest",
+        files={"files": ("resume.txt", b"hello", "text/plain")},
+        headers=_tok(),
+    )
+
+    assert r.status_code == 200
+    assert len(spooled) == 1
+    assert not spooled[0].exists()
+
+
+def test_ingest_removes_spool_dir_when_scheduling_fails(client_cfg, spooled, monkeypatch):
+    client, cfg, _ = client_cfg
+    data_dir = _data_dir(cfg)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "work_history.md").write_text("x", encoding="utf-8")
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(routes_settings.wh, "backup_work_history", boom)
+
+    with pytest.raises(OSError):
+        client.post(
+            "/work-history/ingest",
+            files={"files": ("resume.txt", b"hello", "text/plain")},
+            headers=_tok(),
+        )
+
+    assert len(spooled) == 1
+    assert not spooled[0].exists()

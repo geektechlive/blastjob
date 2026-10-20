@@ -249,19 +249,29 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
         # TemporaryDirectory context manager here would be cleaned up before the
         # background task ever reads it.
         spool_dir = Path(tempfile.mkdtemp(prefix="blastjob-ingest-"))
-        for f, name in zip(files, names, strict=True):
-            data = await f.read()
-            (spool_dir / name).write_bytes(data)
+        scheduled = False
+        try:
+            for f, name in zip(files, names, strict=True):
+                data = await f.read()
+                (spool_dir / name).write_bytes(data)
 
-        # Back up work_history.md synchronously, before scheduling the run: the
-        # backup then exists even if the run is never scheduled or crashes
-        # before it would otherwise get around to it, and a test can assert on
-        # it without waiting on a background task.
-        wh_path = cfg_mod.data_dir(cfg) / "work_history.md"
-        if wh_path.exists():
-            wh.backup_work_history(wh_path, cfg_mod.data_dir(cfg), label="ingest")
+            # Back up work_history.md synchronously, before scheduling the run: the
+            # backup then exists even if the run is never scheduled or crashes
+            # before it would otherwise get around to it, and a test can assert on
+            # it without waiting on a background task.
+            wh_path = cfg_mod.data_dir(cfg) / "work_history.md"
+            if wh_path.exists():
+                wh.backup_work_history(wh_path, cfg_mod.data_dir(cfg), label="ingest")
 
-        run = RUNTIME.start("ingest", _make_ingest_work(spool_dir, deps.load_config))
+            run, scheduled = RUNTIME.start_run(
+                "ingest", _make_ingest_work(spool_dir, deps.load_config)
+            )
+        finally:
+            # The work function owns the directory once it is scheduled. Otherwise
+            # (an error above, or a concurrent upload won the race and start handed
+            # back its run) nothing will ever read or delete the resumes in it.
+            if not scheduled:
+                shutil.rmtree(spool_dir, ignore_errors=True)
         return deps.render(request, "_build_panel.html", run=run, heading="Ingesting")
 
 
