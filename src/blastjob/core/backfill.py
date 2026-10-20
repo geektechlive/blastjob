@@ -121,6 +121,9 @@ def _sent_documents(conn: sqlite3.Connection, t: _Tally) -> int:
     return count
 
 
+_CLOSURE_KINDS = frozenset({"posting_closed", "filled"})
+
+
 def _planned_events(conn: sqlite3.Connection) -> tuple[list[tuple[int, str, str]], list[str]]:
     """(job_id, kind, at) to add, and the states left undated."""
     plan: list[tuple[int, str, str]] = []
@@ -144,7 +147,10 @@ def _planned_events(conn: sqlite3.Connection) -> tuple[list[tuple[int, str, str]
         kind = events.state_event_kind(r["application_state"])
         if kind is None or events.has_event(conn, r["id"], kind):
             continue
-        at = _first_date(r["stage_changed_at"], r["posting_closed_at"])
+        # A closure date dates only a closure. For any other state it would be a
+        # fabricated date (an interview "on" the day the posting later closed).
+        fallback = r["posting_closed_at"] if kind in _CLOSURE_KINDS else None
+        at = _first_date(r["stage_changed_at"], fallback)
         if at is None:
             undated.append(f"#{r['id']} {kind}")
             continue

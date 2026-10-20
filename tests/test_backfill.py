@@ -149,6 +149,29 @@ def test_events_backfill_skips_drafted_and_falls_back_on_dates(conn):
     assert f"#{undated}" in out
 
 
+def test_closure_date_does_not_date_an_in_process_state(conn):
+    """An 'interview' row whose posting closed later is undated, not dated at
+    the closure day (#57)."""
+    jid = _job(
+        conn,
+        "h",
+        "VP Ops",
+        application_state="interview",
+        posting_closed_at="2026-09-10T07:30:00",
+    )
+    filled = _job(
+        conn,
+        "i",
+        "VP Eng",
+        application_state="filled",
+        posting_closed_at="2026-09-11T07:30:00",
+    )
+    out = backfill.run(conn, apply=True)
+    assert events.events_for(conn, jid) == []
+    assert f"#{jid} interview" in out
+    assert [e["at"] for e in events.events_for(conn, filled)] == ["2026-09-11T07:30:00"]
+
+
 def test_existing_state_events_are_not_duplicated(conn):
     jid = _job(conn, "g", "VP", application_state="screen", stage_changed_at="2026-10-01T09:00:00")
     events.add_event(conn, jid, "screen", "2026-10-01T09:00:00", source="state")
