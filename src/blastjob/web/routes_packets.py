@@ -351,7 +351,10 @@ def register(app: FastAPI, deps: Deps) -> None:
     async def build_events(request: Request, run_id: str):
         from blastjob.web.build import sse_format
 
-        last_id = int(request.headers.get("last-event-id") or 0)
+        try:
+            last_id = max(int(request.headers.get("last-event-id") or 0), 0)
+        except ValueError:
+            last_id = 0  # a garbage header replays from the start, never a 500
 
         async def gen():
             async for ev in RUNTIME.stream(run_id, last_id):

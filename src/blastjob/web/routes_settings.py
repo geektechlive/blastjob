@@ -33,7 +33,7 @@ from blastjob.web import workhistory as wh
 from blastjob.web.deps import Deps
 from blastjob.web.runtime import RUNTIME, Run
 from blastjob.web.security import require_csrf
-from blastjob.web.upload_guard import MAX_NETWORK_UPLOAD_BYTES
+from blastjob.web.upload_guard import MAX_NETWORK_UPLOAD_BYTES, parse_content_length
 
 SaveCfg = Callable[[BlastJobConfig], None]
 
@@ -235,8 +235,8 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
                 ),
             )
 
-        content_length = request.headers.get("content-length")
-        if content_length is not None and int(content_length) > MAX_NETWORK_UPLOAD_BYTES:
+        declared = parse_content_length(request.headers.get("content-length"))
+        if declared is not None and declared > MAX_NETWORK_UPLOAD_BYTES:
             return deps.render(
                 request,
                 "ingest.html",
