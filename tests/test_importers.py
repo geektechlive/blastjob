@@ -72,3 +72,46 @@ def test_labeled_chunks_on_file_callback(tmp_path):
     assert calls[0][0] == 1
     assert calls[1][0] == 2
     assert calls[0][1] == 2
+
+
+def test_empty_file_calls_on_skip_with_reason(tmp_path):
+    (tmp_path / "blank.txt").write_text("   \n")
+    skipped: list[tuple[str, str]] = []
+
+    pairs = collect(tmp_path, on_skip=lambda p, r: skipped.append((p.name, r)))
+
+    assert pairs == []
+    assert skipped == [("blank.txt", "no extractable text (scanned PDF?)")]
+
+
+def test_run_ingestion_says_no_extractable_text_when_files_are_empty(tmp_path):
+    import asyncio
+
+    import pytest
+
+    from blastjob.core.ingest import run_ingestion
+    from blastjob.llm.cost import CostTracker
+    from blastjob.models.config import BlastJobConfig
+
+    (tmp_path / "scan.txt").write_text("")
+    messages: list[str] = []
+
+    with pytest.raises(ValueError, match="none had extractable text"):
+        asyncio.run(run_ingestion(tmp_path, BlastJobConfig(), CostTracker(), messages.append))
+
+    assert any("scan.txt" in m and "no extractable text" in m for m in messages)
+
+
+def test_run_ingestion_says_no_supported_files_when_none_match(tmp_path):
+    import asyncio
+
+    import pytest
+
+    from blastjob.core.ingest import run_ingestion
+    from blastjob.llm.cost import CostTracker
+    from blastjob.models.config import BlastJobConfig
+
+    (tmp_path / "notes.json").write_text("{}")
+
+    with pytest.raises(ValueError, match="No supported files"):
+        asyncio.run(run_ingestion(tmp_path, BlastJobConfig(), CostTracker()))

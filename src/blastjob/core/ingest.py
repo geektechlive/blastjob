@@ -32,11 +32,19 @@ async def run_ingestion(
     def on_file(index: int, total: int, name: str) -> None:
         emit(f"  [{index}/{total}] Reading {name}\n")
 
+    skipped: list[Path] = []
+
     def on_skip(file_path: Path, reason: str) -> None:
+        skipped.append(file_path)
         emit(f"  [SKIP] {file_path.name}: {reason}\n")
 
     chunks = labeled_chunks(path, on_file=on_file, on_skip=on_skip)
     if not chunks:
+        if skipped:
+            raise ValueError(
+                f"Found {len(skipped)} supported file(s) but none had extractable text "
+                "(a scanned PDF has no text layer; export a text version or paste the text)."
+            )
         raise ValueError("No supported files found at the given path.")
 
     total_chars = sum(len(c) for c in chunks)

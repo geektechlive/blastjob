@@ -15,7 +15,11 @@ Route `/work-history/ingest` (`web/routes_settings.py`) takes uploaded `.pdf`, `
 background run. Only one ingest runs at a time. Before it starts, the route backs up the
 current `work_history.md` to `<data_dir>/backups/` (`workhistory.backup_work_history`).
 
-1. `folder.labeled_chunks` reads each source file and wraps it in `<file path="...">` tags.
+1. `folder.labeled_chunks` reads each source file and wraps it in `<file path="...">` tags. The
+   DOCX reader takes body, table and header/footer text (`core/docx_text.py`). A file that
+   fails to read, or reads as empty (a scanned PDF has no text layer), is reported as a
+   `[SKIP]` line. If every supported file was skipped, the error says none had extractable
+   text; "No supported files found" means nothing with a supported extension was there.
 2. One streaming call with `INGEST_SYSTEM` returns a JSON object matching `MasterHistory`.
 3. `ingest._parse_history` pulls the JSON out of the response with a regex and Pydantic
    validates it into `MasterHistory`.

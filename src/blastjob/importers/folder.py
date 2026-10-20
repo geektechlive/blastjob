@@ -3,6 +3,8 @@ from pathlib import Path
 
 from blastjob.importers import docx, pdf, text
 
+NO_TEXT_REASON = "no extractable text (scanned PDF?)"
+
 _DISPATCH = {
     ".pdf": pdf.extract,
     ".docx": docx.extract,
@@ -36,11 +38,14 @@ def _extract_file(
         return []
     try:
         content = fn(path)
-        if content.strip():
-            return [(path, content)]
     except Exception as exc:
         if on_skip:
             on_skip(path, str(exc))
+        return []
+    if content.strip():
+        return [(path, content)]
+    if on_skip:
+        on_skip(path, NO_TEXT_REASON)
     return []
 
 
