@@ -8,6 +8,8 @@ they never see a half-response. No key handling here; that's per-adapter.
 from __future__ import annotations
 
 import asyncio
+import math
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -16,6 +18,35 @@ USER_AGENT = "blastjob/0.1 (personal job-search tool)"
 
 
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
+# A server's Retry-After is honoured up to this long; a larger ask is capped so one
+# misbehaving host cannot stall a run.
+MAX_RETRY_AFTER_S = 30.0
+
+Sleep = Callable[[float], Awaitable[None]]
+
+
+def retry_after_seconds(resp: httpx.Response) -> float | None:
+    """Seconds a 429 asks us to wait, capped at MAX_RETRY_AFTER_S, else None.
+
+    Reads the Retry-After header (seconds form only; the HTTP-date form is treated
+    as absent) or Discord's JSON body `retry_after` (float seconds). Anything
+    unparseable, negative or non-finite is None so the caller keeps its backoff."""
+    if resp.status_code != 429:
+        return None
+    raw: object = resp.headers.get("Retry-After")
+    if raw is None:
+        try:
+            body = resp.json()
+        except ValueError:
+            return None
+        raw = body.get("retry_after") if isinstance(body, dict) else None
+    try:
+        seconds = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return min(seconds, MAX_RETRY_AFTER_S)
 
 
 async def request_json(
@@ -27,14 +58,18 @@ async def request_json(
     json: Any = None,
     max_retries: int = 3,
     headers: dict[str, str] | None = None,
+    sleep: Sleep | None = None,
 ) -> Any:
     """Issue one request on an existing client and return parsed JSON, retrying
-    transient errors (timeouts, 5xx, 429) with linear backoff. Adapters that make
+    transient errors (timeouts, 5xx, 429) with linear backoff (a 429 waits for its
+    Retry-After instead when it gives one, capped). Adapters that make
     many calls per run (Workday listing + detail) share one client this way."""
     hdrs = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if headers:
         hdrs.update(headers)
 
+    # Looked up per call (not a default argument) so a test can patch asyncio.sleep.
+    nap = sleep or asyncio.sleep
     last_exc: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
@@ -55,11 +90,12 @@ async def request_json(
                 raise
             last_exc = e
             if attempt < max_retries:
-                await asyncio.sleep(attempt)  # 1s, 2s, ...
+                hinted = retry_after_seconds(e.response)
+                await nap(attempt if hinted is None else hinted)  # 1s, 2s, ...
         except (httpx.TimeoutException, httpx.TransportError) as e:
             last_exc = e
             if attempt < max_retries:
-                await asyncio.sleep(attempt)  # 1s, 2s, ...
+                await nap(attempt)  # 1s, 2s, ...
     assert last_exc is not None
     raise last_exc
 

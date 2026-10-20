@@ -55,7 +55,7 @@ The digest is built by `build_digest`. Sections appear only when they have somet
 
 A dry run never sends, whatever the mode. Only `discord` needs credentials, so a `stdout` or `off` install never fails over missing Discord keys. The bot token and channel id are read from the environment variables named by `notify.discord_token_env` and `notify.discord_channel_env` (defaults `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_ID`), which come from the secrets file (see [settings and secrets](../operations/settings-and-secrets.md)). In `discord` mode a missing one stops the run with a clear error.
 
-Discord delivery is plain REST (`notify/discord.py`): no gateway, no discord library. The digest opens with a header line (the target emoji and "blastjob"), so one channel can be shared with another notifier and the sources told apart by header. The text is split on line boundaries into messages of at most 1,900 characters, and every non-2xx response raises, after up to three retries.
+Discord delivery is plain REST (`notify/discord.py`): no gateway, no discord library. The digest opens with a header line (the target emoji and "blastjob"), so one channel can be shared with another notifier and the sources told apart by header. The text is split on line boundaries into messages of at most 1,900 characters, and every non-2xx response raises, after up to three attempts. A 429 waits for the server's `Retry-After` (or Discord's `retry_after`), capped at 30 seconds, before the next attempt; other retryable failures wait 1 then 2 seconds.
 
 **Delivery is at-least-once, by design.** The order is: record the run (`sent=0`), send, stamp `notified_at`, mark the run `sent=1`.
 
