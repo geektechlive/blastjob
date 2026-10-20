@@ -136,3 +136,57 @@ def test_doctor_secrets_file_mode_is_ok_when_private(tmp_path, monkeypatch):
 
     assert next(c for c in checks if c.name == "secrets file mode").ok
     monkeypatch.delenv("BLASTJOB_TEST_MODE_KEY", raising=False)
+
+
+# ---------- hardening from the security review ----------
+
+FIXED_NOW = __import__("datetime").datetime(2026, 10, 20, 1, 2, 3)
+
+
+def test_db_backup_does_not_follow_a_planted_symlink(tmp_path):
+    conn = dbc.connect_at(tmp_path / "live.db")
+    dest_dir = tmp_path / "backups"
+    dest_dir.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious", encoding="utf-8")
+    (dest_dir / "blastjob-20261020-010203.db").symlink_to(victim)
+
+    target = dbc.backup_db(conn, dest_dir, now=FIXED_NOW)
+
+    assert victim.read_text(encoding="utf-8") == "precious"
+    assert not target.is_symlink() and target.name != "blastjob-20261020-010203.db"
+    assert _mode(target) == 0o600
+
+
+def test_db_backup_never_overwrites_a_same_second_backup(tmp_path):
+    conn = dbc.connect_at(tmp_path / "live.db")
+    first = dbc.backup_db(conn, tmp_path / "backups", now=FIXED_NOW)
+    second = dbc.backup_db(conn, tmp_path / "backups", now=FIXED_NOW)
+
+    assert first != second and first.exists() and second.exists()
+
+
+def test_failed_db_backup_leaves_no_partial_file(tmp_path):
+    class _Broken:
+        def backup(self, dest):
+            raise RuntimeError("disk full")
+
+    dest_dir = tmp_path / "backups"
+
+    with pytest.raises(RuntimeError):
+        dbc.backup_db(_Broken(), dest_dir, now=FIXED_NOW)  # type: ignore[arg-type]
+
+    assert list(dest_dir.glob("blastjob-*.db")) == []
+
+
+def test_unreadable_work_history_source_leaves_no_zero_byte_backup(tmp_path):
+    src = tmp_path / "work_history.md"
+    src.write_text("history", encoding="utf-8")
+    src.chmod(0o000)
+    try:
+        with pytest.raises(PermissionError):
+            backup_work_history(src, tmp_path)
+    finally:
+        src.chmod(0o600)
+
+    assert list((tmp_path / "backups").iterdir()) == []

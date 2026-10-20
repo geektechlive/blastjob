@@ -108,6 +108,9 @@ def backup_work_history(
     if label:
         base_name += f"-{label}"
 
+    # Open the source first: an unreadable one must not leave a zero-byte backup behind
+    # that later passes for a real snapshot.
+    src_file = open(path, "rb")  # noqa: SIM115 - closed in the with-block below
     dest = backups_dir / f"{base_name}.md"
     suffix = 1
     while True:
@@ -120,8 +123,12 @@ def backup_work_history(
             dest = backups_dir / f"{base_name}-{suffix}.md"
             suffix += 1
 
-    with open(path, "rb") as src, os.fdopen(fd, "wb") as out:
-        shutil.copyfileobj(src, out)
+    try:
+        with src_file as src, os.fdopen(fd, "wb") as out:
+            shutil.copyfileobj(src, out)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
     st = path.stat()
     os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns))  # keep the source's times, as copy2 did
     return dest

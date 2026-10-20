@@ -667,16 +667,36 @@ def backup_db(
     """
     cfg_mod.ensure_private_dir(dest_dir)
     ts = now or datetime.now()
-    target = dest_dir / f"blastjob-{ts:%Y%m%d-%H%M%S}.db"
+    base = f"blastjob-{ts:%Y%m%d-%H%M%S}"
     # Create the file owner-only BEFORE sqlite writes into it (a plain connect would
-    # follow the umask: 0644 applications, contacts and comp data).
-    os.close(os.open(target, os.O_CREAT | os.O_WRONLY, PRIVATE_FILE_MODE))
-    os.chmod(target, PRIVATE_FILE_MODE)  # a same-second leftover keeps its old mode otherwise
+    # follow the umask: 0644 applications, contacts and comp data). O_EXCL | O_NOFOLLOW:
+    # never overwrite a same-second backup and never follow a planted symlink; on a
+    # name clash take the next numeric suffix (as backup_work_history does).
+    target = dest_dir / f"{base}.db"
+    suffix = 0
+    while True:
+        try:
+            fd = os.open(
+                target,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                PRIVATE_FILE_MODE,
+            )
+            break
+        except FileExistsError:
+            suffix += 1
+            target = dest_dir / f"{base}-{suffix}.db"
+    try:
+        os.fchmod(fd, PRIVATE_FILE_MODE)  # the umask may have narrowed it; the fd, not the path
+    finally:
+        os.close(fd)
     dest = sqlite3.connect(target)
     try:
         conn.backup(dest)
-    finally:
+    except BaseException:
         dest.close()
+        target.unlink(missing_ok=True)  # a partial file must not count toward retention
+        raise
+    dest.close()
 
     backups = sorted(p for p in dest_dir.glob("blastjob-*.db") if p.is_file())
     for stale in backups[:-keep] if keep > 0 else backups:
