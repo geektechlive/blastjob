@@ -916,3 +916,38 @@ async def test_rediscovered_card_keeps_a_repaired_company(monkeypatch):
         "Vice President Information Technology",
     )
     conn.close()
+
+
+def test_sender_domain_is_the_address_not_the_display_name():
+    """A display name that mentions linkedin.com or indeed.com must not route the
+    message to that parser or skip the subject requirement."""
+    spoof_li = '"linkedin.com jobalerts" <evil@example.com>'
+    assert not ma.looks_like_alert(spoof_li, "Dinner Sunday?")
+    assert ma.parse_alert(spoof_li, "<a href='x'>y</a>") == ("", [])
+    spoof_in = '"indeed.com alerts" <evil@example.com>'
+    assert not ma.looks_like_alert(spoof_in, "Dinner Sunday?")
+    # a look-alike registered domain is not a subdomain
+    for host in ("notindeed.com", "indeed.com.example.com", "indeed.com.evil"):
+        assert not ma.looks_like_alert(f"Indeed <alert@{host}>", "Dinner Sunday?")
+    # a fold of the original address in the display name is not trusted either
+    folded = '"donotreply_at_jobalert_indeed_com_x@" <evil@example.com>'
+    assert not ma.looks_like_alert(folded, "Dinner Sunday?")
+
+
+def test_sender_domain_matches_exactly_or_as_subdomain():
+    assert ma.looks_like_alert("Indeed <alert@indeed.com>", "anything")
+    for host in ("jobalert.indeed.com", "mail.indeed.com"):
+        assert ma.looks_like_alert(f"Indeed <alert@{host}>", "anything")
+        assert ma.parse_alert(f"Indeed <alert@{host}>", INDEED_HTML)[0] == "indeed"
+    assert ma.looks_like_alert("INDEED <ALERT@INDEED.COM>", "anything")
+    assert ma.looks_like_alert("alert@indeed.com", "anything")
+
+
+def test_relay_fold_must_end_at_the_domain_plus_relay_id():
+    ok = "Indeed <donotreply_at_indeed_com_a1b2c3d4e5_f6a7b8c@relay.example.com>"
+    assert ma.looks_like_alert(ok, "Dinner Sunday?")
+    for tail in ("evil", "au", "evil_net"):
+        spoof = f"Indeed <donotreply_at_indeed_com_{tail}_a1b2c3@relay.example.com>"
+        assert not ma.looks_like_alert(spoof, "Dinner Sunday?")
+    assert not ma.looks_like_alert("", "Dinner Sunday?")
+    assert not ma.looks_like_alert("not an address", "Dinner Sunday?")

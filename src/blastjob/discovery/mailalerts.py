@@ -50,6 +50,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from email.utils import parseaddr
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -421,14 +422,47 @@ def normalize_sender(sender: str) -> str:
     return f"{s} {m.group(1)}@{m.group(2).replace('_', '.')}"
 
 
+# The relay appends an opaque id after the folded domain ('..._indeed_com_a1b2c3d4e5_f6a7b8c').
+# Those trailing labels hold a digit (or are one character); a real TLD or host label such
+# as 'au' or 'evil' does not, so 'indeed.com.evil' is not mistaken for 'indeed.com'.
+_RELAY_ID_LABELS = r"(?:\.(?=[0-9a-z]*\d|[0-9a-z]$)[0-9a-z]{1,16}){0,2}"
+
+
+def sender_domains(sender: str) -> tuple[str, ...]:
+    """Domains of the sender ADDRESS only (display names are attacker text): the
+    address's own domain, plus the original domain when Hide My Email folded it into
+    the local part. Lowercased; empty when no address parses."""
+    addr = parseaddr(sender or "")[1].lower()
+    if "@" not in addr:
+        return ()
+    domains = [addr.rsplit("@", 1)[1]]
+    m = _RELAY_AT.search(addr)
+    if m:
+        domains.append(m.group(2).replace("_", "."))
+    return tuple(domains)
+
+
+def _from_domain(sender: str, domain: str) -> bool:
+    """True when the sender address is at `domain` or one of its subdomains, or a Hide
+    My Email relay folded such an address into its local part."""
+    domains = sender_domains(sender)
+    if not domains:
+        return False
+    addr_domain, *folded = domains
+    if addr_domain == domain or addr_domain.endswith("." + domain):
+        return True
+    pattern = re.compile(rf"(?:^|\.){re.escape(domain)}{_RELAY_ID_LABELS}$")
+    return any(pattern.search(f) for f in folded)
+
+
 def looks_like_alert(sender: str, subject: str) -> bool:
     """Header-only gate before a body fetch. LinkedIn sends many notification
     mails from linkedin.com (impressions, comments, messages), so for LinkedIn
     the sender must be the job-alerts mailbox; Indeed mail is alerts only."""
-    s = normalize_sender(sender)
-    if "linkedin.com" in s:
+    if _from_domain(sender, "linkedin.com"):
+        s = normalize_sender(sender)
         return "jobalerts" in s or "jobs-noreply" in s or bool(_ALERT_SUBJECT.search(subject or ""))
-    if "indeed.com" in s:
+    if _from_domain(sender, "indeed.com"):
         return True
     return bool(_ALERT_SUBJECT.search(subject or ""))
 
@@ -439,10 +473,9 @@ def parse_alert(
     """Route by sender domain when it's recognizable; otherwise let the body
     decide (a relay-forwarded Indeed alert still contains indeed.com job links).
     Returns (source, postings); nothing recognizable yields ('', [])."""
-    s = normalize_sender(sender)
-    if "linkedin.com" in s:
+    if _from_domain(sender, "linkedin.com"):
         return "linkedin", parse_linkedin_alert(html, known_companies)
-    if "indeed.com" in s:
+    if _from_domain(sender, "indeed.com"):
         return "indeed", parse_indeed_alert(html)
     found = parse_linkedin_alert(html, known_companies)
     if found:
