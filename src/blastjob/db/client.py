@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -98,6 +99,20 @@ def _apply_statement_by_statement(conn: sqlite3.Connection, sql: str) -> None:
                 raise
 
 
+def _rekey_exclusions_step(conn: sqlite3.Connection) -> None:
+    # Imported here so db.client does not pull core.company in at import time.
+    from blastjob.core.company import rekey_company_exclusions
+
+    rekey_company_exclusions(conn)
+
+
+# Migrations whose work needs Python (not plain SQL), run right after the
+# version's SQL and before it is recorded. Keyed by version; see schema.py.
+_POST_MIGRATION_STEPS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    54: _rekey_exclusions_step,
+}
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """Apply any pending migrations. Returns the resulting schema version."""
     conn.execute(
@@ -124,6 +139,9 @@ def migrate(conn: sqlite3.Connection) -> int:
             # naming the missing column would fail forever. So replay it
             # statement by statement, skipping only the duplicate-column ones.
             _apply_statement_by_statement(conn, sql)
+        step = _POST_MIGRATION_STEPS.get(version)
+        if step is not None:
+            step(conn)
         conn.execute(
             "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
             (version, _now()),

@@ -74,6 +74,7 @@ The schema is `schema.MIGRATIONS`, an ordered list of `(version, sql)` entries a
 - **Never edit a shipped migration. Append a new one.**
 - **One ALTER per version.** A single `ADD COLUMN` is atomic, so a failure cannot leave a version half-applied.
 - **Duplicate-column errors are tolerated.** The cockpit and the daily job can race the first launch after a schema bump, and the loser sees "duplicate column name". `client.migrate` then replays the script statement by statement, skipping only the duplicate-column ones, so a script is never recorded as done with later statements missing.
+- **A migration that needs Python** (not plain SQL) has a step in `client._POST_MIGRATION_STEPS`, run after the version's SQL and before it is recorded. Migration 54 is the only one: it re-keys `company_exclusions` with `company_key()`, because migration 26 stored `lower(company)`, which the matcher never computes. Two old keys that collapse onto one are never overwritten: the second row stays on its old key and a warning is logged.
 - `build_runs.owner_token` is added ad hoc after the numbered migrations, with the same tolerance. It records which process claimed a build, so a restart can tell a dead build from a long-running one.
 - `client.init_db` migrates once per database per process, because the web layer calls it on every request.
 
@@ -89,7 +90,7 @@ The schema is `schema.MIGRATIONS`, an ordered list of `(version, sql)` entries a
 | `comp_signals` | 12 | every compensation observation per job | [employer data](employer-data.md) |
 | `daily_runs` | 13 | one row per `blastjob-daily` run | [daily](daily.md) |
 | `network_contacts`, `company_follows` | 14 to 25 | your LinkedIn export, and the enrichment results | [network](network.md) |
-| `company_exclusions` | 26 | companies you excluded, as an explicit decision | [matching](matching.md) |
+| `company_exclusions` | 26 (keys re-keyed by 54) | companies you excluded, as an explicit decision | [matching](matching.md) |
 | `same_role_decisions` | 38 | your same or different verdict on a pair of postings | [same role](same-role.md) |
 | `packet_sends`, `packet_outcomes` | 39, 40 | what was sent and what happened to it | [truth guarantees](../truth-guarantees.md) |
 | `application_events` | 42 | the application timeline | [events and filing](events-and-filing.md#application-events) |

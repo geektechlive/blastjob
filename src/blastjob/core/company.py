@@ -15,6 +15,7 @@ anything that doesn't fit yet, so a field is never lost for lack of a column.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from collections.abc import Mapping
@@ -26,6 +27,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from blastjob.core.paths import canonical
+
+log = logging.getLogger(__name__)
 
 _NORM = re.compile(r"[^a-z0-9]+")
 # "co" is deliberately guarded with a negative lookahead: "\bco\b" alone also
@@ -210,6 +213,22 @@ def rekey_companies(conn: sqlite3.Connection) -> dict[str, RekeyResult]:
     ]
     specs.extend(_REKEY_QUERIES)
     return {table: _rekey(conn, select, update) for table, select, update in specs}
+
+
+def rekey_company_exclusions(conn: sqlite3.Connection) -> RekeyResult:
+    """Re-key only `company_exclusions` (migration 54, #35). Two old keys that
+    collapse to one new key never raise and never lose a row: the first keeps the
+    new key, the other stays on its old key (inert, still visible and deletable)
+    and is logged."""
+    _name, select_sql, update_sql = _REKEY_QUERIES[0]
+    result = _rekey(conn, select_sql, update_sql)
+    if result.conflicts:
+        log.warning(
+            "company_exclusions: %d row(s) left on an old key because it collapses onto "
+            "an existing exclusion; delete the duplicate from the exclusions list",
+            result.conflicts,
+        )
+    return result
 
 
 def _rekey(conn: sqlite3.Connection, select_sql: str, update_sql: str) -> RekeyResult:

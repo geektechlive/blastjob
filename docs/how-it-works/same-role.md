@@ -109,4 +109,4 @@ A manual link is **display-only**. Closure never probes it, never links over it,
 
 Differences a pattern cannot cover safely, such as a legal name against a brand name, are handled only by the explicit `discovery.company_aliases` setting (a JSON object mapping a variant to the canonical name; empty by default). Widening a regex instead would risk merging two real companies.
 
-Stored keys move only through `rekey_companies`, a hand-run function with no command or button (conflicts are reported and never overwritten), followed by a scoped recluster. It is deliberately never run on import.
+Stored keys move only through `rekey_companies`, a hand-run function with no command or button (conflicts are reported and never overwritten), followed by a scoped recluster. It is deliberately never run on import. The one exception is `company_exclusions`, re-keyed once by migration 54 (see [data-model](data-model.md)).

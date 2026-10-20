@@ -337,6 +337,10 @@ MIGRATIONS: list[tuple[int, str]] = [
             reason       TEXT DEFAULT '',
             created_at   TEXT NOT NULL
         );
+        -- (Dated note, 2026-10-20, #35: lower(company) is NOT company_key(), so
+        -- a name with a suffix, "The" or punctuation was stored under a key the
+        -- matcher never computes and the exclusion silently lapsed. Migration 54
+        -- re-keys these rows; this SQL is left as shipped.)
         -- Backfill from the old inference so a decision already made keeps
         -- working instead of silently lapsing. company_key is recomputed
         -- properly by the app; lower(company) is close enough for a one-off
@@ -353,6 +357,11 @@ MIGRATIONS: list[tuple[int, str]] = [
     # again -- so they could never be stale-marked (zombies), and the next run
     # would re-insert the same postings under the new source as BRAND NEW jobs:
     # re-scored at real cost, and eligible to be announced a second time.
+    #
+    # (Dated note, 2026-10-20, #35: the tokens below (greenhouse:acme, lever:globex)
+    # are hardcoded, so the mapping is right only where those are the configured
+    # boards; and Ashby is named above but has no UPDATE here, so bare 'ashby' rows
+    # were never moved. Left as shipped.)
     #
     # There is exactly one configured board per ATS, so the mapping is
     # unambiguous. If a second board is ever added before this migration runs on
@@ -540,4 +549,10 @@ MIGRATIONS: list[tuple[int, str]] = [
     # How a research run tied its pages to the employer: 'anchored' (domain or
     # location match), 'judged' (model judgment, not confirmed), '' (not recorded).
     (53, "ALTER TABLE company_profiles ADD COLUMN identity_basis TEXT DEFAULT '';"),
+    # 54: re-key company_exclusions with company_key() (#35). Migration 26
+    # backfilled keys with lower(company), which the matcher never computes, so
+    # those exclusions silently lapsed. The re-key needs Python (company_key is
+    # not SQL), so the work is `db.client._POST_MIGRATION_STEPS[54]`; this entry
+    # only records that the step ran.
+    (54, "SELECT 1;"),
 ]
