@@ -71,7 +71,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
-from blastjob.core.scoring import _normalize_ws
+from blastjob.core.scoring import MIN_SPAN_CHARS, _normalize_ws
 from blastjob.llm import caching
 from blastjob.llm.cost import CostTracker, cost_from_usage
 from blastjob.llm.jsonio import extract_json_list
@@ -81,8 +81,8 @@ from blastjob.models.config import BlastJobConfig
 log = logging.getLogger(__name__)
 
 # A span shorter than this verifies against almost any text ("the", "a global"),
-# so it proves nothing. Facts carrying one are dropped.
-MIN_SPAN_CHARS = 16
+# so it proves nothing. Facts carrying one are dropped. Defined in `core/scoring.py`
+# (which this module already imports) so fit-score quotes share the same floor.
 MAX_FACTS = 24
 MAX_SPAN_RENDER = 240
 

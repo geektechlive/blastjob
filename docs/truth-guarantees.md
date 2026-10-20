@@ -59,8 +59,10 @@ scoring, research, closure or same-role paths. The mechanics live in
 (`scoring.score_resume`) has a model list the resume's claims, each with an
 `evidence_quote` from the work history. `scoring.verify_claims` then checks in Python that
 each quote is an exact (whitespace-insensitive) substring of `work_history.md`. A
-hallucinated quote therefore cannot mark a fabricated claim grounded, and an empty quote
-supports nothing (`scoring._quote_supported`). A model `null` in any fit-score field becomes
+hallucinated quote therefore cannot mark a fabricated claim grounded, and a quote shorter than
+16 characters (after whitespace is collapsed) supports nothing, since "led" or "AWS" sits in
+almost any history (`scoring._quote_supported`, `scoring.MIN_SPAN_CHARS`, shared with research
+fact spans). An empty quote is the shortest case. A model `null` in any fit-score field becomes
 that field's default (`models/fit_score.py`), so a null quote is an empty quote and fails.
 
 Employment dates are checked deterministically rather than left to the model

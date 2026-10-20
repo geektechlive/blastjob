@@ -21,6 +21,10 @@ from blastjob.models.fit_score import ClaimCheck, FitScore
 # claim set. It is a prompt to look, not a measurement. Nothing is blocked by it.
 GROUNDEDNESS_FLOOR_DEFAULT = 85
 
+# A quote shorter than this (normalized) is a substring of almost any history ("led",
+# "AWS"), so it proves nothing. Shared with research-fact spans (`core/research_facts.py`).
+MIN_SPAN_CHARS = 16
+
 
 def needs_review(groundedness_score: int, floor: int = GROUNDEDNESS_FLOOR_DEFAULT) -> bool:
     """True when a packet falls below the review floor.
@@ -59,9 +63,9 @@ def _normalize_ws(text: str) -> str:
 
 
 def _quote_supported(quote: str, normalized_history: str) -> bool:
-    """Whitespace-insensitive substring test. An empty quote supports nothing."""
+    """Whitespace-insensitive substring test. A quote under `MIN_SPAN_CHARS` supports nothing."""
     normalized = _normalize_ws(quote)
-    if not normalized:
+    if len(normalized) < MIN_SPAN_CHARS:
         return False
     return normalized in normalized_history
 

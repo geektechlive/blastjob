@@ -62,3 +62,14 @@ def test_a_null_grounded_flag_is_not_grounded():
     claim = ClaimCheck.model_validate({"claim_text": "x", "grounded": None})
 
     assert claim.grounded is False
+
+
+def test_a_short_quote_does_not_ground_a_claim_even_when_it_is_in_the_history():
+    claims = [
+        {"claim_text": "Led everything", "grounded": True, "evidence_quote": "Led"},
+        {"claim_text": "Led team", "grounded": True, "evidence_quote": "Led team of 8 engineers"},
+    ]
+
+    score = parse_score(_score_json(claims), HISTORY)
+
+    assert [c.grounded for c in score.claims] == [False, True]
