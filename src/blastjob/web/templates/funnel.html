@@ -76,6 +76,19 @@ to a "never produced" check.</p>
 </table>
 {% endif %}
 
+<h2>Applications by channel</h2>
+<p class="dim">Counts only, with no rates: a handful of applications makes a percentage noise.
+An application is a job with an applied date. Each column includes the ones that went
+further, so an interview also counts as a reply. A bare rejection or no answer is not a reply.
+Unknown means the channel was never recorded.</p>
+<table class="funnel-table">
+  <tr><th>Channel</th><th class="num">Applications</th><th class="num">Replied or screened</th><th class="num">Interviewed</th></tr>
+  {% for ch in channels %}
+  <tr><td>{{ ch.label }}</td><td class="num">{{ ch.applications }}</td>
+      <td class="num">{{ ch.replied }}</td><td class="num">{{ ch.interviewed }}</td></tr>
+  {% endfor %}
+</table>
+
 <h2>Recent runs</h2>
 <table class="funnel-table">
   <tr><th>When</th><th class="num">Fetched</th><th class="num">Scored</th><th class="num">New</th><th>Errors</th></tr>

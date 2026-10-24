@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from blastjob import config as cfg_mod
 from blastjob.core.artifacts import stored_path
+from blastjob.core.channel_counts import channel_counts
 from blastjob.core.history import scan_history
 from blastjob.db import client as dbc
 from blastjob.llm.child_env import child_env
@@ -225,6 +226,7 @@ def register(app: FastAPI, deps: Deps) -> None:
                 funnel=fn.build_funnel(c, cfg),
                 dead=fn.dead_boards(c, cfg),
                 silent=fn.silent_channels(c, cfg),
+                channels=channel_counts(c),
                 stages=fn.STAGES,
                 drops=("stale", "geo_rejected", "prefiltered", "below_band", "comp_rejected"),
             )

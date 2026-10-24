@@ -1405,3 +1405,23 @@ def test_alumni_badge_absent_on_all_page_without_former_employers(client_cfg):
     client, _, _, _ = client_cfg
 
     assert ALUMNI_BADGE not in client.get("/all").text
+
+
+def test_funnel_page_shows_channel_counts_without_percent(client_cfg):
+    """#81: the channel block is counts only. The funnel table above it has a
+    Share column, so only the block's own table is checked for a percent sign."""
+    client, cfg, _saved, _ids = client_cfg
+    conn = dbc.init_db(cfg)
+    jid = dbc.upsert_job(conn, source="t", external_id="ch1", company="Acme", title="VP IT")
+    conn.execute(
+        "UPDATE jobs SET app_channel='referral', applied_at='2026-01-05', "
+        "application_state='screen' WHERE id=?",
+        (jid,),
+    )
+    conn.commit()
+    conn.close()
+    html = client.get("/funnel").text
+    start = html.index("Applications by channel")
+    block = html[start : html.index("</table>", start)]
+    assert "Referral" in block and "Unknown" in block
+    assert "%" not in block
