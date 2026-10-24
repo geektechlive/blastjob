@@ -82,7 +82,7 @@ def test_setup_set_stores_and_rejects(tmp_path, monkeypatch, capsys):
 
 def test_settings_page_saves_and_refuses(tmp_path, monkeypatch):
     monkeypatch.setenv("BLASTJOB_DATA_DIR", str(tmp_path / "data"))
-    client = TestClient(create_app())
+    client = TestClient(create_app(), client=("127.0.0.1", 50000))  # loopback peer (#87)
     page = client.get("/settings").text
     assert "web_public_url" in page
     data = {

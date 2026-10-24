@@ -38,7 +38,8 @@ def client_cfg():
         saved["cfg"] = c
 
     app = create_app(load_config=load, save_config=save)
-    return TestClient(app), cfg, saved
+    # Loopback peer: these settings are changeable only from this computer (#87).
+    return TestClient(app, client=("127.0.0.1", 50000)), cfg, saved
 
 
 def _good_form(**over):

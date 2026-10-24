@@ -27,7 +27,9 @@ from blastjob import config as cfg_mod
 from blastjob.llm import providers
 from blastjob.models.config import BlastJobConfig
 from blastjob.settings_store import StaleSettings
+from blastjob.web import local_guard as lg
 from blastjob.web import mail_settings as ms
+from blastjob.web import packets
 from blastjob.web import settings_form as sf
 from blastjob.web import workhistory as wh
 from blastjob.web.deps import Deps
@@ -57,6 +59,7 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
             request,
             "settings.html",
             cfg=cfg,
+            is_local=packets.is_local_request(request),
             mail=ms.status(cfg),
             active_model=providers.active_model(cfg),
             towns_text=sf.towns_text(cfg.discovery.towns),
@@ -90,6 +93,8 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
             new = sf.apply_form(cfg, form)
         except sf.FormError as e:
             return _settings_page(request, cfg, 400, settings_error=str(e))
+        if blocked := lg.guarded_changes(request, cfg, new):
+            return _settings_page(request, cfg, 403, settings_error=lg.refusal_message(blocked))
         if (stale := _save(request, new, form)) is not None:
             return stale
         return RedirectResponse("/settings", status_code=303)
@@ -114,7 +119,8 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
         sanitized. A pasted app password would otherwise land in the settings
         table, which the daily backup copies and `setup get` prints; the page re-renders
         with an error and nothing is written. The rejected value is not echoed back."""
-        cfg = deps.load_config()
+        current = deps.load_config()
+        cfg = current.model_copy(deep=True)
         error = ms.validate_names(
             mail_user_env=mail_user_env.strip(),
             mail_password_env=mail_password_env.strip(),
@@ -123,7 +129,7 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
             cfg=cfg,
         )
         if error:
-            return _settings_page(request, cfg, mail_error=error)
+            return _settings_page(request, current, mail_error=error)
         d = cfg.discovery
         d.mail_alerts_enabled = mail_alerts_enabled
         d.mail_imap_host = mail_imap_host.strip()
@@ -134,6 +140,8 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
         d.personal_mail_user_env = personal_mail_user_env.strip()
         d.personal_mail_password_env = personal_mail_password_env.strip()
         d.personal_mail_mailbox = personal_mail_mailbox.strip()
+        if blocked := lg.guarded_changes(request, current, cfg):
+            return _settings_page(request, current, 403, mail_error=lg.refusal_message(blocked))
         form = {k: str(v) for k, v in (await request.form()).items()}
         if (stale := _save(request, cfg, form)) is not None:
             return stale

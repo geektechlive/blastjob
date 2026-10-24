@@ -59,6 +59,8 @@ Defense in depth for a cockpit with no login: if an escaping slip ever let untru
 
 "Local" in the Origin check includes private LAN addresses, because a device on your LAN sends its own view of the server as the origin. That means the check cannot tell the host machine from another LAN device. Reveal-in-Finder is therefore gated separately on `request.client.host` being loopback (`packets.is_local_request`).
 
+The same peer check guards the four settings that decide where credentials are sent or where the cockpit listens: `discovery.mail_imap_host`, `discovery.personal_mail_imap_host`, `web.host` and `web.public_url`. Without it, any LAN device could read the token, pass the Origin check and point the saved mail login at a server it controls. `local_guard.guarded_changes` is the one rule, used by both routes that write settings (`POST /settings` and `POST /settings/mail`). From a non-loopback peer, a POST whose value for one of them differs from the stored value (after strip) gets a 403 and the settings page naming the field; nothing is written, including the other fields in that submit. Submitting the stored value unchanged saves normally. The page shows those inputs read-only, with a note, to a non-local viewer.
+
 All untrusted job text renders through Jinja autoescaping and is fenced in prompts, never followed as an instruction. Every `href` fed by a discovery feed or by model output goes through the `safe_url` template filter (`urls.safe_external_url`), because `web/templates/base.html` carries the CSRF token and a `javascript:` link would be a full takeover. The trust level of each input is listed in [truth guarantees](../truth-guarantees.md#trust-boundaries).
 
 ## Navigation
