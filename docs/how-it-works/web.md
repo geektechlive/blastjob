@@ -127,7 +127,8 @@ Matches (`/matches`) is undecided jobs only: active, new, surfaced or queued, sc
 
 Moves live in `stage_moves`. Each is a compare-and-set on stored state, so a stale page can never push a job somewhere it no longer belongs, for example removing a job from the Shortlist after another tab marked it applied.
 
-- **Mark applied** (Shortlist to Applied): stamps `applied_at` if it was empty and snapshots which documents went out.
+- **Mark applied** (Shortlist to Applied): stamps `applied_at` if it was empty and snapshots which documents went out. It can also record how the application started (see below).
+- **How it started** (`jobs.app_channel`, migration 57): `cold`, `referral`, `recruiter` or `inbound`, with an optional `app_channel_via` note (for example a recruiter's firm, at most 120 characters) and `app_channel_at`, when it was recorded. NULL means unknown, and every application made before the migration stays unknown: it is never backfilled and never inferred, and it never touches `jobs.source` (which feed found the posting). The row's channel buttons and the job page's "Applied: ..." buttons post the channel with the move to `/jobs/{id}/stage/apply` or `/jobs/{id}/status`; the plain button skips the question. `POST /jobs/{id}/channel` edits it later from the job page. Any other channel value, or a via over the limit, is a 400, and the same CSRF and Origin checks apply as to every state change.
 - **Advance** (Applied): one step along applied, screen, interview, offer.
 - **Withdraw** (Applied to Closed).
 - **Reopen** (Closed): back to Applied if you had applied (`applied_at` is set), otherwise back to the Shortlist.

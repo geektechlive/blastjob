@@ -29,7 +29,7 @@ from blastjob.db import client as dbc
 from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.models.job import ARCHIVE_REASON_LABELS, ARCHIVE_REASONS, ReviewState
-from blastjob.models.tracking import STATUSES
+from blastjob.models.tracking import APPLICATION_CHANNELS, STATUSES
 from blastjob.web import employer_jd as web_employer_jd
 from blastjob.web import (
     fitscore,
@@ -98,6 +98,7 @@ templates.env.globals["ejd_refusal"] = web_employer_jd.refusal
 # Row actions depend on the stage a job is in (one rule, web/stages.py).
 templates.env.globals["stage_of"] = st.stage_of
 templates.env.globals["next_stage"] = st.next_stage
+templates.env.globals["application_channels"] = APPLICATION_CHANNELS
 
 LoadCfg = Callable[[], BlastJobConfig]
 SaveCfg = Callable[[BlastJobConfig], None]
@@ -381,16 +382,26 @@ def create_app(
         request: Request,
         job_id: int,
         action: str,
+        channel: str = Form(""),
+        via: str = Form(""),
         _: None = Depends(require_csrf),
     ):
         """List-row stage moves: apply, advance, withdraw, reopen. Each is a
-        CAS on the job's current stage; the row leaves its list."""
+        CAS on the job's current stage; the row leaves its list. Mark applied
+        may carry how the application started (`channel`, `via`; #80); a blank
+        channel is a skip and leaves it unknown."""
         if action not in sm.ACTIONS:
             return HTMLResponse("Invalid action", status_code=400)
+        try:
+            chosen, note = service.parse_channel(channel, via)
+        except ValueError as e:
+            return HTMLResponse(str(e), status_code=400)
         c = conn()
         try:
             # A move that took also re-files the job's packets (best-effort).
             moved = sm.run_action(c, job_id, action, load_config=load_config)
+            if moved and action == "apply" and chosen:
+                service.set_application_channel(c, job_id, chosen, note)
             if moved and action == "advance":
                 # Advance keeps the row on Applied (only its stage changes), so
                 # the empty-200 outerHTML swap would delete a row that is still
@@ -435,12 +446,18 @@ def create_app(
         request: Request,
         job_id: int,
         status: str = Form(...),
+        channel: str = Form(""),
+        via: str = Form(""),
         _: None = Depends(require_csrf),
     ):
         # posting_closed/filled belong to the closure lifecycle, which records
         # the prior state a reopen restores; a bare status write would not.
         if status not in STATUSES or status in closure.AUTOMATION_STATES:
             return HTMLResponse("Invalid status", status_code=400)
+        try:
+            chosen, note = service.parse_channel(channel, via)
+        except ValueError as e:
+            return HTMLResponse(str(e), status_code=400)
         c = conn()
         try:
             # Permissive expected set: any current application_state is allowed to
@@ -448,6 +465,8 @@ def create_app(
             first_send = status == "applied" and not _applied_at(c, job_id)
             moved = service.set_application_state(c, job_id, status, ["", *STATUSES])
             send_note = ""
+            if moved and status == "applied" and chosen:
+                service.set_application_channel(c, job_id, chosen, note)
             if moved:
                 # This dropdown is BOTH ways a job reaches "applied" (the other
                 # is the Shortlist row) and the path that records a rejection or
@@ -466,6 +485,28 @@ def create_app(
                     pass
                 sm.file_after_move(c, job_id, load_config)
             return _render_app_status(request, c, job_id, send_note=send_note)
+        finally:
+            c.close()
+
+    @app.post("/jobs/{job_id}/channel", response_class=HTMLResponse)
+    async def set_channel(
+        request: Request,
+        job_id: int,
+        channel: str = Form(""),
+        via: str = Form(""),
+        _: None = Depends(require_csrf),
+    ):
+        """Edit how an application started (#80). Blank channel clears it back to
+        unknown. Only ever writes the three `app_channel*` columns."""
+        try:
+            chosen, note = service.parse_channel(channel, via)
+        except ValueError as e:
+            return HTMLResponse(str(e), status_code=400)
+        c = conn()
+        try:
+            if not service.set_application_channel(c, job_id, chosen, note):
+                return HTMLResponse("Not found", status_code=404)
+            return _render_app_status(request, c, job_id)
         finally:
             c.close()
 

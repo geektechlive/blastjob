@@ -564,4 +564,16 @@ MIGRATIONS: list[tuple[int, str]] = [
     # automatic (title rule + enrichment label). It wins over both, and an import
     # never touches it.
     (56, "ALTER TABLE network_contacts ADD COLUMN recruiter_override TEXT;"),
+    # 57: how an application started (#80). app_channel is cold, referral, recruiter
+    # or inbound; NULL means unknown, which is what every older application stays
+    # (never backfilled, never inferred). app_channel_via is optional free text
+    # (for example the recruiter's firm); app_channel_at is when it was recorded.
+    # jobs.source is a different fact (which feed found the posting) and is never
+    # written by this.
+    (
+        57,
+        "ALTER TABLE jobs ADD COLUMN app_channel TEXT;"
+        "ALTER TABLE jobs ADD COLUMN app_channel_via TEXT DEFAULT '';"
+        "ALTER TABLE jobs ADD COLUMN app_channel_at TEXT;",
+    ),
 ]

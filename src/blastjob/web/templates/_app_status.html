@@ -19,7 +19,32 @@
               {% if apply_confirm is defined and apply_confirm and st in ('applied', 'screen', 'interview', 'offer') and job.application_state != st %}hx-confirm="{{ apply_confirm }}"{% endif %}
               hx-target="#app-status" hx-swap="outerHTML">{{ st|capitalize }}</button>
     {% endfor %}
+    {% if not job.application_state %}
+      {# One click: Applied plus how it started. The plain Applied button skips the question. #}
+      {% for code, label in application_channels.items() %}
+        <button class="btn-status btn-channel"
+                hx-post="/jobs/{{ job.id }}/status"
+                hx-vals='{"status": "applied", "channel": "{{ code }}"}'
+                {% if apply_confirm is defined and apply_confirm %}hx-confirm="{{ apply_confirm }}"{% endif %}
+                hx-target="#app-status" hx-swap="outerHTML">Applied: {{ label|lower }}</button>
+      {% endfor %}
+    {% endif %}
   </div>
+  {# How it started (#80). NULL is "unknown", never cold; never inferred. #}
+  <form class="app-channel-form" hx-post="/jobs/{{ job.id }}/channel"
+        hx-target="#app-status" hx-swap="outerHTML">
+    <span class="app-channel-label">How it started</span>
+    <span class="app-channel-current">{{ application_channels.get(job.app_channel, 'unknown') if job.app_channel else 'unknown' }}{% if job.app_channel and job.app_channel_via %} via {{ job.app_channel_via }}{% endif %}</span>
+    <select name="channel" aria-label="How it started">
+      <option value=""{% if not job.app_channel %} selected{% endif %}>unknown</option>
+      {% for code, label in application_channels.items() %}
+        <option value="{{ code }}"{% if job.app_channel == code %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="via" maxlength="120" value="{{ job.app_channel_via or '' }}"
+           placeholder="Via (for example a recruiter's firm)" aria-label="Via">
+    <button type="submit">Save</button>
+  </form>
   <form class="app-followup-form" hx-post="/jobs/{{ job.id }}/followup"
         hx-target="#app-status" hx-swap="outerHTML">
     <label>Follow up on

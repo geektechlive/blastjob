@@ -13,6 +13,7 @@ from blastjob.core import network as net
 from blastjob.core.company import company_key
 from blastjob.models.config import BlastJobConfig, CandidateConfig
 from blastjob.models.job import ReviewState
+from blastjob.models.tracking import APPLICATION_CHANNELS, MAX_CHANNEL_VIA_CHARS
 from blastjob.web.stages import stage_of
 
 _COLS = (
@@ -23,7 +24,8 @@ _COLS = (
     "archive_reason, archive_note, "
     "next_action_due, match_strengths, match_gaps, first_seen, last_seen, source_state, "
     "posting_check, posting_checked_at, posting_closed_at, posting_check_manual, "
-    "employer_link_source, employer_link_external_id, employer_link_url, stage_changed_at"
+    "employer_link_source, employer_link_external_id, employer_link_url, stage_changed_at, "
+    "app_channel, app_channel_via, app_channel_at"
 )
 
 # SQL literal list of the closure-lifecycle states (core.closure.AUTOMATION_STATES;
@@ -310,6 +312,32 @@ def back_href(view: str) -> str:
     viewer actually came from, not always "/". Unknown or blank views fall
     back to the surfaced list ("/")."""
     return _BACK_HREFS.get(view, "/")
+
+
+def parse_channel(channel: str, via: str) -> tuple[str | None, str]:
+    """Validate a posted channel and via. "" means unknown (None). Raises
+    ValueError on anything else, for the route to answer 400."""
+    chosen = channel.strip()
+    note = via.strip()
+    if chosen and chosen not in APPLICATION_CHANNELS:
+        raise ValueError("Invalid channel")
+    if len(note) > MAX_CHANNEL_VIA_CHARS:
+        raise ValueError(f"The via note is limited to {MAX_CHANNEL_VIA_CHARS} characters")
+    return (chosen or None), (note if chosen else "")
+
+
+def set_application_channel(
+    conn: sqlite3.Connection, job_id: int, channel: str | None, via: str = ""
+) -> bool:
+    """Record how an application started. Never touches `source`. A None channel
+    clears the record back to unknown. False when the job does not exist."""
+    stamp = stage_stamp() if channel else None
+    cur = conn.execute(
+        "UPDATE jobs SET app_channel=?, app_channel_via=?, app_channel_at=? WHERE id=?",
+        (channel, via if channel else "", stamp, job_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
 
 
 def set_application_state(

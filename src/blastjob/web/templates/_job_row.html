@@ -88,6 +88,14 @@
       <a class="btn-tailor" href="/jobs/{{ job.id }}?source_view=shortlist">Tailor &rarr;</a>
       <button class="btn-keep" hx-post="/jobs/{{ job.id }}/stage/apply" {{ row_target(job.id) }}
               {% if job.apply_confirm is defined and job.apply_confirm %}hx-confirm="{{ job.apply_confirm }}"{% endif %}>Mark applied</button>
+      {# How it started (#80): one click records it with the move; plain "Mark applied" skips it. #}
+      <span class="channel-ctl" title="Mark applied and record how it started">
+        {% for code, label in application_channels.items() %}
+        <button class="btn-channel" hx-post="/jobs/{{ job.id }}/stage/apply"
+                hx-vals='{"channel": "{{ code }}"}' {{ row_target(job.id) }}
+                {% if job.apply_confirm is defined and job.apply_confirm %}hx-confirm="{{ job.apply_confirm }}"{% endif %}>{{ label }}</button>
+        {% endfor %}
+      </span>
       <button class="btn-archive" hx-post="/jobs/{{ job.id }}/unkeep" {{ row_target(job.id) }}
               hx-confirm="Remove from the shortlist? It goes back to Surfaced or the Queue by its fit score (or out of view if the fit is low or the posting is gone). Your notes are kept.">Remove</button>
     {% elif job.review_state == 'archived' %}

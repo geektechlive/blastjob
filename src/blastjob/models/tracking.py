@@ -16,6 +16,17 @@ STATUSES: tuple[str, ...] = (
 )
 
 
+# How an application started (#80). Labels are what the cockpit shows; a missing
+# value (NULL) is "unknown" and is never shown as cold.
+APPLICATION_CHANNELS: dict[str, str] = {
+    "cold": "Cold application",
+    "referral": "Referral",
+    "recruiter": "Recruiter",
+    "inbound": "Inbound",
+}
+MAX_CHANNEL_VIA_CHARS = 120
+
+
 class TrackingRecord(BaseModel):
     model_config = {"extra": "ignore"}
 

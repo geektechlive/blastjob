@@ -15,6 +15,8 @@ Back in the cockpit, click **Mark applied** on the role's row in the **Shortlist
 - The role moves to **Applied**, with today as the date you applied.
 - blastjob records which resume and cover letter were in the packet at that moment. A later rebuild cannot change that record. If there was no packet to record, the page says so in one sentence.
 
+The row also has a button per way it started: Cold application, Referral, Recruiter and Inbound. On the job's page the matching buttons read "Applied: cold application" and so on. One click marks it applied and records how it started. The plain button skips the question, which leaves it as unknown. You can set or change it later under **How it started** on the job's page, with an optional note such as a recruiter's firm. blastjob never guesses it: older applications show as unknown.
+
 If the role looks like one you already applied to, a confirmation names the other posting before it goes through.
 
 ## Move it along

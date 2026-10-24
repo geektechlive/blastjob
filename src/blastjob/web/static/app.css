@@ -355,3 +355,10 @@ table.facts th { color: var(--ink-dim); width: 12rem; font-weight: 500; }
   margin: 0 0 1rem;
   border-radius: 6px;
 }
+
+/* How an application started (#80): one-click channel buttons and the edit form. */
+.channel-ctl { display: inline-flex; gap: 0.3rem; flex-wrap: wrap; }
+.btn-channel { font-size: 0.7rem; padding: 0.3rem 0.5rem; color: var(--ink-dim); }
+.app-channel-form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.75rem 0; }
+.app-channel-label { color: var(--ink-dim); text-transform: uppercase; font-size: 0.75rem; }
+.app-channel-current { font-weight: 600; }
