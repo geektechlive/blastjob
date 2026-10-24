@@ -44,7 +44,8 @@ The daily digest uses the same count to move warm-path roles ahead of colder, hi
 
 Three more views are built from the same rows by `network_views`, none of which invent anyone:
 
-- **Recruiter desk** (`/network/recruiters`): every connection with a recruiter-shaped title, tagged agency or in-house, ranked by warmth, with a flag when their employer has a live posting.
+- **Recruiter desk** (`/network/recruiters`): a connection is listed when the title rule matches (`is_recruiter`), when the enrichment labelled them `agency` or `exec_search` (so "Managing Partner" at a search firm appears), or when you marked them a recruiter. Groups are `exec_search` first (retained search matters most for an executive seat), then `agency`, then `in_house`, ranked by warmth within a group, with a flag when their employer has a live posting. The group is your label if you set one, else the enrichment label, else the firm-name keyword rule (only for a contact the enrichment has not labelled, or labelled `none`).
+- **Your own label** (`POST /network/contacts/{id}/recruiter`, a select on every desk row, and **Mark a recruiter**, a search over all connections at `GET /network/contacts`): choose exec search, agency, in-house, "not a recruiter", or automatic. It is stored in `network_contacts.recruiter_override` (migration 56), wins over both the title rule and the enrichment label, and an import or a re-enrichment never touches it. The title reader can miss (a firm's president labelled `none`), which is why the override exists.
 - **Dormant ties** (`/network/dormant`): executive and director connections you have actually messaged, ranked so a live opening at their employer wins, then by warmth.
 - **Advocates**: everyone who recommended you, most recently messaged first.
 

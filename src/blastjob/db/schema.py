@@ -559,4 +559,9 @@ MIGRATIONS: list[tuple[int, str]] = [
     # at most 10 rows, so rows that always fail would hold every slot forever.
     # Never-attempted ('') sort first, then the oldest attempt.
     (55, "ALTER TABLE jobs ADD COLUMN score_stale_attempted_at TEXT DEFAULT '';"),
+    # 56: the user's own verdict on whether a network contact is a recruiter, and
+    # which kind (#72): exec_search, agency, in_house or not_recruiter. NULL means
+    # automatic (title rule + enrichment label). It wins over both, and an import
+    # never touches it.
+    (56, "ALTER TABLE network_contacts ADD COLUMN recruiter_override TEXT;"),
 ]

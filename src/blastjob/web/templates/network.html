@@ -74,6 +74,14 @@ your network. They already wrote the endorsement.</p>
   <p class="dim">Loading recruiter desk&hellip;</p>
 </div>
 
+<h2>Mark a recruiter</h2>
+<p class="dim">Search your connections by name, firm or title to mark someone as a recruiter
+(or as not one) when the automatic reading missed.</p>
+<input type="search" name="q" placeholder="Name, firm or title" autocomplete="off"
+       hx-get="/network/contacts" hx-trigger="keyup changed delay:300ms, search"
+       hx-target="#contact-search" hx-swap="outerHTML">
+<div id="contact-search"></div>
+
 <div hx-get="/network/dormant" hx-trigger="load" hx-swap="outerHTML">
   <p class="dim">Loading dormant ties&hellip;</p>
 </div>

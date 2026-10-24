@@ -185,19 +185,40 @@ def _is_agency_company(company: str) -> bool:
     return any(k in text for k in _AGENCY_COMPANY_KEYWORDS + _EXTRA_AGENCY_KEYWORDS)
 
 
+# Desk groups, most valuable first: retained search matters most for an executive seat.
+RECRUITER_GROUPS: tuple[str, ...] = ("exec_search", "agency", "in_house")
+# What the user may store as a manual verdict (`recruiter_override`); NULL is automatic.
+RECRUITER_OVERRIDES: frozenset[str] = frozenset((*RECRUITER_GROUPS, "not_recruiter"))
+_ENRICH_LISTED = ("agency", "exec_search")
+
+
+def _desk_group(row) -> str:
+    """The user's override wins, then the enrichment label, then the keyword rule
+    (only for a contact the enrichment has not labelled, or labelled `none`)."""
+    for label in (row["recruiter_override"], row["enrich_recruiter"]):
+        if label in RECRUITER_GROUPS:
+            return label
+    return "agency" if _is_agency_company(row["company"]) else "in_house"
+
+
 def recruiter_desk(conn: sqlite3.Connection) -> list[dict]:
-    """Every recruiter connection, ranked by `warmth_score`, each tagged with
-    which side of the desk they sit on (agency vs. in_house) and whether
-    their own employer currently has a live posting.
+    """Every recruiter connection, grouped exec_search, agency, in_house (then
+    ranked by `warmth_score` within a group), each flagged when their own
+    employer currently has a live posting.
+
+    A contact is listed when the user marked them a recruiter, or the title rule
+    (`is_recruiter`) or the enrichment label (agency / exec_search) says so. The
+    user's "not a recruiter" removes them whatever the other signals say.
 
     Most of these ties are cold -- the highest lifetime message count is
     someone last touched over a year ago -- so warmth_score's recency
     component is what keeps this from just being a volume leaderboard.
     """
     rows = conn.execute(
-        "SELECT full_name, url, company, company_key, position, seniority, enrich_tier, "
-        "last_message_at, message_count FROM network_contacts "
-        "WHERE is_recruiter=1"
+        "SELECT id, full_name, url, company, company_key, position, seniority, enrich_tier, "
+        "enrich_recruiter, recruiter_override, last_message_at, message_count "
+        "FROM network_contacts "
+        f"WHERE {net.EFFECTIVE_RECRUITER_SQL}"
     ).fetchall()
     if not rows:
         return []
@@ -207,11 +228,13 @@ def recruiter_desk(conn: sqlite3.Connection) -> list[dict]:
 
     desk = [
         {
+            "id": r["id"],
             "name": r["full_name"],
             "url": r["url"],
             "company": r["company"],
             "position": r["position"],
-            "group": "agency" if _is_agency_company(r["company"]) else "in_house",
+            "group": _desk_group(r),
+            "override": r["recruiter_override"] or "",
             "has_live_jobs": r["company_key"] in live_keys,
             "last_message_at": r["last_message_at"],
             "warmth_score": warmth_score(
@@ -220,8 +243,51 @@ def recruiter_desk(conn: sqlite3.Connection) -> list[dict]:
         }
         for r in rows
     ]
-    desk.sort(key=lambda d: d["warmth_score"], reverse=True)
+    desk.sort(key=lambda d: (RECRUITER_GROUPS.index(d["group"]), -d["warmth_score"]))
     return desk
+
+
+def set_recruiter_override(conn: sqlite3.Connection, contact_id: int, value: str) -> bool:
+    """Store the user's verdict ("auto" clears it). False for an unknown contact;
+    ValueError for a value outside the allowed set."""
+    if value != "auto" and value not in RECRUITER_OVERRIDES:
+        raise ValueError(value)
+    cur = conn.execute(
+        "UPDATE network_contacts SET recruiter_override=? WHERE id=?",
+        (None if value == "auto" else value, contact_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+_SEARCH_LIMIT = 25
+
+
+def search_contacts(conn: sqlite3.Connection, query: str) -> list[dict]:
+    """Network contacts whose name, employer or title contains `query`, so one
+    that is not on the desk can be marked a recruiter. Empty query, no rows."""
+    text = query.strip()
+    if not text:
+        return []
+    like = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = conn.execute(
+        "SELECT id, full_name, company, position, enrich_recruiter, recruiter_override "
+        "FROM network_contacts WHERE full_name LIKE ? ESCAPE '\\' "
+        "OR company LIKE ? ESCAPE '\\' OR position LIKE ? ESCAPE '\\' "
+        "ORDER BY full_name LIMIT ?",
+        (like, like, like, _SEARCH_LIMIT),
+    ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["full_name"],
+            "company": r["company"],
+            "position": r["position"],
+            "label": r["enrich_recruiter"] or "",
+            "override": r["recruiter_override"] or "",
+        }
+        for r in rows
+    ]
 
 
 # --------------------------------------------------------------------------

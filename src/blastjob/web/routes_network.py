@@ -98,6 +98,55 @@ def register(app: FastAPI, deps: Deps) -> None:
         finally:
             c.close()
 
+    @app.get("/network/contacts", response_class=HTMLResponse)
+    async def network_contact_search(request: Request, q: str = ""):
+        """Find a connection that is not on the recruiter desk, to label it."""
+        c = deps.conn()
+        try:
+            query = q.strip()[:80]
+            return deps.render(
+                request,
+                "_contact_search.html",
+                q=query,
+                results=nv.search_contacts(c, query),
+            )
+        finally:
+            c.close()
+
+    @app.post("/network/contacts/{contact_id}/recruiter", response_class=HTMLResponse)
+    async def network_contact_recruiter(
+        request: Request,
+        contact_id: int,
+        value: str = Form(...),
+        ctx: str = Form("desk"),
+        q: str = Form(""),
+        _: None = Depends(require_csrf),
+    ):
+        """Set (or clear, with "auto") the user's own recruiter verdict. It wins over
+        the title rule and the enrichment label (issue #72)."""
+        if value != "auto" and value not in nv.RECRUITER_OVERRIDES:
+            return HTMLResponse("Invalid value", status_code=400)
+        if ctx not in ("desk", "search"):
+            return HTMLResponse("Invalid context", status_code=400)
+        c = deps.conn()
+        try:
+            if not nv.set_recruiter_override(c, contact_id, value):
+                return HTMLResponse("Not found", status_code=404)
+            if ctx == "search":
+                query = q.strip()[:80]
+                # The desk is refreshed out of band so it never shows a stale label.
+                return deps.render(
+                    request,
+                    "_contact_search.html",
+                    q=query,
+                    results=nv.search_contacts(c, query),
+                    recruiters=nv.recruiter_desk(c),
+                    oob=True,
+                )
+            return deps.render(request, "_recruiters.html", recruiters=nv.recruiter_desk(c))
+        finally:
+            c.close()
+
     @app.get("/network/dormant", response_class=HTMLResponse)
     async def network_dormant(request: Request):
         c = deps.conn()

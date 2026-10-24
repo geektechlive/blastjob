@@ -1,0 +1,15 @@
+{# One contact's manual recruiter verdict (#72). Expects: cid, override ('' = automatic),
+   ctx ('desk' or 'search'), q (the search text, for ctx 'search'). The change re-renders
+   the list it sits in, so "not a recruiter" drops the row at once. #}
+<select name="value" aria-label="Recruiter label"
+        hx-post="/network/contacts/{{ cid }}/recruiter"
+        hx-trigger="change"
+        hx-vals='{"ctx": "{{ ctx }}", "q": {{ q | default("") | tojson }}}'
+        {% if ctx == 'desk' %}hx-target="#recruiters"{% else %}hx-target="#contact-search"{% endif %}
+        hx-swap="outerHTML">
+  <option value="auto" {% if not override %}selected{% endif %}>Automatic</option>
+  <option value="exec_search" {% if override == 'exec_search' %}selected{% endif %}>Recruiter: exec search</option>
+  <option value="agency" {% if override == 'agency' %}selected{% endif %}>Recruiter: agency</option>
+  <option value="in_house" {% if override == 'in_house' %}selected{% endif %}>Recruiter: in-house</option>
+  <option value="not_recruiter" {% if override == 'not_recruiter' %}selected{% endif %}>Not a recruiter</option>
+</select>

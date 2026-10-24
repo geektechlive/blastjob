@@ -1,13 +1,13 @@
 {# Recruiter desk. Most of these ties are cold, so last-spoke is shown rather than
    hidden behind the ranking -- a 2024 conversation is a different ask than an
    August one, and pretending otherwise would write the wrong note. #}
-<div id="recruiters" class="detail-block">
+<div id="recruiters" class="detail-block"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
   <h3>Recruiter desk <span class="col-count">{{ recruiters|length }}</span></h3>
   {% if not recruiters %}
     <p class="dim">No recruiters in the imported network yet.</p>
   {% else %}
   <table class="net-table">
-    <tr><th>Who</th><th>Where</th><th>Side</th><th>Last spoke</th><th></th></tr>
+    <tr><th>Who</th><th>Where</th><th>Side</th><th>Last spoke</th><th></th><th>Label</th></tr>
     {% for r in recruiters %}
     <tr>
       <td>
@@ -22,8 +22,11 @@
       <td><span class="badge">{{ r.group.replace('_', ' ') }}</span></td>
       <td class="num">{{ r.last_message_at or '—' }}</td>
       <td class="dim num">{{ '%.0f' % r.warmth_score }}</td>
+      <td>{% with cid=r.id, override=r.override, ctx='desk' %}{% include "_recruiter_control.html" %}{% endwith %}</td>
     </tr>
     {% endfor %}
   </table>
   {% endif %}
+  <p class="dim">Missing someone, or wrong side? Find them under "Mark a recruiter" below.
+  Your label here wins over the title rule and the title reader.</p>
 </div>

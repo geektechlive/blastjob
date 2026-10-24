@@ -1,0 +1,21 @@
+{# Search results for marking a contact who is not on the recruiter desk (#72). #}
+<div id="contact-search">
+  {% if q %}
+    {% if not results %}
+      <p class="dim">No connection matches that.</p>
+    {% else %}
+    <table class="net-table">
+      <tr><th>Who</th><th>Where</th><th>Enrichment</th><th>Recruiter</th></tr>
+      {% for r in results %}
+      <tr>
+        <td>{{ r.name }}<div class="dim">{{ r.position }}</div></td>
+        <td>{{ r.company }}</td>
+        <td class="dim">{{ (r.label or 'not read').replace('_', ' ') }}</td>
+        <td>{% with cid=r.id, override=r.override, ctx='search' %}{% include "_recruiter_control.html" %}{% endwith %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  {% endif %}
+</div>
+{% if oob %}{% include "_recruiters.html" %}{% endif %}

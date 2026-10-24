@@ -785,11 +785,22 @@ def warm_counts(conn: sqlite3.Connection, company_keys: Iterable[str]) -> dict[s
     return {r["company_key"]: r["n"] for r in rows}
 
 
+# THE definition of "is a recruiter" for every view (#72): the user's own label
+# wins ("not_recruiter" removes, a group adds), else the title rule or an
+# enrichment label of agency / exec_search. The desk, `recruiters()` and the
+# summary count all use this one predicate so they cannot disagree.
+EFFECTIVE_RECRUITER_SQL = (
+    "(COALESCE(recruiter_override, '') != 'not_recruiter' "
+    "AND (recruiter_override IN ('exec_search', 'agency', 'in_house') "
+    "OR is_recruiter=1 OR enrich_recruiter IN ('agency', 'exec_search')))"
+)
+
+
 def recruiters(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Every connection who is a recruiter -- a standing channel independent
     of any single job."""
     return conn.execute(
-        "SELECT * FROM network_contacts WHERE is_recruiter=1 ORDER BY full_name"
+        f"SELECT * FROM network_contacts WHERE {EFFECTIVE_RECRUITER_SQL} ORDER BY full_name"
     ).fetchall()
 
 
@@ -813,7 +824,7 @@ def network_summary(conn: sqlite3.Connection) -> dict:
         ).fetchall()
     }
     recruiter_count = conn.execute(
-        "SELECT COUNT(*) n FROM network_contacts WHERE is_recruiter=1"
+        f"SELECT COUNT(*) n FROM network_contacts WHERE {EFFECTIVE_RECRUITER_SQL}"
     ).fetchone()["n"]
     top_companies = conn.execute(
         "SELECT company, company_key, COUNT(*) n FROM network_contacts "
