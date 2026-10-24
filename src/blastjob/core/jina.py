@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from typing import Any
 
 import httpx
@@ -87,10 +88,13 @@ async def jina_search(query: str, api_key: str, *, timeout_s: int = 30) -> list[
     return out
 
 
-def company_search_queries(company: str, candidate: CandidateConfig | None = None) -> list[str]:
+def company_search_queries(
+    company: str, candidate: CandidateConfig | None = None, today: date | None = None
+) -> list[str]:
     """Query shape derived from the candidate's own field/target titles
     (§2 Persona), not a hard-coded role. With no profile configured, the
-    leadership-team query falls back to a neutral "technology" term.
+    leadership-team query falls back to a neutral "technology" term. The news
+    query carries the current year (`today` is injectable for tests).
 
     Ordered most-useful first: packet research takes only the first few."""
     c = f'"{company}"'
@@ -98,7 +102,7 @@ def company_search_queries(company: str, candidate: CandidateConfig | None = Non
     return [
         f"{c} company revenue employees headquarters",
         f"{c} CEO leadership team",
-        f"{c} news 2026",
+        f"{c} news {(today or date.today()).year}",
         f"{c} acquisition OR expansion OR layoffs OR restructuring",
         f"{c} glassdoor reviews culture",
         f"{c} {field} leadership cloud ERP digital transformation",
