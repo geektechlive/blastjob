@@ -48,6 +48,7 @@
       {% if job.employer_hidden is defined and job.employer_hidden %}
         <span class="badge comp-unknown" title="the posting does not name the employer">employer hidden</span>
       {% endif %}
+      {% if job.reporting_label is defined and job.reporting_label %}<span class="badge reports-to" title="read from the description; not part of the fit score">{{ job.reporting_label }}</span>{% endif %}
       {% include "_network_badges.html" %}
     </div>
     {% if job.rationale %}<p class="job-rationale">{{ job.rationale }}</p>{% endif %}

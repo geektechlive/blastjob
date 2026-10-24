@@ -11,6 +11,7 @@ import sqlite3
 from blastjob.core import events
 from blastjob.core import network as net
 from blastjob.core.company import company_key
+from blastjob.core.reporting_line import extract_reporting_line
 from blastjob.models.config import BlastJobConfig, CandidateConfig
 from blastjob.models.job import ReviewState
 from blastjob.models.tracking import APPLICATION_CHANNELS, MAX_CHANNEL_VIA_CHARS
@@ -177,11 +178,33 @@ def annotate_network(
     out = [dict(r) for r in rows]
     keys = {company_key(r.get("company") or "") for r in out}
     counts = net.warm_counts(conn, keys)
+    labels = _reporting_labels(conn, out)
     for r in out:
         key = company_key(r.get("company") or "")
         r["warm_count"] = counts.get(key, 0)
         r["is_alumni"] = net.is_alumni_company(key, candidate)
+        r["reporting_label"] = labels.get(r.get("id") or -1, "")
     return out
+
+
+_JD_CHUNK = 500  # stays under SQLite's bound-variable ceiling
+
+
+def _reporting_labels(conn: sqlite3.Connection, rows: list[dict]) -> dict[int, str]:
+    """job id -> "Reports to CFO" style label, computed at render time from the
+    stored description so a JD paste or employer lookup is reflected at once
+    (nothing is stored). Rows that already carry `raw_jd` (the job page) use it;
+    list rows do not, so their text is fetched in chunks, never per row."""
+    texts: dict[int, str | None] = {
+        r["id"]: r["raw_jd"] for r in rows if "raw_jd" in r and r.get("id") is not None
+    }
+    missing = [r["id"] for r in rows if r.get("id") is not None and r["id"] not in texts]
+    for i in range(0, len(missing), _JD_CHUNK):
+        chunk = missing[i : i + _JD_CHUNK]
+        marks = ",".join("?" * len(chunk))
+        for jd_row in conn.execute(f"SELECT id, raw_jd FROM jobs WHERE id IN ({marks})", chunk):
+            texts[jd_row["id"]] = jd_row["raw_jd"]
+    return {jid: extract_reporting_line(jd).label for jid, jd in texts.items()}
 
 
 def annotate_network_one(

@@ -97,6 +97,8 @@ Matching writes are compare-and-swap on `review_state`, and only from `new`, `su
 
 Two scores stay distinct. The pre-generation **alignment score** says whether the role fits the candidate. The post-generation groundedness `FitScore` says whether a generated resume is supported by the work history ([truth guarantees](../truth-guarantees.md)). An early design used the second as a fit signal; that measures hallucination, not fit, and is the wrong gate signal. Never use one in place of the other.
 
+The reporting line (who the role reports to, executive-team membership) is display only: it is read from the description by `core/reporting_line.py` ([how it shows](web.md#list-rows-and-badges)) and is never an input to the alignment score.
+
 ## Score fingerprint
 
 Every alignment score is stamped in `score_model_version` with a fingerprint (`matching/fingerprint.py`, #29): a hash of `SCORER_SCHEMA_VERSION`, the exact scoring system prompt, the candidate profile, the `work_history.md` text and the provider and model. A single writer, `pipeline.score_columns` (also used by `rescore.score_kept`), stamps it, so no path can land a score without the fingerprint it came from. A stored score is reused only when its fingerprint matches the current one.

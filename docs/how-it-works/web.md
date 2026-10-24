@@ -142,6 +142,8 @@ List-row actions post `from_list=1`. A successful move answers an empty 200, so 
 
 Stage lists collapse cross-source duplicates to one row with a `+N sources` badge, where N counts every cluster member, including ones the current query excludes. Matches uses `service.collapse_clusters` for the same job. Postings from staffing and recruiting agencies carry a `staffing agency` badge (`agencies.is_agency`) so they are not mistaken for the employer. Each row also carries the cluster's best apply link (see [same role](same-role.md)) and, on Applied, the newest application event.
 
+Rows and the job page also show who the role reports to ("Reports to CFO") and an "Executive team" mention, when the description says so. `core/reporting_line.py` reads the stored description with fixed phrase rules, no model, at render time (`service.annotate_network` batches the text fetch), so a JD paste or employer lookup shows at once and nothing is stored. It only accepts a sentence whose subject is the role ("this role reports to ...", "you will report to ...", "reporting to ..."); "5 direct reports", "the network team reports to the CIO" and "present to the executive team" never match. Common titles shorten (CEO, CFO, COO, CIO, CTO, CISO, President, Owner, "VP of ..."); any other title is kept as written, trimmed to 40 characters. No mention shows nothing. The label never feeds the fit score ([matching](matching.md)).
+
 ## Settings page
 
 `/settings` edits the settings that live in the database (see [data model](data-model.md#settings-reference)). Both mailboxes are editable there, through `web/mail_settings.py`. The rules:
