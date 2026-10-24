@@ -425,6 +425,69 @@ def test_allowlist_file_suppresses_a_term(setup, capsys):
     assert code == 0, out
 
 
+def _linked_worktree(setup, tmp_path):
+    """The `setup` repo with `notes.md` committed, plus a linked worktree of it."""
+    data, repo = setup
+    (repo / "notes.md").write_text("zentrafyx\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "notes")
+    linked = tmp_path / "linked"
+    _git(repo, "worktree", "add", "-q", "-b", "side", str(linked))
+    return data, repo, linked
+
+
+def test_worktree_without_own_allowlist_uses_the_main_checkouts(setup, capsys, tmp_path):
+    data, repo, linked = _linked_worktree(setup, tmp_path)
+    main_allow = repo / "local" / "leak_allowlist.txt"
+    main_allow.parent.mkdir()
+    main_allow.write_text("Zentrafyx\n")
+
+    code, out = _run(capsys, "--repo", str(linked), "--data-dir", str(data))
+
+    assert code == 0, out
+    assert f"allowlist: {main_allow.resolve()} (1 terms)" in out
+
+
+def test_worktrees_own_allowlist_wins_over_the_main_checkouts(setup, capsys, tmp_path):
+    data, repo, linked = _linked_worktree(setup, tmp_path)
+    main_allow = repo / "local" / "leak_allowlist.txt"
+    main_allow.parent.mkdir()
+    main_allow.write_text("Zentrafyx\n")
+    own_allow = linked / "local" / "leak_allowlist.txt"
+    own_allow.parent.mkdir()
+    own_allow.write_text("# nothing relevant\nunrelated term\n")
+
+    code, out = _run(capsys, "--repo", str(linked), "--data-dir", str(data))
+
+    assert code == 1, out
+    assert f"allowlist: {own_allow.resolve()} (1 terms)" in out
+
+
+def test_worktree_with_no_allowlist_anywhere_behaves_as_before(setup, capsys, tmp_path):
+    data, _repo, linked = _linked_worktree(setup, tmp_path)
+
+    code, out = _run(capsys, "--repo", str(linked), "--data-dir", str(data))
+
+    assert code == 1, out
+    expected = linked.resolve() / "local" / "leak_allowlist.txt"
+    assert f"allowlist: {expected} (0 terms, file not found)" in out
+
+
+def test_explicit_allowlist_flag_is_never_replaced_by_the_fallback(setup, capsys, tmp_path):
+    data, repo, linked = _linked_worktree(setup, tmp_path)
+    main_allow = repo / "local" / "leak_allowlist.txt"
+    main_allow.parent.mkdir()
+    main_allow.write_text("Zentrafyx\n")
+    missing = tmp_path / "nope.txt"
+
+    code, out = _run(
+        capsys, "--repo", str(linked), "--data-dir", str(data), "--allowlist", str(missing)
+    )
+
+    assert code == 1, out
+    assert f"allowlist: {missing} (0 terms, file not found)" in out
+
+
 def test_untracked_files_are_ignored_by_default_scan(setup, capsys):
     data, repo = setup
     (repo / "scratch.md").write_text("Rowan Thistlewood\n")

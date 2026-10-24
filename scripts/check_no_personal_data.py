@@ -41,8 +41,9 @@ Tiers
 Matching is on normalized text: lowercase, punctuation and whitespace
 collapsed, apostrophes dropped. Terms listed one per line in
 `<repo>/local/leak_allowlist.txt` (gitignored; `#` comments) are ignored, as
-are the built-in vendor/integration names below. Minified vendor files
-(`*.min.js`) are not read: their content is third-party and full of
+are the built-in vendor/integration names below. In a linked git worktree with
+no file of its own, the main checkout's allowlist is used. Minified vendor
+files (`*.min.js`) are not read: their content is third-party and full of
 two-letter identifier runs; their path names are still scanned.
 
 Data dir: --data-dir, else $BLASTJOB_DATA_DIR, else ~/.blastjob. With no data
@@ -778,12 +779,36 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def main_checkout(repo: Path) -> Path | None:
+    """The main checkout's root when `repo` is a linked git worktree, else None."""
+    try:
+        out = _git(repo, "rev-parse", "--git-common-dir").decode("utf-8").strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    if not out:
+        return None
+    common = (repo / out).resolve()  # an absolute `out` wins over `repo`
+    root = common.parent
+    return root if common.name == ".git" and root != repo else None
+
+
+def default_allowlist(repo: Path) -> Path:
+    """`<repo>/local/leak_allowlist.txt`; in a linked worktree that lacks its own
+    (the file is gitignored, so a worktree never has one), the main checkout's."""
+    own = repo / DEFAULT_ALLOWLIST
+    if own.is_file():
+        return own
+    root = main_checkout(repo)
+    fallback = root / DEFAULT_ALLOWLIST if root else None
+    return fallback if fallback is not None and fallback.is_file() else own
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse(argv)
     # The allowlist always comes from --repo (your working checkout), never
     # from the scanned target: a fresh publication repo has no local/ dir.
     repo = Path(args.repo).resolve()
-    allow_path = Path(args.allowlist) if args.allowlist else repo / DEFAULT_ALLOWLIST
+    allow_path = Path(args.allowlist) if args.allowlist else default_allowlist(repo)
     allow = load_allowlist(allow_path)
     personal = build_personal(resolve_data_dir(args.data_dir), allow)
     if args.paths:

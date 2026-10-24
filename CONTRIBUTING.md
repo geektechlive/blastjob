@@ -66,7 +66,9 @@ Two layers, both required before a PR:
    URLs, your name, contact names, distinctive company names) and **WARN** for
    lower-confidence ones (common company names, long word-for-word overlaps with
    your work history). It exits non-zero on any FAIL. False positives can be
-   listed, one per line, in `local/leak_allowlist.txt` (gitignored).
+   listed, one per line, in `local/leak_allowlist.txt` (gitignored). In a linked
+   git worktree with no allowlist of its own, the check uses the main
+   checkout's and prints which file it read.
    It also fails on the web domains of employers you kept or applied to, so
    fixtures must invent domains as well as names: use `example.com` or a
    `.example` host, never a real employer's careers site.
