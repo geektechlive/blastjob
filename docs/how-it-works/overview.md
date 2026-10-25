@@ -86,7 +86,7 @@ Read the diagram top to bottom:
 
 Everything lives under `src/blastjob/`.
 
-- `src/blastjob/llm/`: the provider abstraction (Anthropic, OpenAI, `claude` CLI), cost tracking and prompt caching.
+- `src/blastjob/llm/`: the provider abstraction (Anthropic, OpenAI, `claude` CLI), the gateway every model call goes through (deadline, origin, supervised CLI child), cost tracking and prompt caching.
 - `src/blastjob/core/`: the domain logic. Ingest, build, history, paths, scoring, refine, coverage, tracking, company profiles and comp signals, interview prep, the interview debrief, closure, same-role clustering, events, artifacts and packet verification.
 - `src/blastjob/importers/`: reads your existing PDF, DOCX, text and folder inputs.
 - `src/blastjob/exporters/`: writes Markdown, PDF, DOCX and ATS plain text.

@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import atexit
 import codecs
-import contextlib
 import json
 import logging
 import os
@@ -22,12 +21,13 @@ import tempfile
 from collections.abc import AsyncIterator, Awaitable
 from typing import TYPE_CHECKING, TypeVar, cast
 
+from blastjob.llm import gateway
 from blastjob.llm.child_env import child_env
 from blastjob.llm.cost import CostTracker, cost_from_usage
+from blastjob.llm.gateway import CLIError
 from blastjob.models.config import BlastJobConfig, LLMConfig
 
 if TYPE_CHECKING:
-    from anthropic.lib.streaming import AsyncMessageStreamManager
     from anthropic.types import MessageParam, TextBlockParam
 
 
@@ -36,10 +36,6 @@ log = logging.getLogger(__name__)
 
 class ProviderNotConfiguredError(Exception):
     pass
-
-
-class CLIError(RuntimeError):
-    """`claude -p` failed: non-zero exit, an `is_error` result, or a timeout."""
 
 
 # `claude -p` is the full Claude Code AGENT, not a bare completion. Without these
@@ -53,7 +49,6 @@ _CLI_DISALLOWED_TOOLS = "Bash Read Edit Write Glob Grep WebFetch WebSearch Task 
 # full resume/cover-letter generation, a few minutes; a hung CLI must not hold a
 # scoring batch or a build forever.
 CLI_TIMEOUT_SECONDS = 900.0
-_CLI_REAP_SECONDS = 5.0
 _CLI_ERROR_CHARS = 200
 
 _cli_cwd: str | None = None
@@ -122,21 +117,20 @@ async def anthropic_stream(
     system: list[dict],
     messages: list[dict],
     max_tokens: int,
-) -> AsyncMessageStreamManager:
+) -> gateway.ClosingManager:
     """Return the SDK's stream manager: an async context manager exposing
     `text_stream` and `get_final_message()`, the same shape as the other
     providers' stream objects."""
-    from anthropic import AsyncAnthropic
-
-    client = AsyncAnthropic(api_key=os.environ.get(cfg.anthropic_api_key_env))
+    client = gateway.anthropic_client(os.environ.get(cfg.anthropic_api_key_env))
     # Callers build plain dicts in the Messages API shape; the SDK's TypedDicts
     # describe the same structure.
-    return client.messages.stream(
+    manager = client.messages.stream(
         model=cfg.anthropic_model,
         max_tokens=max_tokens,
         system=cast("list[TextBlockParam]", system),
         messages=cast("list[MessageParam]", messages),
     )
+    return gateway.ClosingManager(manager, client)
 
 
 # ---------------------------------------------------------------------------
@@ -188,12 +182,11 @@ async def openai_stream(
     max_tokens: int = 4096,
 ) -> _OpenAIStream:
     try:
-        from openai import AsyncOpenAI
+        client = gateway.openai_client(os.environ.get(cfg.openai_api_key_env))
     except ImportError:
         raise ProviderNotConfiguredError(
             "OpenAI provider requires the openai package: pip install openai"
         )
-    client = AsyncOpenAI(api_key=os.environ.get(cfg.openai_api_key_env))
     system_str = _system_to_str(system)
     user_str = _user_content_to_str(messages[0]["content"] if messages else [])
     return _OpenAIStream(client, cfg.openai_model, system_str, user_str, max_tokens)
@@ -213,7 +206,9 @@ class _OpenAIStream:
         return self
 
     async def __aexit__(self, *args):
-        pass
+        close = getattr(self._client, "close", None)
+        if close is not None:
+            await close()
 
     @property
     def text_stream(self):
@@ -382,55 +377,41 @@ async def claudecli_stream(system: str, prompt: str, usage_box: _CLIUsageBox) ->
 
 
 _T = TypeVar("_T")
+_CLI_NOT_FOUND_EXIT = 127  # the supervisor's exit when it could not start the command
 
 
-async def _within(deadline: float, awaitable: Awaitable[_T]) -> _T:
+async def _within(deadline: float, limit: float, awaitable: Awaitable[_T]) -> _T:
     """Await `awaitable`, but never past the shared `deadline` (loop time)."""
     remaining = max(deadline - asyncio.get_running_loop().time(), 0.001)
     try:
         return await asyncio.wait_for(awaitable, remaining)
     except TimeoutError:
-        raise CLIError(f"claude -p timed out after {CLI_TIMEOUT_SECONDS:g}s") from None
-
-
-async def _reap(proc: asyncio.subprocess.Process) -> None:
-    """Make sure the child is gone: runs on success, error, timeout, cancel and
-    an early `aclose()` alike. A finished process has a returncode already."""
-    if getattr(proc, "returncode", 0) is not None:
-        return
-    with contextlib.suppress(ProcessLookupError):
-        proc.kill()
-    with contextlib.suppress(Exception):
-        await asyncio.wait_for(proc.wait(), _CLI_REAP_SECONDS)
+        raise CLIError(f"claude -p timed out after {limit:g}s") from None
 
 
 async def _run_cli(args: list[str], prompt: str, usage_box: _CLIUsageBox) -> AsyncIterator[str]:
-    """Spawn `claude -p`, feed it the prompt and yield text deltas.
+    """Spawn `claude -p` under the supervisor, feed it the prompt and yield text deltas.
 
     Everything that can wedge or leak lives inside this generator so one
     `finally` owns the child: UTF-8 is decoded incrementally (a multi-byte
     character split across two reads must not become two replacement chars), the
-    whole call has a deadline, a non-zero exit or an `is_error` result raises
-    instead of passing an error message off as the answer, and the process is
-    killed if the caller stops reading or is cancelled."""
+    whole call has a deadline (`min(CLI_TIMEOUT_SECONDS, time left in the run)`), a
+    non-zero exit or an `is_error` result raises instead of passing an error
+    message off as the answer, and the process group is killed if the caller stops
+    reading or is cancelled. docs/how-it-works/llm.md."""
+    limit = gateway.call_limit(CLI_TIMEOUT_SECONDS)  # DeadlineReached: no child is started
     # OS-level failures are CLIError too: fail-soft callers catch exactly that.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            cwd=_neutral_cwd(),
-            env=child_env(),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
+        child = await gateway.spawn_cli(args, cwd=_neutral_cwd(), env=child_env(), limit=limit)
     except OSError as e:
         raise CLIError(f"could not start claude -p: {e}") from e
+    proc = child.proc
     try:
         assert proc.stdin is not None and proc.stdout is not None
-        deadline = asyncio.get_running_loop().time() + CLI_TIMEOUT_SECONDS
+        deadline = asyncio.get_running_loop().time() + limit
         try:
             proc.stdin.write(prompt.encode("utf-8"))
-            await _within(deadline, proc.stdin.drain())
+            await _within(deadline, limit, proc.stdin.drain())
             proc.stdin.close()
         except OSError as e:
             raise CLIError(f"could not send the prompt to claude -p: {e}") from e
@@ -438,7 +419,7 @@ async def _run_cli(args: list[str], prompt: str, usage_box: _CLIUsageBox) -> Asy
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         buf = ""
         while True:
-            chunk = await _within(deadline, proc.stdout.read(1024))
+            chunk = await _within(deadline, limit, proc.stdout.read(1024))
             buf += decoder.decode(chunk, final=not chunk)
             if not chunk:
                 break
@@ -451,13 +432,15 @@ async def _run_cli(args: list[str], prompt: str, usage_box: _CLIUsageBox) -> Asy
             text = _handle_cli_line(buf, usage_box)
             if text:
                 yield text
-        code = await _within(deadline, proc.wait())
+        code = await _within(deadline, limit, proc.wait())
         if usage_box.error:
             raise CLIError(f"claude -p reported an error: {usage_box.error}")
+        if code == _CLI_NOT_FOUND_EXIT:
+            raise CLIError("could not start claude -p: command not found or not executable")
         if code:
             raise CLIError(f"claude -p exit status {code}")
     finally:
-        await _reap(proc)
+        await gateway.reap(child)
 
 
 class _CLIFinalMessage:
@@ -517,23 +500,88 @@ async def make_stream(
     messages: list[dict],
     max_tokens: int = 4096,
 ):
-    """Return an async context manager that yields text_stream and get_final_message()."""
-    provider = detect_provider(cfg.llm)
+    """Return an async context manager that yields text_stream and get_final_message().
 
+    Every provider's stream comes back inside the gateway's `BoundedStream`: bounded by the
+    run's deadline, with the ledger hook (docs/how-it-works/llm.md)."""
+    provider = detect_provider(cfg.llm)
+    if provider not in ("anthropic", "openai", "claude-cli"):
+        raise ProviderNotConfiguredError(f"Unknown provider: {provider}")
+
+    per_call = CLI_TIMEOUT_SECONDS if provider == "claude-cli" else gateway.STREAM_TIMEOUT_SECONDS
+    limit = gateway.call_limit(per_call)  # DeadlineReached: nothing is started
+    reservation = gateway.reserve("make_stream")
+    try:
+        inner = await _open_stream(provider, cfg, system, messages, max_tokens)
+    except BaseException:
+        gateway.finish(reservation, "error")
+        raise
+    return gateway.BoundedStream(inner, limit, reservation)
+
+
+async def _open_stream(
+    provider: str,
+    cfg: BlastJobConfig,
+    system: list[dict],
+    messages: list[dict],
+    max_tokens: int,
+):
     if provider == "anthropic":
         return await anthropic_stream(cfg.llm, system, messages, max_tokens)
-
     if provider == "openai":
         return await openai_stream(cfg.llm, system, messages, max_tokens)
+    # Pass system as an override (keeps the CLI a plain model, not the agent);
+    # user content stays separate. See claudecli_stream for the hardening.
+    system_str = _system_to_str(system)
+    user_str = _user_content_to_str(messages[0]["content"] if messages else [])
+    return _CLIStream(system_str, user_str)
 
-    if provider == "claude-cli":
-        # Pass system as an override (keeps the CLI a plain model, not the agent);
-        # user content stays separate. See claudecli_stream for the hardening.
-        system_str = _system_to_str(system)
-        user_str = _user_content_to_str(messages[0]["content"] if messages else [])
-        return _CLIStream(system_str, user_str)
 
-    raise ProviderNotConfiguredError(f"Unknown provider: {provider}")
+async def _anthropic_research(
+    cfg: BlastJobConfig, company: str, cost_tracker: CostTracker, max_searches: int
+) -> str:
+    """The web-search research call. Every failure (API error, timeout) is a `CLIError`
+    inside the gateway and degrades to "no research", as the CLI path does. A spent
+    deadline (`DeadlineReached`) is raised before anything starts and is not swallowed."""
+    from blastjob.llm.prompts import RESEARCH_PROMPT
+
+    limit = gateway.call_limit(gateway.STREAM_TIMEOUT_SECONDS)
+    reservation = gateway.reserve("make_research_call")
+    client = None
+    try:
+        client = gateway.anthropic_client(os.environ.get(cfg.llm.anthropic_api_key_env))
+        with gateway.sdk_errors():
+            async with asyncio.timeout(limit):
+                response = await client.messages.create(
+                    model=cfg.llm.anthropic_model,
+                    max_tokens=2048,
+                    tools=[
+                        {
+                            "type": "web_search_20250305",
+                            "name": "web_search",
+                            "max_uses": max_searches,
+                        }
+                    ],
+                    messages=[{"role": "user", "content": RESEARCH_PROMPT.format(company=company)}],
+                )
+    except TimeoutError:
+        gateway.finish(reservation, "timeout")
+        log.warning("company research timed out for %s after %gs", company, limit)
+        return ""
+    except CLIError as e:
+        gateway.finish(reservation, "error")
+        log.warning("company research via the Anthropic API failed for %s: %s", company, e)
+        return ""
+    except BaseException:
+        gateway.finish(reservation, "error")
+        raise
+    finally:
+        if client is not None:
+            await client.close()
+    gateway.finish(reservation, "ok")
+    cost_tracker.record(cost_from_usage(response.usage, cfg.pricing))
+    parts = [b.text for b in response.content if hasattr(b, "text") and b.text]
+    return "\n\n".join(parts) or "No research available."
 
 
 async def make_research_call(
@@ -550,23 +598,12 @@ async def make_research_call(
     an entire LLM call regardless of provider.
     """
     from blastjob.llm import caching
-    from blastjob.llm.prompts import RESEARCH_PROMPT, RESEARCH_PROMPT_KNOWLEDGE
+    from blastjob.llm.prompts import RESEARCH_PROMPT_KNOWLEDGE
 
     provider = detect_provider(cfg.llm)
 
     if provider == "anthropic":
-        from anthropic import AsyncAnthropic
-
-        client = AsyncAnthropic(api_key=os.environ.get(cfg.llm.anthropic_api_key_env))
-        response = await client.messages.create(
-            model=cfg.llm.anthropic_model,
-            max_tokens=2048,
-            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}],
-            messages=[{"role": "user", "content": RESEARCH_PROMPT.format(company=company)}],
-        )
-        cost_tracker.record(cost_from_usage(response.usage, cfg.pricing))
-        parts = [b.text for b in response.content if hasattr(b, "text") and b.text]
-        return "\n\n".join(parts) or "No research available."
+        return await _anthropic_research(cfg, company, cost_tracker, max_searches)
 
     # OpenAI / claude-cli: plain completion from training data, no live web search
     knowledge_prompt = RESEARCH_PROMPT_KNOWLEDGE.format(company=company)

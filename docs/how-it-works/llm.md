@@ -76,8 +76,10 @@ flatten the system and user blocks into plain strings, so the breakpoints have n
 `providers.make_stream` returns an async context manager with the same shape for every
 provider: iterate `async for text in stream.text_stream`, then call
 `await stream.get_final_message()` for usage. On `anthropic`, `providers.anthropic_stream`
-opens a fresh `AsyncAnthropic` client per call (no cached singleton) and returns the SDK's
-stream manager. OpenAI and the CLI are wrapped to match.
+opens a fresh client per call (no cached singleton, built by the [gateway](#the-model-gateway))
+and returns the SDK's stream manager. OpenAI and the CLI are wrapped to match, and
+`make_stream` hands every provider back inside the gateway's `BoundedStream`, which enters the
+inner manager and delegates to the live stream it yields.
 
 Cost is recorded per call from the final message's usage (`llm/cost.py`). On `claude-cli` the
 usage comes from the CLI's terminal `result` line; when that line never arrives, usage is
@@ -93,11 +95,15 @@ tries research from fetched pages (`core/packet_research.py`, described in
 usable page, no anchored page or no verified fact.
 
 - On `anthropic` it is a `messages.create()` call with the `web_search_20250305` tool, at
-  most `generation.max_web_searches` (default 3) searches. Its output is not span-verified
+  most `generation.max_web_searches` (default 3) searches, through a gateway client and
+  bounded by the deadline like every other call. Its output is not span-verified
   against fetched pages, so its facts carry provenance unknown.
 - On `claude-cli` and OpenAI it is a plain completion from training data, ending with a
   disclosure footer saying so; facts distilled from it are labelled recalled, not verified.
-- A failed CLI call returns empty research rather than failing the build.
+- A failed call returns empty research rather than failing the build, on every provider: SDK
+  errors are mapped to `CLIError` by `gateway.sdk_errors` (retries are off, so they would
+  otherwise escape), and the Anthropic branch degrades to empty research as the CLI branch
+  does. A spent run deadline is not swallowed.
 
 ## claude CLI hardening
 
@@ -125,10 +131,72 @@ user's Claude config (on a typical developer machine, hundreds of tools, some wi
 access pre-allowed, such as GitHub writes), so a crafted posting could have driven them.
 
 **Failure handling.** Output is decoded incrementally, so a multibyte character split across
-two reads is not mangled. The whole call has a deadline, `CLI_TIMEOUT_SECONDS` (900). A
-non-zero exit, an `is_error` result or a timeout raises `CLIError` rather than passing an error
-message off as the answer; fail-soft callers catch exactly that. The child process is killed if
-the caller stops reading, is cancelled, or errors.
+two reads is not mangled. The whole call has a deadline, `CLI_TIMEOUT_SECONDS` (900), or less
+inside a run deadline. A non-zero exit, an `is_error` result or a timeout raises `CLIError`
+rather than passing an error message off as the answer; fail-soft callers catch exactly that.
+The child's process group is killed if the caller stops reading, is cancelled, or errors.
+
+## The model gateway
+
+`llm/gateway.py` is the one door for every model call. Nothing else in `src/` builds an
+`AsyncAnthropic` or `AsyncOpenAI` client or spawns the CLI;
+`tests/test_model_gateway_guard.py` parses `src/` and fails if anything does. `CLIError` is
+defined there and re-exported by `providers`.
+
+- **Deadline.** `gateway.deadline_scope(seconds)` sets an absolute, monotonic deadline in a
+  `ContextVar`. Each call's limit is `min(its own timeout, time left)`, and a call that would
+  start with under 30 s left raises `DeadlineReached`, a `CLIError`, so fail-soft callers
+  already handle it. A nested scope can only tighten. With no scope set, behaviour is as
+  before: 900 s per CLI call. `make_stream`, `make_research_call` and the CLI spawn all take
+  the limit from here, so a loop that calls a model needs no check of its own.
+- **Origin.** `gateway.origin_scope("scheduled" | "clicked")` tags calls; the default is
+  `clicked`, so a missing tag is never treated as free.
+- **SDK clients** are built only by `gateway.anthropic_client` and `gateway.openai_client`,
+  always with `max_retries=0` (a retry is a second billed call that nobody asked for) and a
+  timeout of `min(SDK_TIMEOUT_SECONDS (300), time left)`. Provider SDK errors become
+  `CLIError`, and each client is closed when its call ends. The timeout is a module constant,
+  not yet a setting. A streamed call's whole lifecycle is capped at `STREAM_TIMEOUT_SECONDS`
+  (900) or the time left, whichever is less.
+- **Hook points.** `gateway.reserve` runs before a provider is contacted and `gateway.finish`
+  once when it ends. Both are no-ops for now; the call ledger and budget attach here.
+
+### The supervised CLI child
+
+`gateway.spawn_cli` launches the CLI as
+`python -I -m blastjob.llm.supervise --deadline-s N --parent-fd FD -- claude ...` in a new
+session. `-I` (isolated mode) keeps the working directory and `PYTHONPATH` off the import path,
+so a file planted there cannot shadow a module the supervisor imports.
+The CLI's flags, stdin prompt and `child_env()` are untouched. The supervisor
+(`llm/supervise.py`):
+
+- starts the command in a process group of its own and relays stdin and stdout unchanged
+  (stderr is discarded, as before). It is a separate group so the supervisor can wait for the
+  child's group to empty without waiting on itself;
+- watches the parent-death pipe, whose read end it inherits through `pass_fds`. The owner keeps
+  the write end open for the call's life, so EOF means the owner died, even by SIGKILL;
+- on EOF, on its own deadline (the call's limit plus 5 s) or on SIGTERM, sends TERM to the
+  child's group, waits 2 s, sends KILL, and exits only once `killpg(pgid, 0)` reports the group
+  empty. A grandchild therefore dies even when the child exits first. A failed kill is logged
+  loudly on stderr and the exit code is 70;
+- after a normal child exit, drains the child's stdout to EOF before it exits, so a slow reader
+  still gets the terminal `result` line (usage, `is_error`); only the deadline or the owner
+  dying cuts the drain short;
+- exits with the child's own code on a normal exit, 124 on deadline, 143 when the owner is gone,
+  127 when the command cannot start.
+
+No process is ever matched by name. `gateway.reap` (run from `_run_cli`'s `finally`) sends TERM
+to the supervisor's group, waits up to 10 s for the supervisor's own TERM, 2 s, KILL sequence on
+its child's group, then KILLs the supervisor, and closes the pipe last. A call cancelled while
+the supervisor is still starting closes the pipe, which the supervisor reads as the owner dying.
+
+Residual gaps, stated plainly:
+
+- A supervisor that is SIGKILLed by something else (not by `reap`) cannot clean up its child's
+  group, and that group is then orphaned until the child ends on its own. The supervisor holds
+  no model state, runs no network code and imports only the standard library to keep that
+  unlikely, but nothing sweeps such an orphan.
+- A descendant that calls `setsid` or double-forks into another group escapes the group check.
+  `claude` runs toolless, so it has no shell to do that.
 
 ## Child environment
 

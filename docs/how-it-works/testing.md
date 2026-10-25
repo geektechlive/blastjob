@@ -44,6 +44,16 @@ The leak this prevents already happened and cost money. `run_build` makes seven 
 
 `tests/test_no_real_llm_guard.py` keeps the list honest. It parses `src/` with `ast` and fails if a module binds `make_stream` without being in `_STREAM_BINDINGS`, and also if the list names a module that no longer binds it. It parses rather than greps so a comment that mentions `make_stream` does not count. The same file checks that a blocked call names its module.
 
+## Real-subprocess tests
+
+`tests/test_llm_supervisor.py` and parts of `tests/test_llm_gateway.py` run the real supervisor
+(`llm/supervise.py`) with a stand-in for the CLI: `sleep`, or a few lines of Python written to
+`tmp_path`. They prove that parent death, the supervisor's deadline and a cancelled call each
+leave no process behind, including a grandchild that outlives its parent. They never start the
+real `claude` binary and need no network, and every wait has a bounded timeout. Use `sleep` or a
+tmp script for any new test of this kind. `tests/test_model_gateway_guard.py` is the structural
+guard that keeps SDK clients and CLI spawns inside `llm/gateway.py`.
+
 ## Page-fetch guard
 
 No test may fetch an employer page or run a Jina page search. `_no_real_page_fetches` replaces `_safe_get` and `_jina_search` in `core/page_links.py` with functions that call `pytest.fail` and name the fix. The patch works because `core/page_links.py` looks both names up at call time, so it covers every path in: `find_page_link`, `check_page` and the defaults of `closure_links.LinkDeps`. It uses `pytest.fail` rather than `AssertionError` because closure's fail-soft `except Exception` handlers would swallow an `AssertionError` and hide the leak.
