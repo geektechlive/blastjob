@@ -29,6 +29,7 @@ from datetime import date, datetime, timedelta
 
 from blastjob import config as cfg_mod
 from blastjob import logging as applog
+from blastjob.core import run_lock
 from blastjob.core.closure_links import is_authoritative
 from blastjob.core.company import company_key
 from blastjob.core.target_store import dream_keys
@@ -452,6 +453,17 @@ async def run_discovery(
     cfg: BlastJobConfig,
     conn: sqlite3.Connection,
     adapters: list[Adapter] | None = None,
+) -> DiscoveryResult:
+    """Fetch every configured source and save. Takes the run lock (`core/run_lock.py`) and
+    raises `RunLockHeld` when another run holds it."""
+    with run_lock.hold(cfg_mod.data_dir(cfg), "discovery"):
+        return await _run_discovery(cfg, conn, adapters)
+
+
+async def _run_discovery(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    adapters: list[Adapter] | None,
 ) -> DiscoveryResult:
     from blastjob.db import client as dbc
     from blastjob.secrets import load_secrets_env

@@ -144,3 +144,28 @@ def test_stale_kept_ids_orders_by_id_and_honours_limit(conn):
     c = _job(conn, "kept", 5, stale=1)
     assert rescore.stale_kept_ids(conn) == [a, b, c]
     assert rescore.stale_kept_ids(conn, limit=2) == [a, b]
+
+
+def test_kept_rows_refused_by_the_deadline_are_not_run_not_failed(cfg, conn, monkeypatch):
+    """A refused call (the scorer swallows it as a missing score) must not count as a failure
+    or stamp the row as attempted, so it keeps its place in the stale-kept rotation."""
+    from blastjob.llm import gateway
+
+    jid = _job(conn, "kept", 1, stale=1)
+
+    async def refused(cfg_, wh, candidates, cost_tracker, **kw):
+        try:
+            gateway.call_limit(900.0)
+        except gateway.DeadlineReached:
+            pass
+        return ScoringResult()  # the scorer's fail-soft answer: no score
+
+    monkeypatch.setattr(rescore, "score_candidates", refused)
+    with gateway.deadline_scope(gateway.MIN_START_SECONDS - 1):
+        counts = asyncio.run(rescore.rescore_jobs(cfg, conn, CostTracker(), [jid]))
+
+    assert counts.failed == [] and counts.not_run == [jid] and counts.kept == 0
+    row = conn.execute(
+        "SELECT score_stale, COALESCE(score_stale_attempted_at,'') a FROM jobs WHERE id=?", (jid,)
+    ).fetchone()
+    assert row["score_stale"] == 1 and row["a"] == ""

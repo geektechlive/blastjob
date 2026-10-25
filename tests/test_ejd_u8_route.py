@@ -162,7 +162,7 @@ def test_run_loads_secrets_upgrades_the_one_job_and_rescores_upgraded(cfg, monke
             upgraded=[jid],
         )
 
-    async def fake_rescore(cfg_, conn_, ct, ids):
+    async def fake_rescore(cfg_, conn_, ct, ids, **kw):
         calls["rescore"] = list(ids)
         return rescore.RescoreCounts()
 

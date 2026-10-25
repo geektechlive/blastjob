@@ -661,4 +661,11 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_interview_debriefs_job ON interview_debriefs(job_id);
         """,
     ),
+    # 62: why a daily run stopped early (#95, ADR 0060). '' = ran to the end; 'deadline' = it hit
+    # limits.daily_deadline_minutes; 'lock_held' = another run held the run lock, so it did no
+    # work; 'budget' = reserved for the call budget (#96).
+    (62, "ALTER TABLE daily_runs ADD COLUMN stopped_reason TEXT DEFAULT '';"),
+    # 63: the digest line for a run that ended early (#95): the limit, what is left, and the
+    # steps that did not run. Shown by `blastjob-daily --status`.
+    (63, "ALTER TABLE daily_runs ADD COLUMN stopped_note TEXT DEFAULT '';"),
 ]

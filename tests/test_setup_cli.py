@@ -127,3 +127,25 @@ def test_doctor_warns_on_a_saved_mail_name_that_breaks_the_rule():
     assert "mail_password_env" in warn.name
     assert "_IMAP_APP_PASSWORD" in warn.fix
     assert "ANTHROPIC_API_KEY" not in warn.detail + warn.fix
+
+
+def test_the_daily_deadline_is_validated_from_the_command_line(data_dir, capsys):
+    for bad in ("0", "-5", "4", "241", "999"):
+        code, _out, err = _run(capsys, "set", "limits.daily_deadline_minutes", bad)
+        assert code != 0 and "limits.daily_deadline_minutes" in err, bad
+    assert _run(capsys, "set", "limits.daily_deadline_minutes", "90")[0] == 0
+    code, out, _ = _run(capsys, "get", "limits.daily_deadline_minutes")
+    assert code == 0 and json.loads(out) == 90
+
+
+def test_a_toml_import_with_an_out_of_range_deadline_is_refused_and_stores_nothing(
+    data_dir, capsys, tmp_path
+):
+    src = tmp_path / "in.toml"
+    src.write_text("[limits]\ndaily_deadline_minutes = 999\n")
+
+    code, _out, err = _run(capsys, "import", str(src))
+
+    assert code != 0 and "daily_deadline_minutes" in err
+    _code, out, _ = _run(capsys, "get", "limits.daily_deadline_minutes")
+    assert json.loads(out) == 45

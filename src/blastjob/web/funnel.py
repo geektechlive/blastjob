@@ -186,7 +186,8 @@ def build_funnel(conn: sqlite3.Connection, cfg: BlastJobConfig, runs: int = 7) -
 
     for row in conn.execute(
         "SELECT started_at, fetched, scored, new_jobs, errors, per_source "
-        "FROM daily_runs ORDER BY id DESC LIMIT ?",
+        "FROM daily_runs WHERE COALESCE(stopped_reason,'') != 'lock_held' "
+        "ORDER BY id DESC LIMIT ?",
         (runs,),
     ):
         try:

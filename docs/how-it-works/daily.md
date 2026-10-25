@@ -9,6 +9,7 @@
 In order:
 
 1. **Kill switch.** If a `PAUSE` file exists in the data dir, the run stops here (see [Kill switch](#kill-switch)).
+   **Run lock.** The run then takes the run lock for its whole life; if another run holds it, this one records `lock_held` and exits (see [One run at a time](#one-run-at-a-time-and-the-deadline)).
 2. **Backup.** A copy of the database is taken (`backup_db`, 14 kept; see [backups](../operations/data-and-backups.md#backups)). A failed backup is recorded as an error and the run goes on.
 3. **Discovery.** See [discovery](discovery.md).
 4. **Free employer-description copies.** Local only, before matching so a copied row is scored once on the full text. See [employer data](employer-data.md#in-the-daily-run).
@@ -20,9 +21,34 @@ In order:
 10. **Target news.** Scans the core target companies that are due, at most 8 a run, and records failures. See [Target news](#target-news).
 11. **Digest.** Built from what is now in the database, recorded, sent and stamped (see [Digest contents](#digest-contents) and [Delivery](#delivery)).
 
+Between steps the run checks its deadline and stops starting work once it has passed (see [One run at a time](#one-run-at-a-time-and-the-deadline)).
+
 Every step is fail-soft. An exception rolls back the step's pending work, goes into the run's `errors` under the step's name (`discovery`, `scoring`, `matching`, `closure`, `replies`, `employer_jd`, `target_watch` and per-source adapter keys) and the run carries on, because the run must still be recorded and reported. Errors appear under "Source errors" in the digest.
 
 A dry run is not a no-op. `blastjob-daily --dry-run` still takes the backup, still discovers and scores (and so still spends model calls), and those results are saved. What it does not do is send, stamp `notified_at`, record a `daily_runs` row, move jobs on closure, write employer descriptions, stamp the reply ledger, file packets or store target news. The target news step still searches, reads pages and calls the model (so it spends), but takes no lease and writes no event or scan status. Because nothing is stamped, the next real run announces everything the dry run printed. The digest is printed after the summary line, under a `---` separator.
+
+## One run at a time, and the deadline
+
+**The run lock.** `core/run_lock.py` takes an `flock` on `<data_dir>/run.lock`, non-blocking: a second taker fails at once and never queues. The kernel drops the lock when its holder dies, even by SIGKILL, so a crash cannot leave a stale lock, and nothing matches a process by name. After locking, the holder writes its PID, what it is doing and when it began into the file; that text only feeds the message ("Another run is in progress (daily run, started 07:30)"). The lock is close-on-exec, so a spawned model child never inherits it. The file is opened with `O_NOFOLLOW`, so a symlink planted at that path is refused. If the lock cannot be taken for any reason other than contention (for example `ENOLCK`, or a filesystem without `flock`), that is a refusal too: the daily run fails closed and records `lock_held` with the reason, and a command prints it. The holder text read back from the file is capped at 80 characters and stripped of control characters before it reaches a log, page or digest.
+
+`run_discovery` and `run_matching` take the lock themselves, so no caller can forget. It is reentrant inside one context, which lets `run_daily` hold one lock across both while they also take it; a separate cockpit task, thread or process has no ownership token and contends. Who takes it:
+
+- the daily run, for the whole run (including the digest and its stamps);
+- the cockpit's Find and score, Re-score changed and Re-score all, inside the task and for its life. A refused run shows "failed" with the message above, nothing queued;
+- hand-run commands that discover, match or re-score (`--sweep-search-firms`, the Workday location fix, the employer-description backfill). The two that write before they re-score take the lock before their first write. They print the message and exit 1.
+
+Passes scoped to named jobs by a cockpit click (a pasted description, a manual job, an employer-description or split re-score) pass `exclusive=False` and do not take it, so a running daily pass never blocks them. `run_matching` refuses `exclusive=False` without `job_ids`, so a full pass can never run unlocked. `tests/test_run_lock_callers.py` parses `src/` and fails if any other caller can skip the lock. The ownership token is cleared when the lock is released, so a task that outlives the block cannot borrow it.
+
+**The deadline.** `limits.daily_deadline_minutes` (default 45, 5 to 240; about six times the longest measured run) bounds the daily run. `run_daily` wraps its steps in `gateway.deadline_scope`, so every model call inside is capped by the time left and none starts with under 30 s left ([model gateway](llm.md#the-model-gateway)). It also checks between steps and stops starting new ones. A call already in flight finishes or hits its own bound. Because fail-soft callers swallow a refused call, the run reads the scope's `DeadlineState` afterwards: if any call was refused, or a step was not started, the run stopped at the limit.
+
+A clicked cockpit full pass (Find and score, Re-score changed, Re-score all) runs under the same `limits.daily_deadline_minutes`, so it can never hold the run lock indefinitely and make the next daily run skip. A clicked pass that hits the limit says so in its log. In the scorer, once the deadline has refused a call there are no more attempts: no retry, no later batch, no per-job fallback, and a refused batch is not counted as a failed one.
+
+**Stopped reasons.** `daily_runs.stopped_reason` is `''` for a run that finished, `deadline`, `lock_held` or `budget` (reserved for the call budget).
+
+- `deadline`: the run is recorded with the reason, never as complete. A cut-off run always sends its digest, even on a day with nothing new, because the owner wants to know when a run was cut off (pinned by a test). The digest leads with "Stopped at the 45-minute limit; up to N jobs left for tomorrow". N counts never-scored jobs and is an upper bound: a job the geo check or the title prefilter will turn away also has no score. When there are none, it says "the remaining steps run tomorrow". After the cutoff the run still does the two cheap, local steps that make no model call: the reply scan (recruiter replies are the top channel) and packet filing, and then the digest. Every model or network step waits for the next run (discovery, employer-description copies, scoring, closure checks, the employer-description lookup, target scans), and the digest line ends "Not run (time limit): ..." naming each one, so a skipped step is never shown as done. `--status` shows the same line (stored in `daily_runs.stopped_note`).
+
+**A refused call is not a failure.** Where the deadline refuses a model call inside a step, the item is "not run": a target scan counts no failure, sets no backoff, keeps its last status and scan time, releases its lease and stays due (`RunSummary.not_run`); a kept-row re-score is not counted failed and is not stamped as attempted, so it keeps its place in the stale-kept rotation (`RescoreCounts.not_run`). Both are named in the "Not run" list. The code is in `daily_steps.py`; `daily.py` keeps the frame (lock, deadline scope, digest). A refused scoring batch is not reported as a failed batch. The jobs left unscored are picked up by the next run, since matching takes only never-scored jobs.
+- `lock_held`: nothing runs and nothing is sent, so a skip does not spam; the next run's digest carries everything. It is recorded (`--status` shows it, and the summary line says "daily run skipped") so a skipped morning is not invisible. The next digest that goes out anyway ends with "N earlier runs skipped: another run held the run lock" in its footer; a skip never makes a quiet day send. Skipped runs are left out of the weekly heartbeat totals and out of the funnel page's run list, where a skip would read as a zero-fetch day.
 
 ## Digest contents
 
@@ -80,11 +106,12 @@ Discord delivery is plain REST (`notify/discord.py`): no gateway, no discord lib
 
 ## Run records
 
-Every run that is neither dry nor paused writes one `daily_runs` row, before the send: start and finish times, duration, `fetched` and `per_source` counts, `scored`, scoring batches and seconds, `new_jobs`, `followups`, `errors` (JSON) and `sent`. `sent` is `0` when the row is written and becomes `1` only after a successful send. A quiet day records a row that stays `0`, because there was nothing to send.
+Every run that is neither dry nor paused (including one skipped for the run lock) writes one `daily_runs` row, before the send: start and finish times, duration, `fetched` and `per_source` counts, `scored`, scoring batches and seconds, `new_jobs`, `followups`, `errors` (JSON), `sent` and `stopped_reason`. `sent` is `0` when the row is written and becomes `1` only after a successful send. A quiet day records a row that stays `0`, because there was nothing to send.
 
 `blastjob-daily --status` prints the last row and sends nothing:
 
 - If the last run recorded a `discovery` or `matching` error, the output leads with `LAST RUN FAILED` and the detail, because that run is not a healthy baseline.
+- If the last run stopped early, it says so next: "STOPPED EARLY" (deadline or budget) or "SKIPPED" (the run lock was held).
 - If the last run was not today, it says how many days ago.
 - It shows timing, fetch mix, scoring throughput, new and follow-up counts, `sent` and any errors.
 - It cannot show a past run's backup path, which is not stored. Only the summary line printed at the end of a live run names it.

@@ -28,18 +28,20 @@ import datetime as dt
 import json
 import logging
 import sqlite3
+import sys
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from blastjob import config as cfg_mod
-from blastjob import daily_dream, daily_employer_jd, daily_filing, daily_targets, daily_tools
+from blastjob import daily_dream, daily_targets, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
-from blastjob.core import closure, closure_links
+from blastjob.core import closure, run_lock
 from blastjob.core import target_store as target_store
-from blastjob.core.closure_links import LinkDeps, is_authoritative
+from blastjob.core.closure_links import is_authoritative
 from blastjob.daily_digest import (  # noqa: F401 -- re-exported: daily.build_digest etc.
     COCKPIT_BASE,
     HEADER,
@@ -60,15 +62,16 @@ from blastjob.daily_digest import (  # noqa: F401 -- re-exported: daily.build_di
     rendered_target_news,
     warm_job_ids,
 )
+from blastjob.daily_steps import _closure_pass, _replies_pass, run_steps  # noqa: F401
 from blastjob.daily_tools import recluster_cli
 from blastjob.db import client as dbc
+from blastjob.llm import gateway
 from blastjob.llm.cost import CallCost, CostTracker, aggregate_calls, describe_cost
 from blastjob.models.config import BlastJobConfig
 from blastjob.web.apply_link import apply_links_for
 from blastjob.web.stage_lists import followups_due
 
 if TYPE_CHECKING:
-    from blastjob.core.closure import ClosureResult
     from blastjob.discovery.replies import ReplyMatch
 
 log = logging.getLogger(__name__)
@@ -82,6 +85,14 @@ PAUSE_FILE = "PAUSE"
 PIPELINE_FAILURE_KEYS = ("discovery", "matching")
 
 Sender = Callable[[str], Awaitable[object]]
+
+# `daily_runs.stopped_reason` -> the line `--status` leads with. A run that ended early is never
+# shown as a complete one.
+STOPPED_STATUS = {
+    "deadline": "STOPPED EARLY: hit the daily time limit (deadline); the rest waits for tomorrow",
+    "lock_held": "SKIPPED: another run held the run lock, so this run did no work",
+    "budget": "STOPPED EARLY: the model call budget was reached; the rest waits for the next run",
+}
 
 
 @dataclass
@@ -114,6 +125,11 @@ class DailyResult:
     backup_path: str = ""
     closed_postings: list[dict] = field(default_factory=list)
     replies: list[ReplyMatch] = field(default_factory=list)
+    # Why the run ended early ('' = it ran to the end), and the digest line saying so.
+    stopped_reason: str = ""
+    stopped_note: str = ""
+    # Steps (or parts of one) the deadline kept from running. Named in the digest and status.
+    skipped_steps: list[str] = field(default_factory=list)
 
     @property
     def total_cost(self) -> CallCost:
@@ -195,8 +211,8 @@ def record_run(conn: sqlite3.Connection, res: DailyResult) -> int:
     finished_at = dt.datetime.now().isoformat(timespec="seconds")
     cur = conn.execute(
         "INSERT INTO daily_runs (started_at, finished_at, duration_s, fetched, per_source, "
-        "scored, scoring_batches, scoring_s, new_jobs, followups, sent, errors) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+        "scored, scoring_batches, scoring_s, new_jobs, followups, sent, errors, stopped_reason, "
+        "stopped_note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
         (
             res.started_at,
             finished_at,
@@ -209,6 +225,8 @@ def record_run(conn: sqlite3.Connection, res: DailyResult) -> int:
             res.new_jobs,
             res.followups,
             json.dumps(res.errors),
+            res.stopped_reason,
+            res.stopped_note,
         ),
     )
     conn.commit()
@@ -232,10 +250,57 @@ def week_totals(conn: sqlite3.Connection, today: dt.date) -> dict:
         "SELECT COUNT(*) AS runs, COALESCE(SUM(fetched),0) AS fetched, "
         "COALESCE(SUM(scored),0) AS scored, COALESCE(SUM(new_jobs),0) AS new_jobs, "
         "COALESCE(AVG(duration_s),0) AS avg_duration_s "
-        "FROM daily_runs WHERE started_at >= ?",
+        "FROM daily_runs WHERE started_at >= ? AND COALESCE(stopped_reason,'') != 'lock_held'",
         (cutoff,),
     ).fetchone()
     return dict(row)
+
+
+STOPPED_DEADLINE = "deadline"
+STOPPED_LOCK_HELD = "lock_held"
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def _deadline_note(
+    conn: sqlite3.Connection, minutes: int, skipped: list[str], *, score: bool
+) -> str:
+    """The digest line for a run the deadline cut short: what is left and which steps did not
+    run (never shown as done)."""
+    from blastjob.matching.pipeline import count_unscored
+
+    left = count_unscored(conn) if score else 0
+    base = f"Stopped at the {minutes}-minute limit"
+    if left:
+        # An upper bound: rows the geo check or title prefilter will turn away are unscored too.
+        note = f"{base}; up to {_plural(left, 'job')} left for tomorrow"
+    else:
+        note = f"{base}; the remaining steps run tomorrow"
+    if skipped:
+        note += f". Not run (time limit): {', '.join(dict.fromkeys(skipped))}"
+    return note
+
+
+def _record_skipped(
+    conn: sqlite3.Connection,
+    res: DailyResult,
+    held: run_lock.RunLockHeld,
+    run_start: float,
+    *,
+    dry_run: bool,
+) -> DailyResult:
+    """Another run holds the run lock: do no work and send nothing (a skip must not spam; the
+    next run's digest carries everything it would have). The skip is recorded so `--status`
+    and the funnel show it."""
+    log.warning("daily run skipped: %s", held)
+    res.stopped_reason = STOPPED_LOCK_HELD
+    res.errors["lock"] = str(held)
+    res.duration_s = time.monotonic() - run_start
+    if not dry_run:
+        record_run(conn, res)
+    return res
 
 
 async def run_daily(
@@ -247,9 +312,6 @@ async def run_daily(
     dry_run: bool = False,
     today: dt.date | None = None,
 ) -> DailyResult:
-    from blastjob.discovery.pipeline import run_discovery
-    from blastjob.matching.pipeline import run_matching
-
     cfg_mod.apply_runtime_settings(cfg)
     res = DailyResult()
     if is_paused(cfg):
@@ -260,88 +322,49 @@ async def run_daily(
     run_start = time.monotonic()
     res.started_at = dt.datetime.now().isoformat(timespec="seconds")
 
-    try:
-        backup_path = dbc.backup_db(conn, cfg_mod.data_dir(cfg) / "backups")
-        res.backup_path = str(backup_path)
-        log.info("db backup: %s", backup_path)
-    except Exception as e:
-        log.exception("db backup failed")
-        res.errors["backup"] = f"{type(e).__name__}: {e}"
-
-    try:
-        dres = await run_discovery(cfg, conn)
-        res.fetched = dres.fetched
-        res.per_source = dict(dres.per_source)
-        res.errors.update(dres.errors)
-        res.notes.update(dres.notes)
-        log.info(
-            "discovery: fetched %d saved %d stale %d errors %d",
-            dres.fetched,
-            dres.inserted_or_updated,
-            dres.stale_marked,
-            len(dres.errors),
-        )
-    except Exception as e:
-        # A pipeline-level throw, not a single adapter's already-isolated
-        # failure. Roll back anything mid-flight that hadn't self-committed
-        # (per-job upserts already have, same as any other crash mid-loop),
-        # then keep going: the run must still be recorded and reported —
-        # see the module docstring and docs/how-it-works/daily.md for the defect
-        # this guard was written against.
-        conn.rollback()
-        log.exception("discovery pipeline failed")
-        res.errors["discovery"] = applog.redact(f"{type(e).__name__}: {e}")
-
-    # Free sibling copies land BEFORE matching, so a copied row is scored once, on
-    # the full text. Local only: no request, no LLM call.
-    free_copy = await daily_employer_jd.free_copy_step(cfg, conn, res, dry_run=dry_run)
-
-    if score:
-        # Only never-scored jobs: re-scoring hundreds of resolved postings every
-        # morning burned 95 minutes of CLI time on 2026-09-05 for no new signal.
-        scoring_start = time.monotonic()
-
-        def _on_progress(_i: int, n: int) -> None:
-            res.scoring_batches = n
-
+    # One run at a time across processes (core/run_lock.py), held for the whole run so the
+    # digest and its stamps are never interleaved with a cockpit pass.
+    with ExitStack() as stack:
         try:
-            mres = await run_matching(
-                cfg, conn, CostTracker(), on_progress=_on_progress, only_unscored=True
-            )
-            res.scoring_s = time.monotonic() - scoring_start
-            res.scored = mres.scored
-            res.scoring_cost = mres.cost
-            if mres.scoring_failures:
-                res.errors["scoring"] = (
-                    f"{mres.scoring_failures} batch(es) failed; retried next run"
-                )
-            for note in mres.notes:
-                res.errors["candidate_profile"] = note
-            log.info(
-                "matching: scored %d surfaced %d queued %d cost %s",
-                mres.scored,
-                mres.surfaced,
-                mres.queued,
-                describe_cost(mres.cost),
-            )
-        except Exception as e:
-            conn.rollback()
-            res.scoring_s = time.monotonic() - scoring_start
-            log.exception("matching pipeline failed")
-            res.errors["matching"] = applog.redact(f"{type(e).__name__}: {e}")
+            stack.enter_context(run_lock.hold(cfg_mod.data_dir(cfg), "daily run"))
+        except run_lock.RunLockHeld as held:
+            return _record_skipped(conn, res, held, run_start, dry_run=dry_run)
+        minutes = cfg.limits.daily_deadline_minutes
+        with gateway.deadline_scope(minutes * 60) as state:
+            cut = await run_steps(cfg, conn, res, state, score=score, dry_run=dry_run, today=today)
+        if cut or state.hit:
+            res.stopped_reason = STOPPED_DEADLINE
+            res.stopped_note = _deadline_note(conn, minutes, res.skipped_steps, score=score)
+            log.warning("daily run %s (first refused call at %s)", res.stopped_note, state.hit_at)
+        return await _announce(cfg, conn, res, send, run_start, dry_run=dry_run, today=today)
 
-    # One deps object for closure and the employer-description step, so a board
-    # fetched by one is cached for the other.
-    shared_deps = closure_links.default_deps()
-    closure_res = await _closure_pass(cfg, conn, res, shadow=dry_run, deps=shared_deps)
-    # Closure moves kept jobs to posting_closed; file their packets (#20).
-    daily_filing.filing_pass(cfg, conn, dry_run=dry_run)
-    await daily_employer_jd.lookup_step(
-        cfg, conn, res, closure_res, shared_deps, free=free_copy, dry_run=dry_run, score=score
-    )
-    await _replies_pass(cfg, conn, res, dry_run=dry_run)
-    await daily_targets.targets_step(cfg, conn, res, dry_run=dry_run, today=today)
 
+def _skipped_runs_line(conn: sqlite3.Connection, run_id: int) -> str:
+    """ "N earlier runs were skipped" for runs skipped on the run lock since the last digest that
+    went out. Part of the footer only, so it rides on a digest that is sent anyway and never
+    makes a quiet day send."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM daily_runs WHERE stopped_reason='lock_held' AND id < ? "
+        "AND id > COALESCE((SELECT MAX(id) FROM daily_runs WHERE sent=1), 0)",
+        (run_id,),
+    ).fetchone()
+    n = int(row[0])
+    if not n:
+        return ""
+    return f"\n_{_plural(n, 'earlier run')} skipped: another run held the run lock_"
+
+
+async def _announce(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    res: DailyResult,
+    send: Sender,
+    run_start: float,
+    *,
+    dry_run: bool,
+    today: dt.date | None,
+) -> DailyResult:
+    """Build the digest, record the run, and send it (quiet when there is nothing to say)."""
     jobs = pending_jobs(conn)
     dream_jobs = daily_dream.weekly_jobs(cfg, conn, today or dt.date.today())
     target_news = daily_targets.pending_news(conn)
@@ -351,21 +374,27 @@ async def run_daily(
     res.new_jobs = len(jobs)
     res.followups = len(fups)
     hb = heartbeat_line(conn, today or dt.date.today())
-    res.digest = build_digest(
-        jobs,
-        res.errors,
-        fups,
-        base_url=cockpit_base(cfg),
-        heartbeat=hb,
-        warm_ids=warm_ids,
-        closed_postings=res.closed_postings,
-        replies=res.replies,
-        notes=res.notes,
-        apply_links=links,
-        target_news=target_news,
-        target_failed=res.target_failed,
-        dream_jobs=dream_jobs,
-    )
+
+    def digest(footer: str = "") -> str:
+        return build_digest(
+            jobs,
+            res.errors,
+            fups,
+            base_url=cockpit_base(cfg),
+            heartbeat=hb,
+            footer=footer,
+            warm_ids=warm_ids,
+            closed_postings=res.closed_postings,
+            replies=res.replies,
+            notes=res.notes,
+            apply_links=links,
+            target_news=target_news,
+            target_failed=res.target_failed,
+            dream_jobs=dream_jobs,
+            stopped=res.stopped_note,
+        )
+
+    res.digest = digest()
     res.duration_s = time.monotonic() - run_start
 
     if dry_run:
@@ -377,23 +406,7 @@ async def run_daily(
         log.info("nothing to announce")
         return res
 
-    footer = format_run_footer(res)
-    res.digest = build_digest(
-        jobs,
-        res.errors,
-        fups,
-        base_url=cockpit_base(cfg),
-        heartbeat=hb,
-        footer=footer,
-        warm_ids=warm_ids,
-        closed_postings=res.closed_postings,
-        replies=res.replies,
-        notes=res.notes,
-        apply_links=links,
-        target_news=target_news,
-        target_failed=res.target_failed,
-        dream_jobs=dream_jobs,
-    )
+    res.digest = digest(format_run_footer(res) + _skipped_runs_line(conn, run_id))
     await send(res.digest)  # raises on failure -> nothing stamped
     # Stamp only what was actually rendered in the sent digest — anything
     # past the MAX_DIGEST_JOBS cutoff stays notified_at='' so it leads the
@@ -408,79 +421,6 @@ async def run_daily(
     res.sent = True
     mark_run_sent(conn, run_id)
     return res
-
-
-async def _closure_pass(
-    cfg: BlastJobConfig,
-    conn: sqlite3.Connection,
-    res: DailyResult,
-    *,
-    shadow: bool = False,
-    deps: LinkDeps | None = None,
-) -> ClosureResult | None:
-    """Posting closure, after discovery + matching so it sees today's
-    source_state. Never sinks the run: a failure is reported like a source error.
-
-    Secrets are loaded here too, so a dry run probes Workday/Dayforce exactly
-    like the real run. On failure the pending step is rolled back: the pass
-    commits after every self-consistent step, and whatever was mid-flight must
-    not ride along on record_run's or mark_notified's later commit."""
-    secrets_mod.load_secrets_env()
-    try:
-        # A dry run must not move jobs even with closure_auto on (it still
-        # records verdicts and links, like --closure-report).
-        cres = await closure.run_closure(cfg, conn, shadow=shadow, deps=deps)
-    except Exception as e:
-        conn.rollback()
-        log.exception("closure pass failed")
-        res.errors["closure"] = f"{type(e).__name__}: {e}"
-        return None
-    res.closed_postings = list(cres.closed_kept)
-    log.info(
-        "closure: checked %d linked %d moved %d filled %d newly closed kept %d (auto=%s)",
-        cres.checked,
-        cres.linked,
-        cres.moved,
-        cres.filled,
-        len(cres.closed_kept),
-        cfg.discovery.closure_auto,
-    )
-    return cres
-
-
-async def _replies_pass(
-    cfg: BlastJobConfig,
-    conn: sqlite3.Connection,
-    res: DailyResult,
-    *,
-    dry_run: bool = False,
-) -> None:
-    """Scan for human replies to jobs already applied to, after discovery so a
-    reply about a job that closed today still gets checked against the
-    pre-closure application state. Runs whenever the personal mailbox has
-    credentials -- deliberately NOT gated on `mail_alerts_enabled`, which is a
-    flag about the alert account's job feed; turning that feed off must not
-    silently stop watching for a recruiter's answer. With no credentials this
-    is a silent no-op, not a reported error. A genuine failure (e.g. IMAP
-    login) is recorded like any other source error and never sinks the run --
-    see `_closure_pass`, same pattern."""
-    from blastjob.discovery import replies
-
-    secrets_mod.load_secrets_env()
-    if not replies.replies_configured(cfg):
-        return
-    try:
-        # A dry run prints the digest and stamps nothing -- including the
-        # reply ledger. Stamping here would mark a reply seen and the real
-        # 07:30 run would never surface it.
-        res.replies = await replies.scan_replies(cfg, conn, record=not dry_run)
-    except Exception as e:
-        conn.rollback()
-        log.exception("reply scan failed")
-        res.errors["replies"] = applog.redact(f"{type(e).__name__}: {e}")
-        return
-    if res.replies:
-        log.info("replies: %d matched", len(res.replies))
 
 
 async def closure_report(cfg: BlastJobConfig, conn: sqlite3.Connection) -> list[dict]:
@@ -537,9 +477,11 @@ async def sweep_search_firms(
     from blastjob.matching.pipeline import run_matching
 
     sf = build_search_firm_adapter(cfg, conn)
-    dres = await run_discovery(cfg, conn, adapters=[sf])
-    if score:
-        await run_matching(cfg, conn, CostTracker(), only_unscored=True)
+    # One lock across both passes (each also takes it, reentrantly).
+    with run_lock.hold(cfg_mod.data_dir(cfg), "search-firm sweep"):
+        dres = await run_discovery(cfg, conn, adapters=[sf])
+        if score:
+            await run_matching(cfg, conn, CostTracker(), only_unscored=True)
     rows = conn.execute(
         "SELECT id, source, company, title, url, alignment_score, review_state "
         "FROM jobs WHERE source LIKE 'searchfirm:%' ORDER BY id"
@@ -606,6 +548,14 @@ def _format_status(row: sqlite3.Row, *, today: dt.date | None = None) -> str:
     if failed:
         detail = "; ".join(f"{k}: {v}" for k, v in failed.items())
         lines.append(f"LAST RUN FAILED — {detail}")
+
+    reason = row["stopped_reason"] if "stopped_reason" in row.keys() else ""  # noqa: SIM118
+    stopped = STOPPED_STATUS.get(reason or "")
+    if stopped:
+        lines.append(stopped)
+        note = row["stopped_note"] if "stopped_note" in row.keys() else ""  # noqa: SIM118
+        if note:
+            lines.append(note)
 
     run_date = _run_started_date(row)
     if run_date is None:
@@ -714,10 +664,19 @@ def main(argv: list[str] | None = None) -> int:
         res = asyncio.run(
             run_daily(cfg, conn, send=send, score=not args.no_score, dry_run=args.dry_run)
         )
+    except run_lock.RunLockHeld as held:
+        # A hand-run command (sweep, workday fix, rescore) met a running pass: say so, no queue.
+        print(f"{held}. Try again when it finishes.", file=sys.stderr)
+        return 1
     finally:
         conn.close()
     if res.paused:
         print("paused (PAUSE file present)")
+        return 0
+    if res.stopped_reason == STOPPED_LOCK_HELD:
+        skipped = f"daily run skipped: {res.errors.get('lock', 'another run holds the run lock')}"
+        log.info(skipped)
+        print(skipped)
         return 0
     summary = (
         f"fetched {res.fetched} ({_top_sources(res.per_source)}), "
@@ -728,6 +687,8 @@ def main(argv: list[str] | None = None) -> int:
         f"duration {format_duration(res.duration_s)}, "
         f"backup {res.backup_path or 'failed'}"
     )
+    if res.stopped_reason:
+        summary += f", {res.stopped_note or STOPPED_STATUS.get(res.stopped_reason, '')}"
     log.info(summary)
     print(summary)
     if args.dry_run and res.digest:

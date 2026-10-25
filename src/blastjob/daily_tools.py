@@ -134,6 +134,25 @@ async def employer_jd_cli(
     """Backfill the employer's description. The report makes the lookups but
     writes nothing; `apply` stores them, then re-scores the upgraded, reverted
     and stale kept rows. No daily_runs row, nothing sent."""
+    from blastjob import config as cfg_mod
+    from blastjob.core import run_lock
+
+    # Applying writes descriptions and then spends model calls: hold the run lock from before
+    # the first write, so a running daily pass refuses it instead of half-applying.
+    if not apply:
+        return await _employer_jd_pass(cfg, conn, False, min_score, max_requests, deps)
+    with run_lock.hold(cfg_mod.data_dir(cfg), "employer-description backfill"):
+        return await _employer_jd_pass(cfg, conn, True, min_score, max_requests, deps)
+
+
+async def _employer_jd_pass(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    apply: bool,
+    min_score: int | None,
+    max_requests: int,
+    deps: LinkDeps | None,
+) -> str:
     from blastjob import secrets as secrets_mod
     from blastjob.core import employer_jd
     from blastjob.llm.cost import CostTracker, describe_cost
@@ -171,13 +190,26 @@ def refetch_workday_locations_cli(
     exactly those rows so their geo verdict (and score) land now."""
     import asyncio
 
+    from blastjob import config as cfg_mod
+    from blastjob.core import run_lock
     from blastjob.discovery import workday_locations as wl
-    from blastjob.llm.cost import CostTracker, describe_cost
-    from blastjob.matching.pipeline import run_matching
 
     fixes = asyncio.run(wl.plan(conn, cfg))
     if not apply:
         return wl.format_report(fixes, applied=None)
+    # Locations are written before the re-score, so hold the run lock from before the write:
+    # a running daily pass refuses this instead of leaving rows stored but never re-scored.
+    with run_lock.hold(cfg_mod.data_dir(cfg), "Workday location fix"):
+        return _apply_workday_fixes(cfg, conn, fixes)
+
+
+def _apply_workday_fixes(cfg: BlastJobConfig, conn: sqlite3.Connection, fixes: list) -> str:
+    import asyncio
+
+    from blastjob.discovery import workday_locations as wl
+    from blastjob.llm.cost import CostTracker, describe_cost
+    from blastjob.matching.pipeline import run_matching
+
     changed = wl.apply(conn, fixes)
     report = wl.format_report(fixes, applied=changed)
     if changed:

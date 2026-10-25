@@ -87,6 +87,8 @@ There are two ways to follow a run:
 `runtime.Runtime.start` takes a run name, the work to do and an optional key, and hands back the already-running run instead of starting a second one, in two ways:
 
 - **By name.** `runtime.SINGLE_FLIGHT` lists discovery, matching and ingest. Discovery and matching share one slot (`runtime.FLIGHT_GROUPS`), because both write the same rows and pay for LLM scoring. Ingest overwrites `work_history.md`, the most irreplaceable file in the system, so two concurrent ingests must not race.
+
+That slot only covers this process. Across processes, `run_discovery` and `run_matching` take the run lock (`core/run_lock.py`), so a cockpit pass that meets a running daily pass (or the reverse) fails at once. The run shows as failed with "Another run is in progress (daily run, started 07:30)"; nothing queues. The lock is taken inside the task and held for its life, under the same time limit as the daily run (`limits.daily_deadline_minutes`). The scoped `score-job` runs below skip it ([daily](daily.md#one-run-at-a-time-and-the-deadline)).
 - **By `(name, key)`.** When a `key` is given, a second start for the same pair returns the running run, while the same action for another subject still starts. The keys in use are:
 
 | Run | Key |

@@ -10,6 +10,7 @@ browser is attached.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -17,7 +18,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from blastjob import logging as applog
+from blastjob.core.run_lock import RunLockHeld
 from blastjob.web import progress as progress_mod
+
+log = logging.getLogger(__name__)
 
 # Runs that must not overlap. Discovery and matching write the same SQLite file
 # and pay for LLM scoring, and `claim_for_build`'s CAS only protects tailoring,
@@ -233,6 +237,12 @@ class Runtime:
                 run.status = "done"
                 run.finished_at = time.monotonic()
                 run.emit("done", "")
+            except RunLockHeld as e:
+                # Not a fault: another run holds the lock. Say so plainly, no class name.
+                log.info("run %s refused: %s", run.name, e)
+                run.status = "failed"
+                run.finished_at = time.monotonic()
+                run.emit("error", str(e))
             except Exception as e:  # noqa: BLE001 — surface, don't crash the server
                 applog.log_exception(f"run {run.name}", e)
                 run.status = "failed"

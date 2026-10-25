@@ -56,7 +56,7 @@ from blastjob.core.research_facts import (
 )
 from blastjob.core.research_match import JobContext
 from blastjob.core.scoring import _normalize_ws
-from blastjob.llm import caching
+from blastjob.llm import caching, gateway
 from blastjob.llm.cost import CostTracker, cost_from_usage
 from blastjob.llm.jsonio import extract_json_list
 from blastjob.llm.providers import make_stream
@@ -139,6 +139,9 @@ class ScanOutcome:
     status: str
     events: tuple[ts.NewEvent, ...] = ()
     counts: ScanCounts = ScanCounts()
+    # The daily deadline refused the model step: the scan did not run. Not a failure, so the
+    # caller records nothing and the target stays due.
+    not_run: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,6 +151,7 @@ class RunSummary:
     new_events: int = 0
     unscanned_no_key: int = 0
     skipped_locked: int = 0
+    not_run: int = 0  # due, but the daily deadline left no time: still due next run
     failed_names: tuple[str, ...] = field(default=())
 
 
@@ -408,6 +412,8 @@ async def _scan(
     try:
         reply = await _classify(cfg, company, pages, cost_tracker)
         events = _verified_events(reply, pages, company)
+    except gateway.DeadlineReached:
+        return ScanOutcome(ok=False, status="not run (time limit)", counts=counts, not_run=True)
     except Exception as e:  # noqa: BLE001 - an unreadable answer is a failed scan, not "no news"
         log.warning("target watch classification failed: %s", type(e).__name__)
         return _failed(f"model step ({type(e).__name__})", counts)
@@ -469,15 +475,23 @@ async def scan_due_targets(
     if not key:
         return RunSummary(unscanned_no_key=len(due))
     tracker = cost_tracker or CostTracker()
-    scanned = failed = new_events = locked = 0
+    scanned = failed = new_events = locked = not_run = 0
     failed_names: list[str] = []
     for row in due:
+        if gateway.deadline_reached():
+            not_run += 1  # never claimed, never stamped: it stays due
+            continue
         if not dry_run and not ts.claim_scan(conn, row["company_key"], now=when):
             locked += 1
             continue
         outcome = await scan_target(
             cfg, row, api_key=key, search=search, read=read, cost_tracker=tracker, today=when.date()
         )
+        if outcome.not_run:
+            not_run += 1
+            if not dry_run:
+                ts.release_scan(conn, row["company_key"])
+            continue
         scanned += 1
         log.info(
             "target watch: %s ok=%s searches=%d results=%d reads=%d read_failures=%d events=%d",
@@ -503,4 +517,4 @@ async def scan_due_targets(
             events=outcome.events,
             now=when,
         )
-    return RunSummary(scanned, failed, new_events, 0, locked, tuple(failed_names))
+    return RunSummary(scanned, failed, new_events, 0, locked, not_run, tuple(failed_names))

@@ -149,6 +149,10 @@ defined there and re-exported by `providers`.
   already handle it. A nested scope can only tighten. With no scope set, behaviour is as
   before: 900 s per CLI call. `make_stream`, `make_research_call` and the CLI spawn all take
   the limit from here, so a loop that calls a model needs no check of its own.
+- **Who sets the deadline.** The daily run, from `limits.daily_deadline_minutes`
+  ([daily](daily.md#one-run-at-a-time-and-the-deadline)). The scope's `DeadlineState` records
+  the first refused call (`hit`, `hit_at`), because fail-soft callers swallow
+  `DeadlineReached`; `gateway.deadline_reached()` tells a loop between steps whether to stop.
 - **Origin.** `gateway.origin_scope("scheduled" | "clicked")` tags calls; the default is
   `clicked`, so a missing tag is never treated as free.
 - **SDK clients** are built only by `gateway.anthropic_client` and `gateway.openai_client`,

@@ -141,6 +141,7 @@ def build_digest(
     target_news: Sequence[TargetNewsItem] = (),
     target_failed: int = 0,
     dream_jobs: Sequence[sqlite3.Row] = (),
+    stopped: str = "",
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
@@ -150,13 +151,23 @@ def build_digest(
     replied = replies or []
     noted = notes or {}
     quiet = not (
-        jobs or dream_jobs or errors or followups or heartbeat or closed or replied or noted
+        jobs
+        or dream_jobs
+        or errors
+        or followups
+        or heartbeat
+        or closed
+        or replied
+        or noted
+        or stopped
     )
     if quiet and not (target_news or target_failed):
         return ""
     n = len(jobs)
     title = f"{HEADER} — {n} new role{'s' if n != 1 else ''}" if n else HEADER
     lines = [title]
+    if stopped:
+        lines.append(f"**{stopped}**")
     for row in rendered_jobs(jobs, warm_ids):
         link = links.get(int(row["id"]))
         lines.append(

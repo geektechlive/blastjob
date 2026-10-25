@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from blastjob.db.client import UNDECIDED_STATES
+from blastjob.llm import gateway
 from blastjob.llm.cost import CostTracker
 from blastjob.matching import pipeline
 from blastjob.matching.fingerprint import scoring_fingerprint
@@ -36,16 +37,27 @@ class RescoreCounts:
     undecided: int = 0  # undecided rows the scoped matching pass scored
     kept: int = 0  # kept rows whose new score landed
     failed: list[int] = field(default_factory=list)  # kept rows left score_stale=1
+    # Kept rows the daily deadline left unscored: not a failure, not stamped as attempted.
+    not_run: list[int] = field(default_factory=list)
 
 
 async def rescore_jobs(
-    cfg: BlastJobConfig, conn: sqlite3.Connection, cost_tracker: CostTracker, job_ids: list[int]
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    cost_tracker: CostTracker,
+    job_ids: list[int],
+    *,
+    exclusive: bool = True,
 ) -> RescoreCounts:
     """Re-score many jobs: undecided in ONE batched matching pass, kept one by one.
 
     A kept row that fails to score (provider error, no score returned, or the JD
     changed mid-flight) keeps `score_stale=1`, is listed in `failed`, and never
     stops the rest. Archived and missing rows are skipped.
+
+    The undecided pass takes the run lock unless `exclusive=False`, which the cockpit's
+    id-scoped clicks (employer description, split) pass so they are never blocked by a
+    running daily pass. The daily run and hand-run commands keep the default.
     """
     undecided: list[int] = []
     kept: list[sqlite3.Row] = []
@@ -61,18 +73,25 @@ async def rescore_jobs(
             kept.append(row)
     counts = RescoreCounts()
     if undecided:
-        res = await pipeline.run_matching(cfg, conn, cost_tracker, job_ids=undecided)
+        res = await pipeline.run_matching(
+            cfg, conn, cost_tracker, job_ids=undecided, exclusive=exclusive
+        )
         counts.undecided = res.scored
     if not cfg.candidate.is_configured():
         return counts
     for row in kept:
         try:
             landed = await score_kept(cfg, conn, cost_tracker, row)
+        except gateway.DeadlineReached:
+            landed = 0
         except Exception:
             log.warning("kept re-score failed for job %s", row["id"], exc_info=True)
             landed = 0
         if landed:
             counts.kept += 1
+        elif gateway.deadline_hit():
+            # The scorer swallowed a call the deadline refused: the row was not tried.
+            counts.not_run.append(int(row["id"]))
         else:
             counts.failed.append(int(row["id"]))
             _mark_attempted(conn, int(row["id"]))
@@ -116,7 +135,9 @@ async def rescore_job(
     if row is None:
         return 0
     if row["review_state"] in UNDECIDED_STATES:
-        res = await pipeline.run_matching(cfg, conn, cost_tracker, job_ids=[job_id])
+        res = await pipeline.run_matching(
+            cfg, conn, cost_tracker, job_ids=[job_id], exclusive=False
+        )
         return res.scored
     if row["review_state"] != "kept" or not cfg.candidate.is_configured():
         return 0

@@ -29,6 +29,8 @@ How `setup set` reads a value:
 
 `web.public_url` sets the address the digest's cockpit links use; it is checked the same way. Saving `web.host` as anything but a local address prints a warning. See [using the cockpit from another device](lan-access.md).
 
+`limits.daily_deadline_minutes` (default 45, whole minutes from 5 to 240) is how long the daily run may keep starting work; see [the deadline](../how-it-works/daily.md#one-run-at-a-time-and-the-deadline). It is also on the settings page under "Daily run time limit". An out-of-range value is refused by both.
+
 To pause the daily run without changing any setting, create a file named `PAUSE` in the data folder ([services](services.md#the-daily-run-service)).
 
 ## The secrets file

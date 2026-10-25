@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from blastjob import daily, daily_filing, daily_tools
+from blastjob import daily, daily_filing, daily_steps, daily_tools
 from blastjob.core.paths import SUBMITTED
 from blastjob.db import client as dbc
 from blastjob.models.config import BlastJobConfig
@@ -90,8 +90,8 @@ async def test_run_daily_files_after_closure(env, monkeypatch) -> None:
     async def nothing(*_a, **_k):
         return None
 
-    monkeypatch.setattr(daily, "_closure_pass", nothing)
-    monkeypatch.setattr(daily, "_replies_pass", nothing)
-    monkeypatch.setattr(daily.daily_employer_jd, "lookup_step", nothing)
+    monkeypatch.setattr(daily_steps, "_closure_pass", nothing)
+    monkeypatch.setattr(daily_steps, "_replies_pass", nothing)
+    monkeypatch.setattr(daily_steps.daily_employer_jd, "lookup_step", nothing)
     await daily.run_daily(cfg, conn, send=nothing, score=False, dry_run=True)
     assert calls == [True]

@@ -254,6 +254,13 @@ def claim_scan(conn: sqlite3.Connection, key: str, *, now: dt.datetime) -> bool:
     return cur.rowcount == 1
 
 
+def release_scan(conn: sqlite3.Connection, key: str) -> None:
+    """Drop the lease without recording a scan: the target was not run (the daily deadline), so
+    its status, failure count and last-scan time stay as they were and it stays due."""
+    conn.execute("UPDATE target_companies SET scan_claimed_at='' WHERE company_key=?", (key,))
+    conn.commit()
+
+
 # --------------------------------------------------------------------- event rows
 
 

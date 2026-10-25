@@ -234,3 +234,28 @@ async def test_bounded_stream_times_out_a_stalled_stream_as_a_cli_error():
         async with stream:
             async for _ in stream.text_stream:
                 pass
+
+
+def test_scope_records_that_a_call_was_refused_for_the_deadline():
+    with gateway.deadline_scope(gateway.MIN_START_SECONDS - 1) as state:
+        assert not state.hit
+        with pytest.raises(gateway.DeadlineReached):
+            gateway.call_limit(900.0)
+        assert state.hit
+        assert state.hit_at  # the real cutoff time, for an honest status line
+
+
+def test_deadline_reached_is_true_when_too_little_time_is_left_even_with_no_refused_call():
+    assert gateway.deadline_reached() is False  # no scope, no deadline
+    with gateway.deadline_scope(100.0):
+        assert gateway.deadline_reached() is False
+    with gateway.deadline_scope(gateway.MIN_START_SECONDS - 1):
+        assert gateway.deadline_reached() is True
+
+
+def test_nested_scope_shares_the_outer_state():
+    with gateway.deadline_scope(100.0) as outer:
+        with gateway.deadline_scope(gateway.MIN_START_SECONDS - 1) as inner:
+            with pytest.raises(gateway.DeadlineReached):
+                gateway.call_limit(10.0)
+        assert inner is outer and outer.hit

@@ -91,7 +91,7 @@ async def _score_new_job(run: Run, load_config: LoadCfg, job_id: int) -> dict:
     c = dbc.init_db(cfg)
     try:
         run.emit("log", f"Scoring manually added job {job_id}...")
-        res = await run_matching(cfg, c, CostTracker(), job_ids=[job_id])
+        res = await run_matching(cfg, c, CostTracker(), job_ids=[job_id], exclusive=False)
         run.emit(
             "log",
             f"Considered {res.considered}, scored {res.scored}. Cost {describe_cost(res.cost)}.",

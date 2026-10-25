@@ -379,6 +379,21 @@ class NotifyConfig(BaseModel):
     discord_channel_env: str = "DISCORD_CHANNEL_ID"
 
 
+DAILY_DEADLINE_MIN_MINUTES = 5
+DAILY_DEADLINE_MAX_MINUTES = 240
+
+
+class LimitsConfig(BaseModel):
+    """Bounds on how long and how much a run may spend. Every field has a validated range, so a
+    typo (0, a negative, a huge number) is refused rather than stored."""
+
+    # The daily run stops starting model work this long after it began (about 6x the longest
+    # measured run). What is left waits for the next run; the digest says so.
+    daily_deadline_minutes: int = Field(
+        default=45, ge=DAILY_DEADLINE_MIN_MINUTES, le=DAILY_DEADLINE_MAX_MINUTES
+    )
+
+
 class BlastJobConfig(BaseModel):
     model_config = {"extra": "ignore"}
 
@@ -390,6 +405,7 @@ class BlastJobConfig(BaseModel):
     candidate: CandidateConfig = Field(default_factory=CandidateConfig)
     web: WebConfig = Field(default_factory=WebConfig)
     notify: NotifyConfig = Field(default_factory=NotifyConfig)
+    limits: LimitsConfig = Field(default_factory=LimitsConfig)
 
     # The settings revision this object was loaded at (max `updated_at` in the
     # settings table), so a save can refuse to overwrite a newer edit.

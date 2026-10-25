@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -54,6 +55,7 @@ SUPERVISOR_GRACE_SECONDS = 5.0
 REAP_SECONDS = 10.0
 
 _deadline: ContextVar[float | None] = ContextVar("blastjob_model_deadline", default=None)
+_state: ContextVar[DeadlineState | None] = ContextVar("blastjob_model_deadline_state", default=None)
 _origin: ContextVar[Origin] = ContextVar("blastjob_model_origin", default="clicked")
 
 
@@ -62,17 +64,47 @@ _origin: ContextVar[Origin] = ContextVar("blastjob_model_origin", default="click
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class DeadlineState:
+    """What a deadline scope saw. Fail-soft callers swallow `DeadlineReached` (it is a
+    `CLIError`), so the run reads this afterwards to report honestly that it was cut off."""
+
+    hit: bool = False
+    hit_at: str = ""  # local wall-clock time of the first refused call (ISO, seconds)
+
+
 @contextmanager
-def deadline_scope(seconds: float) -> Iterator[None]:
+def deadline_scope(seconds: float) -> Iterator[DeadlineState]:
     """Bound every model call made inside the block to `seconds` from now. A nested scope
-    can only tighten the outer deadline."""
+    can only tighten the outer deadline, and shares the outer scope's `DeadlineState`."""
     new = time.monotonic() + seconds
     current = _deadline.get()
+    outer = _state.get()
+    state = outer if outer is not None else DeadlineState()
     token = _deadline.set(new if current is None else min(current, new))
+    state_token = _state.set(state)
     try:
-        yield
+        yield state
     finally:
         _deadline.reset(token)
+        _state.reset(state_token)
+
+
+def deadline_hit() -> bool:
+    """True once a call in this scope was refused for the deadline. Right after an item fails,
+    this says the failure was the refusal (nothing else is attempted after the first one)."""
+    state = _state.get()
+    return state is not None and state.hit
+
+
+def deadline_reached() -> bool:
+    """True once a call was refused for the deadline, or too little time is left to start
+    another (the same `MIN_START_SECONDS` test `call_limit` applies). False with no scope."""
+    state = _state.get()
+    if state is not None and state.hit:
+        return True
+    left = remaining()
+    return left is not None and left < MIN_START_SECONDS
 
 
 def remaining() -> float | None:
@@ -88,6 +120,10 @@ def call_limit(per_call: float) -> float:
     if left is None:
         return per_call
     if left < MIN_START_SECONDS:
+        state = _state.get()
+        if state is not None and not state.hit:
+            state.hit = True
+            state.hit_at = datetime.now().isoformat(timespec="seconds")
         raise DeadlineReached(
             f"not starting a model call: {max(left, 0):.0f}s left before the run's deadline"
         )

@@ -169,7 +169,7 @@ async def _work(run: Run, load_config: LoadCfg, job_id: int) -> dict:
             run.emit("log", res.summary())
             return {"upgraded": 0, "scored": 0}
         tracker = CostTracker()
-        counts = await rescore.rescore_jobs(cfg, conn, tracker, changed)
+        counts = await rescore.rescore_jobs(cfg, conn, tracker, changed, exclusive=False)
         run.emit(
             "log",
             f"{res.summary()} Re-scored {counts.undecided + counts.kept}. "
@@ -197,7 +197,7 @@ async def _rescore_work(run: Run, load_config: LoadCfg, job_ids: list[int]) -> d
     try:
         run.emit("log", f"Re-scoring {len(job_ids)} job(s) after a split...")
         tracker = CostTracker()
-        counts = await rescore.rescore_jobs(cfg, conn, tracker, job_ids)
+        counts = await rescore.rescore_jobs(cfg, conn, tracker, job_ids, exclusive=False)
         run.emit("log", f"Cost {describe_cost(tracker.total_call_cost)}.")
         return {"scored": counts.undecided + counts.kept}
     finally:

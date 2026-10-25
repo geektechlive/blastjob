@@ -59,15 +59,18 @@ async def targets_step(
         return
     res.target_cost = tracker.total_call_cost
     res.target_failed = summary.failed
+    if summary.not_run:
+        res.skipped_steps.append(f"target scans ({summary.not_run} still due)")
     if summary.unscanned_no_key:
         res.notes[NOTE_KEY] = (
             f"JINA_API_KEY is not set, so {summary.unscanned_no_key} target "
             "companies were not scanned."
         )
     log.info(
-        "target watch: scanned %d failed %d new events %d locked %d",
+        "target watch: scanned %d failed %d not run %d new events %d locked %d",
         summary.scanned,
         summary.failed,
+        summary.not_run,
         summary.new_events,
         summary.skipped_locked,
     )

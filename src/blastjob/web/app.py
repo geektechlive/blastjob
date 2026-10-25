@@ -21,11 +21,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from blastjob import config as cfg_mod
-from blastjob.core import closure, debrief, filing_lock, page_links
+from blastjob.core import closure, debrief, filing_lock, page_links, run_lock
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
 from blastjob.db import client as dbc
+from blastjob.llm import gateway
 from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.models.job import ARCHIVE_REASON_LABELS, ARCHIVE_REASONS, ReviewState
@@ -153,6 +154,11 @@ def render(request: Request, name: str, **extra):
     return templates.TemplateResponse(request, name, ctx)
 
 
+# A clicked full pass gets the same time limit as the daily run (`limits.daily_deadline_minutes`),
+# so it can never hold the run lock indefinitely and make the daily run skip.
+_CUT_OFF = "Stopped at the {minutes}-minute limit; unscored jobs wait for the next run."
+
+
 def create_app(
     load_config: LoadCfg = cfg_mod.load_config,
     save_config: SaveCfg = cfg_mod.save_config,
@@ -199,6 +205,20 @@ def create_app(
         return load_config().discovery
 
     async def _discovery_work(run: Run):
+        # One lock across discovery and scoring, taken inside the task and held for its life.
+        # A daily run or hand-run command already holding it fails this run at once.
+        cfg = load_config()
+        minutes = cfg.limits.daily_deadline_minutes
+        with (
+            run_lock.hold(cfg_mod.data_dir(cfg), "discovery and scoring"),
+            gateway.deadline_scope(minutes * 60) as state,
+        ):
+            result = await _discovery_pass(run)
+        if state.hit:
+            run.emit("log", _CUT_OFF.format(minutes=minutes))
+        return result
+
+    async def _discovery_pass(run: Run):
         # Discover THEN score in one action — fetching without scoring leaves new
         # jobs invisible, which is pointless friction. "Re-score changed" and
         # "Re-score all" stay separate for re-scoring existing jobs.
@@ -259,9 +279,13 @@ def create_app(
             def prog(i: int, n: int) -> None:
                 run.emit("progress", progress.format_payload(i, n, label="Scoring batch"))
 
-            res = await run_matching(
-                cfg, c, CostTracker(), on_progress=prog, rescore_all=rescore_all
-            )
+            minutes = cfg.limits.daily_deadline_minutes
+            with gateway.deadline_scope(minutes * 60) as state:
+                res = await run_matching(
+                    cfg, c, CostTracker(), on_progress=prog, rescore_all=rescore_all
+                )
+            if state.hit:
+                run.emit("log", _CUT_OFF.format(minutes=minutes))
             run.emit(
                 "log",
                 f"Considered {res.considered}, scored {res.scored} -> surfaced "

@@ -39,7 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from blastjob.comp import MAX_PLAUSIBLE_ANNUAL_USD, MIN_PLAUSIBLE_ANNUAL_USD
-from blastjob.llm import caching
+from blastjob.llm import caching, gateway
 from blastjob.llm.cost import CostTracker, cost_from_usage
 from blastjob.llm.jsonio import extract_json_list
 from blastjob.llm.providers import make_stream
@@ -456,13 +456,15 @@ async def score_candidates(
     batches = list(_batches(plan.to_score, batch_size))
     budget = FALLBACK_JOB_BUDGET
     for idx, batch in enumerate(batches, 1):
+        if gateway.deadline_hit():
+            break  # the deadline refused a call: no further attempts, the rest waits
         t0 = time.monotonic()
         parsed = await _score_one_batch(
             cfg, work_history_md, batch, cost_tracker, jd_char_cap, rejections=rejections
         )
         missing = [c for c in batch if int(c["job_id"]) not in parsed]
 
-        if missing and len(batch) > 1 and budget > 0:
+        if missing and len(batch) > 1 and budget > 0 and not gateway.deadline_hit():
             attempt = missing[:budget]
             budget -= len(attempt)
             recovered = await _score_per_job(
@@ -490,7 +492,7 @@ async def score_candidates(
         out.unrecovered_jobs += len(missing)
         if parsed:
             out.scores.update(parsed)
-        else:
+        elif not gateway.deadline_hit():  # a refused batch is not a failed one
             out.failed_batches += 1
         if on_progress:
             on_progress(idx, len(batches))
@@ -521,6 +523,8 @@ async def _score_per_job(
     job. The batch already had its retries, so each job gets a single attempt."""
     out: dict[int, dict] = {}
     for c in candidates:
+        if gateway.deadline_hit():
+            break
         parsed = await _score_one_batch(
             cfg, work_history_md, [c], cost_tracker, jd_char_cap, attempts=1, rejections=rejections
         )
@@ -567,6 +571,8 @@ async def _score_one_batch(
             parsed = parse_scores(full, valid_ids)
             if parsed:
                 return parsed
+        except gateway.DeadlineReached:
+            return {}  # refused for the deadline: never retried
         except Exception as e:  # noqa: BLE001 — retry, then hand back to the caller
             log.warning("scoring batch failed for jobs %s: %s", sorted(valid_ids), e)
             continue

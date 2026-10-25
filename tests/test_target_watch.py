@@ -548,3 +548,45 @@ async def test_a_company_that_raises_does_not_stop_the_rest(monkeypatch, conn):
         cost_tracker=CostTracker(),
     )
     assert summary.scanned == 2 and summary.failed == 1
+
+
+# ------------------------------------------------- the daily deadline (#95)
+
+
+def _state_row(conn, key="acme widgets"):
+    return conn.execute("SELECT * FROM target_companies WHERE company_key=?", (key,)).fetchone()
+
+
+async def test_a_scan_refused_by_the_deadline_is_not_run_and_not_failed(monkeypatch, conn):
+    from blastjob.llm import gateway
+
+    _add(conn)
+    world = World(monkeypatch)
+    world.llm_error = gateway.DeadlineReached("not starting a model call")
+    before = dict(_state_row(conn, company_key("Acme Widgets")))
+
+    summary = await _run(world, conn)
+
+    row = _state_row(conn, company_key("Acme Widgets"))
+    assert summary.not_run == 1 and summary.failed == 0 and summary.scanned == 0
+    assert row["scan_failures"] == before["scan_failures"]  # no failure counted, no backoff
+    assert row["last_scan_status"] == before["last_scan_status"]
+    assert (row["last_scan_at"] or "") == (before["last_scan_at"] or "")  # not stamped scanned
+    assert (row["scan_claimed_at"] or "") == ""  # the lease is released
+    assert [r["company_key"] for r in ts.due_targets(conn, now=NOW)] == [
+        company_key("Acme Widgets")
+    ]  # still due
+
+
+async def test_no_target_is_claimed_once_the_deadline_has_passed(monkeypatch, conn):
+    from blastjob.llm import gateway
+
+    _add(conn)
+    world = World(monkeypatch)
+    before = _dump(conn)
+
+    with gateway.deadline_scope(gateway.MIN_START_SECONDS - 1):
+        summary = await _run(world, conn)
+
+    assert summary.not_run == 1 and summary.scanned == 0 and world.queries == []
+    assert _dump(conn) == before

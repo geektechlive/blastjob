@@ -21,7 +21,13 @@ from pydantic import ValidationError
 
 from blastjob.core import employer_domains
 from blastjob.core.company import company_key
-from blastjob.models.config import BlastJobConfig, TargetBoard
+from blastjob.models.config import (
+    DAILY_DEADLINE_MAX_MINUTES,
+    DAILY_DEADLINE_MIN_MINUTES,
+    BlastJobConfig,
+    LimitsConfig,
+    TargetBoard,
+)
 
 SECTIONS = ("core", "profile", "location", "search", "service")
 Form = Mapping[str, str]
@@ -155,6 +161,18 @@ def _service(cfg: BlastJobConfig, form: Form) -> None:
     cfg.web.host = form.get("web_host", "").strip()
     cfg.web.port = _num(form, "web_port", int)
     cfg.web.public_url = form.get("web_public_url", cfg.web.public_url).strip()
+    if "limits_daily_deadline_minutes" in form:
+        cfg.limits = _limits(form["limits_daily_deadline_minutes"])
+
+
+def _limits(raw: str) -> LimitsConfig:
+    try:
+        return LimitsConfig(daily_deadline_minutes=int(raw))
+    except (ValueError, ValidationError) as e:
+        raise FormError(
+            f"Daily run time limit: whole minutes from {DAILY_DEADLINE_MIN_MINUTES} "
+            f"to {DAILY_DEADLINE_MAX_MINUTES}"
+        ) from e
 
 
 _APPLY: dict[str, Callable[[BlastJobConfig, Form], None]] = {

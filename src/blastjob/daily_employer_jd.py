@@ -110,7 +110,7 @@ async def lookup_step(
 ) -> None:
     d = cfg.discovery
     secrets_mod.load_secrets_env()
-    rescored = failed = 0
+    rescored = failed = not_run = 0
     tracker = CostTracker()
     try:
         net = await employer_jd.run_upgrade(
@@ -126,6 +126,7 @@ async def lookup_step(
         if score and not dry_run:
             counts = await rescore.rescore_jobs(cfg, conn, tracker, _rescore_ids(net, closure_res))
             rescored, failed = counts.undecided + counts.kept, len(counts.failed)
+            not_run = len(counts.not_run)
     except Exception as e:
         conn.rollback()
         log.exception("employer description lookup failed")
@@ -134,6 +135,8 @@ async def lookup_step(
     finally:
         # Calls made before a failure were still paid for: they count in the footer.
         res.rescore_cost = tracker.total_call_cost
+    if not_run:
+        res.skipped_steps.append(f"employer-description re-score ({not_run} not run)")
     note = _note(free, net, rescored=rescored, rescore_failed=failed)
     if note:
         res.notes[ERROR_KEY] = note

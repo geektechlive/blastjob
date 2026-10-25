@@ -128,6 +128,11 @@
     <small>Leave blank to use this machine (127.0.0.1) and the port above. To open digest links on a phone, enter this computer's network address, e.g. http://192.168.1.20:8765 (an IP address or localhost, not a DNS name).</small>
   </label>
 
+  <label>Daily run time limit (minutes)
+    <input type="number" name="limits_daily_deadline_minutes" value="{{ cfg.limits.daily_deadline_minutes }}" min="5" max="240">
+    <small>The daily run starts no new model work after this long. Anything left waits for the next run, and the digest says so.</small>
+  </label>
+
   <button type="submit" class="btn-save">Save</button>
 </form>
 

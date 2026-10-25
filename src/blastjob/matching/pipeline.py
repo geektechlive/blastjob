@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Collection
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 
 from blastjob import config as cfg_mod
+from blastjob.core import run_lock
 from blastjob.core.company import company_key
 from blastjob.core.dream_rule import DreamRule
 from blastjob.llm.cost import CallCost, CostTracker, aggregate_calls
@@ -247,6 +249,16 @@ def _load_candidates(
     ).fetchall()
 
 
+def count_unscored(conn: sqlite3.Connection) -> int:
+    """Active machine-state jobs that have never been scored: what a daily run that stopped at
+    its deadline leaves for the next one."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE source_state='active' "
+        f"AND review_state IN ({MACHINE_STATES}) AND alignment_score IS NULL"
+    ).fetchone()
+    return int(row[0])
+
+
 def count_candidates(conn: sqlite3.Connection) -> int:
     """How many jobs a full (`only_unscored=False`) pass loads: what the cockpit's
     Re-score all confirm names. An upper bound on model calls, since geo and the
@@ -333,23 +345,32 @@ async def run_matching(
     only_unscored: bool = False,
     job_ids: Collection[int] | None = None,
     rescore_all: bool = False,
+    exclusive: bool = True,
 ) -> MatchResult:
     """Geo, scope prefilter, then model scoring of the machine-state jobs.
+
+    Takes the run lock (`core/run_lock.py`) and raises `RunLockHeld` when another run holds it,
+    unless `exclusive=False`, which needs `job_ids` (a full pass is never unlocked). Only a
+    pass scoped to named jobs by a cockpit click (a paste, a manual job, an employer-description
+    re-score) opts out; `tests/test_run_lock_callers.py` lists the callers allowed to.
 
     By default a score stamped with the current fingerprint is replayed (free).
     `rescore_all` replays none, so every candidate that passes geo and the
     prefilter goes to the model (the cockpit's Re-score all). `MatchResult.cost`
     totals only the calls this run recorded, so a shared tracker is safe."""
+    if not exclusive and job_ids is None:
+        raise ValueError("run_matching(exclusive=False) must be scoped with job_ids")
     first_call = len(cost_tracker.calls)
-    res = await _run_matching(
-        cfg,
-        conn,
-        cost_tracker,
-        on_progress,
-        only_unscored=only_unscored,
-        job_ids=job_ids,
-        rescore_all=rescore_all,
-    )
+    with run_lock.hold(cfg_mod.data_dir(cfg), "matching") if exclusive else nullcontext():
+        res = await _run_matching(
+            cfg,
+            conn,
+            cost_tracker,
+            on_progress,
+            only_unscored=only_unscored,
+            job_ids=job_ids,
+            rescore_all=rescore_all,
+        )
     res.cost = aggregate_calls(cost_tracker.calls[first_call:])
     return res
 
