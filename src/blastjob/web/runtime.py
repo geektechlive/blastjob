@@ -149,6 +149,10 @@ class Runtime:
                 return run
         return None
 
+    def running_keyed(self, name: str, key: str) -> Run | None:
+        """The run of `name` for `key` that is still going, if any."""
+        return self._running_keyed(name, key)
+
     def _running_keyed(self, name: str, key: str) -> Run | None:
         for run in reversed(list(self._runs.values())):
             if run.name == name and run.key == key and run.status == "running":

@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from blastjob.core import employer_domains
+from blastjob.core.company import company_key
 from blastjob.models.config import BlastJobConfig, TargetBoard
 
 SECTIONS = ("core", "profile", "location", "search", "service")
@@ -75,14 +76,25 @@ def parse_towns(text: str) -> dict[str, list[float]]:
     return out
 
 
-def parse_boards(text: str) -> list[TargetBoard]:
+def _board_identity(b: TargetBoard) -> tuple[str, str, str]:
+    return company_key(b.company), b.ats.strip().lower(), b.token.strip().lower()
+
+
+def parse_boards(text: str, existing: list[TargetBoard] | None = None) -> list[TargetBoard]:
+    """Boards from 'company, ats, token' lines. A line that is still the same board (same
+    company, ats and token) keeps the identity basis it was saved with (#90): the text form
+    does not show it, so rebuilding from text alone would erase it on every settings save."""
+    bases = {_board_identity(b): b.identity_basis for b in existing or []}
     out = []
     for n, line in enumerate(lines(text), 1):
         parts = [p.strip() for p in line.rsplit(",", 2)]
         if len(parts) != 3 or not all(parts):
             raise FormError(f"boards line {n}: expected 'company, ats, token'")
         try:
-            out.append(TargetBoard(company=parts[0], ats=parts[1], token=parts[2]))
+            board = TargetBoard(company=parts[0], ats=parts[1], token=parts[2])
+            out.append(
+                board.model_copy(update={"identity_basis": bases.get(_board_identity(board), "")})
+            )
         except ValidationError as e:
             raise FormError(f"boards line {n}: {e.errors()[0]['msg']}") from e
     return out
@@ -127,7 +139,7 @@ def _location(cfg: BlastJobConfig, form: Form) -> None:
 
 def _search(cfg: BlastJobConfig, form: Form) -> None:
     d = cfg.discovery
-    d.target_boards = parse_boards(form.get("target_boards", ""))
+    d.target_boards = parse_boards(form.get("target_boards", ""), d.target_boards)
     d.employer_domains = parse_employer_domains(form.get("employer_domains", ""))
     d.adzuna_queries = lines(form.get("adzuna_queries", ""))
     d.adzuna_where = form.get("adzuna_where", "").strip()

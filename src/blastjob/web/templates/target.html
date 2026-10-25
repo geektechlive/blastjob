@@ -21,6 +21,13 @@
     {% endif %}
   </div>
 
+  {% if target.tier == 'dream' %}
+  <div id="board-search" class="detail-block" hx-get="/targets/{{ key_path }}/boards{% if notice %}?notice={{ notice }}{% if other %}&other={{ other | urlencode }}{% endif %}{% endif %}" hx-trigger="load" hx-swap="outerHTML">
+    <h3>Job board</h3>
+    <p class="dim">Loading.</p>
+  </div>
+  {% endif %}
+
   <div class="detail-block">
     <h3>News <span class="col-count">{{ events|length }}</span></h3>
     {% if events %}

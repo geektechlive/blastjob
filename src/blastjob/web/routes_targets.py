@@ -22,6 +22,7 @@ from blastjob.core import network as net
 from blastjob.core import target_store as ts
 from blastjob.core.page_fetch import host_of
 from blastjob.web.deps import Deps
+from blastjob.web.routes_boards import NOTICES
 from blastjob.web.security import require_csrf
 
 MAX_PASTE_CHARS = 20_000
@@ -103,7 +104,7 @@ def register(app: FastAPI, deps: Deps) -> None:
             c.close()
 
     @app.get("/targets/{key}", response_class=HTMLResponse)
-    async def target_page(request: Request, key: str):
+    async def target_page(request: Request, key: str, notice: str = "", other: str = ""):
         c = deps.conn()
         try:
             target = ts.get_target(c, key)
@@ -117,6 +118,8 @@ def register(app: FastAPI, deps: Deps) -> None:
                 contacts=net.contacts_for_key(c, key),
                 has_profile=co.get_profile_by_key(c, key) is not None,
                 key_path=quote(key, safe=""),
+                notice=notice if notice in NOTICES else "",
+                other=other[:80],
             )
         finally:
             c.close()

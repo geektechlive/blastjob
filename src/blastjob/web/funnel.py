@@ -22,17 +22,18 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from blastjob.core.dream_rule import DreamRule
 from blastjob.matching.gate import below_floor
-from blastjob.matching.geo import assess_geo
+from blastjob.matching.geo import assess_geo, is_dream_bypass, is_geo_reject
 from blastjob.matching.prefilter import classify_scope
 from blastjob.models.config import BlastJobConfig
-from blastjob.models.job import GeoStatus
 
 # Ordered as the pipeline applies them, so the page reads top to bottom.
 STAGES: list[tuple[str, str]] = [
     ("discovered", "Discovered"),
     ("stale", "Source says gone"),
     ("geo_rejected", "Rejected on location"),
+    ("dream_far", "Dream, on-site far"),
     ("prefiltered", "Dropped as an IC role"),
     ("unscored", "Awaiting scoring"),
     ("below_band", "Scored below the band"),
@@ -56,14 +57,30 @@ class Funnel:
 
 
 _COLS = (
-    "id, company, title, alignment_score, review_state, source_state, "
+    "id, source, company, title, alignment_score, review_state, source_state, "
     "geo_remote, geo_city, geo_region, geo_location_raw, geo_status, "
     "comp_provenance, comp_max, comp_currency"
 )
 _MAX_EXAMPLES = 12
 
 
-def _pre_scope_stage(row: sqlite3.Row, cfg: BlastJobConfig) -> str | None:
+def _is_dream(row: sqlite3.Row, rule: DreamRule | None) -> bool:
+    return rule is not None and rule.applies(row["company"] or "", row["source"] or "")
+
+
+def _geo_verdict(row: sqlite3.Row, cfg: BlastJobConfig):  # noqa: ANN202 - see matching.geo
+    return assess_geo(
+        remote=bool(row["geo_remote"]),
+        city=row["geo_city"] or "",
+        region=row["geo_region"] or "",
+        location_raw=row["geo_location_raw"] or "",
+        cfg=cfg.discovery,
+    )
+
+
+def _pre_scope_stage(
+    row: sqlite3.Row, cfg: BlastJobConfig, dreams: DreamRule | None = None
+) -> str | None:
     """Everything decidable without the job description text. None means the
     row is still live at this point in the funnel and needs the scope
     classifier (`raw_jd`) to go further -- see `_post_scope_stage`.
@@ -78,19 +95,15 @@ def _pre_scope_stage(row: sqlite3.Row, cfg: BlastJobConfig) -> str | None:
     if row["source_state"] != "active":
         return "stale"
 
-    status, _dist, passes, _cond = assess_geo(
-        remote=bool(row["geo_remote"]),
-        city=row["geo_city"] or "",
-        region=row["geo_region"] or "",
-        location_raw=row["geo_location_raw"] or "",
-        cfg=cfg.discovery,
-    )
-    if not passes and status != GeoStatus.UNKNOWN:
+    # The same predicate the pipeline uses, so the page never calls a kept role rejected.
+    if is_geo_reject(_geo_verdict(row, cfg), dream=_is_dream(row, dreams)):
         return "geo_rejected"
     return None
 
 
-def _post_scope_stage(row: sqlite3.Row, cfg: BlastJobConfig, raw_jd: str) -> str:
+def _post_scope_stage(
+    row: sqlite3.Row, cfg: BlastJobConfig, raw_jd: str, dreams: DreamRule | None = None
+) -> str:
     """The rest of `_stage`, for rows `_pre_scope_stage` couldn't resolve."""
     in_scope, _why = classify_scope(
         row["title"] or "", raw_jd, cfg.discovery.title_keep_terms, cfg.discovery.title_drop_terms
@@ -98,10 +111,11 @@ def _post_scope_stage(row: sqlite3.Row, cfg: BlastJobConfig, raw_jd: str) -> str
     if not in_scope:
         return "prefiltered"
 
-    if row["review_state"] == "surfaced":
-        return "surfaced"
-    if row["review_state"] == "queued":
-        return "queued"
+    if row["review_state"] in ("surfaced", "queued"):
+        # A far role the dream exception is keeping reads as that, not as an ordinary hit.
+        if is_dream_bypass(_geo_verdict(row, cfg), dream=_is_dream(row, dreams)):
+            return "dream_far"
+        return str(row["review_state"])
 
     if row["alignment_score"] is None:
         return "unscored"
@@ -117,6 +131,7 @@ def _post_scope_stage(row: sqlite3.Row, cfg: BlastJobConfig, raw_jd: str) -> str
 def build_funnel(conn: sqlite3.Connection, cfg: BlastJobConfig, runs: int = 7) -> Funnel:
     """Stage every job, plus the last few daily runs for trend."""
     f = Funnel()
+    dreams = DreamRule.load(conn, cfg.discovery)
     rows = conn.execute(f"SELECT {_COLS} FROM jobs").fetchall()
     f.total = len(rows)
     f.counts["discovered"] = len(rows)
@@ -131,7 +146,7 @@ def build_funnel(conn: sqlite3.Connection, cfg: BlastJobConfig, runs: int = 7) -
     stage_of_id: dict[int, str] = {}
     need_scope = False
     for r in rows:
-        stage = _pre_scope_stage(r, cfg)
+        stage = _pre_scope_stage(r, cfg, dreams)
         if stage is None:
             need_scope = True
         else:
@@ -148,7 +163,7 @@ def build_funnel(conn: sqlite3.Connection, cfg: BlastJobConfig, runs: int = 7) -
         }
     for r in rows:
         if r["id"] not in stage_of_id:
-            stage_of_id[r["id"]] = _post_scope_stage(r, cfg, jd_by_id.get(r["id"]) or "")
+            stage_of_id[r["id"]] = _post_scope_stage(r, cfg, jd_by_id.get(r["id"]) or "", dreams)
 
     for r in rows:
         stage = stage_of_id[r["id"]]

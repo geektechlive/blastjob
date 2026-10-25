@@ -1,0 +1,64 @@
+{# The job-board section of a dream company's page (#90). Loaded by htmx; while a search runs
+   it polls itself. Every value from a board (titles, locations, the ATS-reported name) is page
+   text: autoescaped, never |safe. A board is added only by the "Use this board" form below. #}
+<div id="board-search" class="detail-block"
+     {% if running %}hx-get="/targets/{{ key_path }}/boards" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  <h3>Job board</h3>
+  {% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+  {% if configured %}
+    <ul class="facts">
+    {% for b in configured %}
+      <li>Reading <b>{{ b.ats }}</b> <code>{{ b.token }}</code> <span class="dim">({{ b.basis }})</span></li>
+    {% endfor %}
+    </ul>
+  {% endif %}
+  {% if running %}
+    <p class="dim">Searching for this company's job board. It can take a minute.</p>
+  {% else %}
+    <form method="post" action="/targets/{{ key_path }}/boards/find" class="inline">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <button type="submit">Find job board</button>
+    </form>
+    <p class="dim">Looks for a Greenhouse, Lever, Ashby, Workday or Dayforce board for {{ target.company }}. Nothing is added until you click Use this board.</p>
+  {% endif %}
+
+  {% if findings %}
+    {% if findings.candidates %}
+      <ul class="facts board-candidates">
+      {% for c in findings.candidates %}
+        <li>
+          <b>{{ c.ats }}</b> <code>{{ c.token }}</code>
+          <span class="dim">{{ c.job_count }} posting{{ '' if c.job_count == 1 else 's' }}</span>
+          {% if c.identity_basis == 'domain_link' %}
+            <span class="badge comp">verified: linked from the company's careers page</span>
+          {% elif c.identity_basis == 'ats_name' %}
+            <span class="badge comp">the board reports the name {{ c.ats_name }}</span>
+          {% else %}
+            <span class="badge comp-unknown">not verified</span>
+            {% if c.ats_name %}<span class="dim">the board reports the name {{ c.ats_name }}</span>{% endif %}
+          {% endif %}
+          {% if c.samples %}
+            <ul>
+            {% for s in c.samples %}<li>{{ s.title }}{% if s.location %} <span class="dim">({{ s.location }})</span>{% endif %}</li>{% endfor %}
+            </ul>
+          {% else %}
+            <div class="dim">No sample postings could be read from this board.</div>
+          {% endif %}
+          <form method="post" action="/targets/{{ key_path }}/boards/use" class="inline">
+            <input type="hidden" name="_token" value="{{ token }}">
+            <input type="hidden" name="ats" value="{{ c.ats }}">
+            <input type="hidden" name="token" value="{{ c.token }}">
+            {% if not c.identity_basis %}
+              <label><input type="checkbox" name="owner_confirmed" value="1"> This board belongs to {{ target.company }}</label>
+            {% endif %}
+            <button type="submit">Use this board</button>
+          </form>
+        </li>
+      {% endfor %}
+      </ul>
+    {% else %}
+      <p class="warn">No supported board found. This is a coverage gap, not proof that {{ target.company }} has no job board.</p>
+    {% endif %}
+    {% for n in findings.notes %}<p class="dim">{{ n }}</p>{% endfor %}
+  {% endif %}
+</div>

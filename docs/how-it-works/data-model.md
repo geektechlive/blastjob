@@ -89,6 +89,7 @@ The schema is `schema.MIGRATIONS`, an ordered list of `(version, sql)` entries a
 | `company_profiles` | 11 | one company workup per normalized name | [employer data](employer-data.md) |
 | `comp_signals` | 12 | every compensation observation per job | [employer data](employer-data.md) |
 | `daily_runs` | 13 | one row per `blastjob-daily` run | [daily](daily.md) |
+| `jobs.dream_far`, `jobs.dream_notified_at` | 59, 60 | `dream_far`: the dream-list geo exception kept this far on-site role, recomputed every matching pass. `dream_notified_at`: when the weekly Dream list section carried it | [matching](matching.md#the-dream-list-exception), [daily](daily.md#dream-list) |
 | `jobs.app_channel`, `app_channel_via`, `app_channel_at` | 57 | how an application started: cold, referral, recruiter or inbound, NULL = unknown | [web](web.md#stage-moves) |
 | `network_contacts`, `company_follows` | 14 to 25, 56 | your LinkedIn export, and the enrichment results; `recruiter_override` (56) holds your own recruiter label | [network](network.md) |
 | `company_exclusions` | 26 (keys re-keyed by 54) | companies you excluded, as an explicit decision | [matching](matching.md) |

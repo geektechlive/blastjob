@@ -133,6 +133,37 @@ def _no_real_target_watch(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_board_finder(monkeypatch):
+    """No test may search for a company's job board on the network. The dream-list board finder
+    (`discovery/board_finder.py`) reaches ATS APIs and Jina through five leaf functions:
+    `resolve.probe_company`, `probe_workday`, `probe_dayforce`, and the finder's own
+    `fetch_samples` and `read_careers_page`. Each is replaced with a function that calls
+    `pytest.fail` (a BaseException, so the finder's fail-soft handlers cannot hide it). The
+    finder looks them up through their modules at call time, so this covers every path in.
+    A test fakes them with `monkeypatch.setattr` on the same names."""
+    from blastjob.discovery import board_finder, resolve
+
+    def _forbid(module, name: str):
+        def _raise(*_a: object, **_k: object):
+            pytest.fail(
+                f"blastjob.discovery.{module.__name__.rsplit('.', 1)[1]}.{name} tried to reach "
+                "the network. Patch it in this test "
+                "(see tests/conftest.py::_no_real_board_finder)."
+            )
+
+        return _raise
+
+    for module, name in (
+        (resolve, "probe_company"),
+        (resolve, "probe_workday"),
+        (resolve, "probe_dayforce"),
+        (board_finder, "fetch_samples"),
+        (board_finder, "read_careers_page"),
+    ):
+        monkeypatch.setattr(module, name, _forbid(module, name))
+
+
+@pytest.fixture(autouse=True)
 def isolated_secrets(tmp_path_factory, monkeypatch):
     """Point a test's secrets load at a throwaway file instead of the user's
     real secrets file.

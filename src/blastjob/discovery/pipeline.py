@@ -30,10 +30,14 @@ from datetime import date, datetime, timedelta
 from blastjob import config as cfg_mod
 from blastjob import logging as applog
 from blastjob.core.closure_links import is_authoritative
+from blastjob.core.company import company_key
+from blastjob.core.target_store import dream_keys
+from blastjob.discovery import dream_boards
 from blastjob.discovery.adzuna import AdzunaAdapter
 from blastjob.discovery.apple import AppleAdapter
 from blastjob.discovery.ashby import AshbyAdapter
 from blastjob.discovery.base import Adapter, RawPosting, is_snapshot, stale_after_days
+from blastjob.discovery.dayforce import MAX_PAGES as DAYFORCE_MAX_PAGES
 from blastjob.discovery.dayforce import DayforceAdapter
 from blastjob.discovery.greenhouse import GreenhouseAdapter
 from blastjob.discovery.lever import LeverAdapter
@@ -45,7 +49,7 @@ from blastjob.discovery.mailalerts import (
 )
 from blastjob.discovery.normalize import cluster_fingerprint, to_job_columns
 from blastjob.discovery.searchfirms import SearchFirmAdapter, due_today
-from blastjob.discovery.workday import WorkdayAdapter
+from blastjob.discovery.workday import MAX_PAGES_PER_QUERY, WorkdayAdapter
 from blastjob.models.config import BlastJobConfig
 from blastjob.secrets import secrets_file_hint
 
@@ -174,16 +178,23 @@ def build_adapters(
     adapters: list[Adapter] = []
     if d.mail_alerts_enabled:
         adapters.append(_mail_adapter(cfg, conn))
+    dreams = dream_keys(conn) if conn is not None else frozenset()
     for b in d.target_boards:
+        # A dream company's board is read with its own queries and caps (#90).
+        dream = company_key(b.company) in dreams
         if b.ats.lower() == "workday" and b.token:
             wd = WorkdayAdapter(
                 b.company,
                 b.token,
-                queries=d.adzuna_queries,
+                queries=dream_boards.dream_queries(d.title_keep_terms)
+                if dream
+                else d.adzuna_queries,
                 timeout_s=d.provider_timeout_s,
                 max_retries=d.provider_max_retries,
                 keep_terms=d.title_keep_terms,
                 drop_terms=d.title_drop_terms,
+                max_pages=dream_boards.DREAM_MAX_PAGES if dream else MAX_PAGES_PER_QUERY,
+                max_wanted=dream_boards.DREAM_MAX_POSTINGS if dream else 0,
             )
             if conn is not None:
                 wd.known_ids = known_jd_ids(conn, wd.source)
@@ -198,6 +209,8 @@ def build_adapters(
                 max_retries=d.provider_max_retries,
                 keep_terms=d.title_keep_terms,
                 drop_terms=d.title_drop_terms,
+                max_pages=dream_boards.DREAM_MAX_PAGES if dream else DAYFORCE_MAX_PAGES,
+                max_wanted=dream_boards.DREAM_MAX_POSTINGS if dream else 0,
             )
             if conn is not None:
                 df.known_ids = known_jd_ids(conn, df.source)
@@ -205,13 +218,16 @@ def build_adapters(
             continue
         cls = _ATS.get(b.ats.lower())
         if cls and b.token:
+            board = cls(
+                b.company,
+                b.token,
+                timeout_s=d.provider_timeout_s,
+                max_retries=d.provider_max_retries,
+            )
             adapters.append(
-                cls(
-                    b.company,
-                    b.token,
-                    timeout_s=d.provider_timeout_s,
-                    max_retries=d.provider_max_retries,
-                )
+                dream_boards.CappedBoardAdapter(board, d.title_keep_terms, d.title_drop_terms)
+                if dream
+                else board
             )
     if d.enable_aggregators:
         adapters.append(

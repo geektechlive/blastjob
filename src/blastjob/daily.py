@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from blastjob import config as cfg_mod
-from blastjob import daily_employer_jd, daily_filing, daily_targets, daily_tools
+from blastjob import daily_dream, daily_employer_jd, daily_filing, daily_targets, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
 from blastjob.core import closure, closure_links
@@ -149,16 +149,13 @@ def pending_jobs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     A row whose cluster holds a kept or archived member is not a new role (the
     cockpit shows that cluster in the decided member's stage, or hides it), so it
     is never announced: that is how a repost of an applied role stays quiet."""
+    # A far dream role (`dream_far`, #90) waits for the weekly Dream list section instead.
     return conn.execute(
-        "SELECT id, company, title, url, alignment_score, review_state, "
-        "geo_location_raw, geo_remote, comp_min, comp_max, comp_provenance, "
-        "cluster_id, source, source_state, employer_link_source, employer_link_external_id, "
-        "employer_link_url "
+        f"SELECT {daily_dream.DIGEST_COLUMNS} "
         "FROM jobs j WHERE source_state='active' AND notified_at='' "
+        "AND COALESCE(dream_far,0)=0 "
         "AND review_state IN ('surfaced','queued') "
-        "AND NOT (cluster_id IS NOT NULL AND EXISTS (SELECT 1 FROM jobs d "
-        "WHERE d.cluster_id=j.cluster_id AND d.id<>j.id "
-        "AND d.review_state IN ('kept','archived'))) "
+        f"AND {daily_dream.CLUSTER_NOT_DECIDED} "
         "ORDER BY alignment_score DESC, id ASC"
     ).fetchall()
 
@@ -346,10 +343,11 @@ async def run_daily(
     await daily_targets.targets_step(cfg, conn, res, dry_run=dry_run, today=today)
 
     jobs = pending_jobs(conn)
+    dream_jobs = daily_dream.weekly_jobs(cfg, conn, today or dt.date.today())
     target_news = daily_targets.pending_news(conn)
     fups = followups_due(conn)
     warm_ids = warm_job_ids(conn, jobs)
-    links = apply_links_for(conn, jobs)
+    links = apply_links_for(conn, [*jobs, *dream_jobs])
     res.new_jobs = len(jobs)
     res.followups = len(fups)
     hb = heartbeat_line(conn, today or dt.date.today())
@@ -366,6 +364,7 @@ async def run_daily(
         apply_links=links,
         target_news=target_news,
         target_failed=res.target_failed,
+        dream_jobs=dream_jobs,
     )
     res.duration_s = time.monotonic() - run_start
 
@@ -393,12 +392,17 @@ async def run_daily(
         apply_links=links,
         target_news=target_news,
         target_failed=res.target_failed,
+        dream_jobs=dream_jobs,
     )
     await send(res.digest)  # raises on failure -> nothing stamped
     # Stamp only what was actually rendered in the sent digest — anything
     # past the MAX_DIGEST_JOBS cutoff stays notified_at='' so it leads the
     # next run's digest instead of being silently buried forever.
     mark_notified(conn, [int(r["id"]) for r in rendered_jobs(jobs, warm_ids)])
+    # The Dream list section follows the same rule: only the roles it rendered.
+    daily_dream.mark_dream_notified(
+        conn, [int(r["id"]) for r in daily_dream.rendered_dream_jobs(dream_jobs)]
+    )
     # Same rule for target news: only the events the sent digest rendered.
     target_store.mark_notified(conn, [n.id for n in rendered_target_news(target_news)])
     res.sent = True

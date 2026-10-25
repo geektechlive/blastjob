@@ -19,6 +19,7 @@ def _conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY, company TEXT, raw_jd TEXT)")
     conn.execute("CREATE TABLE connections (company_key TEXT)")
+    conn.execute("CREATE TABLE target_companies (company_key TEXT, tier TEXT)")  # dream badge
     return conn
 
 

@@ -22,7 +22,28 @@ Contoso Foods | | WI
 - A line that cannot be read is listed under the form with the reason. It is not added, and the other lines still are.
 - Adding the same company twice does nothing. "Acme Widgets, Inc." and "ACME WIDGETS" are the same company.
 
-Choose the list in the **List** menu. Core companies are scanned every week. Dream is a place to park companies for later; they are stored but not scanned for news yet. Each row has a button to move a company between the two, and **Remove**. Removing a company hides its news, and adding it back shows that news again.
+Choose the list in the **List** menu. Core companies are scanned every week for news. Dream companies are not scanned for news; blastjob watches their job boards instead (see [Dream companies](#dream-companies)). Each row has a button to move a company between the two, and **Remove**. Removing a company hides its news, and adding it back shows that news again.
+
+## Dream companies
+
+A dream company is one you would move for. Roles on a dream company's own job board get an exception that no other company gets: a role that is on-site far from home is not thrown out on location. It is scored like any other role and, if it fits, it stays in your lists. Everything else still applies: the title filter, a posted pay under your floor, your exclusions and your score threshold.
+
+To watch a dream company's board, open the company's page and press **Find job board**. blastjob looks for a Greenhouse, Lever, Ashby, Workday or Dayforce board and lists what it found, with the number of postings and two sample postings. Nothing is added until you press **Use this board** on one of them. A search can take a minute; the page keeps working meanwhile.
+
+A board is only added with proof it belongs to the company, because a different company can have a similar name. Each board shows which proof it has:
+
+- "verified: linked from the company's careers page": the company's own site, the domain you entered for it, links to that board. This needs a domain on the target.
+- "the board reports the name ...": the job board system itself reports an organization name that is the company's name (a suffix like Inc. does not matter; "Acme Staffing" for "Acme" does not count). blastjob reads such a name only from Greenhouse.
+- "not verified": neither. Look at the sample postings, then tick **This board belongs to** the company before **Use this board** saves it. The sample postings alone prove nothing.
+
+If no board is found, the page says "No supported board found" and lists what was not checked, for example Workday and Dayforce when `JINA_API_KEY` is not set. That is a gap in coverage, not proof the company has no board. blastjob never scrapes a site and never contacts LinkedIn to find one.
+
+What you will see afterwards:
+
+- The exception applies only to roles read from a board you added here. A role with the same company name from an aggregator, an alert email or another source is turned away on location as before.
+- Every role from a dream company carries a **Dream** badge on its row and on its job page. A far role reads "Dream, on-site" followed by the place, so it never looks local. The badge follows the list as it is now: move the company to Core or remove it and the badges go, and far roles from it are turned away again on the next run.
+- Far dream roles are not in the daily digest. Once a week they come in one "Dream list" section (see [the daily digest](digest.md)). A dream role that is remote or near comes in the daily digest as usual.
+- On the Funnel page, far dream roles are counted under "Dream, on-site far" instead of "Rejected on location".
 
 ## What the weekly scan finds
 

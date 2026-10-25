@@ -11,7 +11,9 @@ import sqlite3
 from blastjob.core import events
 from blastjob.core import network as net
 from blastjob.core.company import company_key
+from blastjob.core.dream_rule import DreamRule
 from blastjob.core.reporting_line import extract_reporting_line
+from blastjob.core.target_store import dream_keys
 from blastjob.models.config import BlastJobConfig, CandidateConfig
 from blastjob.models.job import ReviewState
 from blastjob.models.tracking import APPLICATION_CHANNELS, MAX_CHANNEL_VIA_CHARS
@@ -26,7 +28,7 @@ _COLS = (
     "next_action_due, match_strengths, match_gaps, first_seen, last_seen, source_state, "
     "posting_check, posting_checked_at, posting_closed_at, posting_check_manual, "
     "employer_link_source, employer_link_external_id, employer_link_url, stage_changed_at, "
-    "app_channel, app_channel_via, app_channel_at"
+    "app_channel, app_channel_via, app_channel_at, dream_far"
 )
 
 # SQL literal list of the closure-lifecycle states (core.closure.AUTOMATION_STATES;
@@ -179,12 +181,45 @@ def annotate_network(
     keys = {company_key(r.get("company") or "") for r in out}
     counts = net.warm_counts(conn, keys)
     labels = _reporting_labels(conn, out)
+    dreams = dream_keys(conn)
+    far = _dream_far_flags(conn, out) if dreams else {}
     for r in out:
         key = company_key(r.get("company") or "")
         r["warm_count"] = counts.get(key, 0)
         r["is_alumni"] = net.is_alumni_company(key, candidate)
         r["reporting_label"] = labels.get(r.get("id") or -1, "")
+        r["dream_badge"] = dream_badge(
+            key in dreams, bool(far.get(r.get("id") or -1)), _where_text(r)
+        )
     return out
+
+
+def dream_badge(is_dream: bool, is_far: bool, location: str) -> str:
+    """The Dream badge text, from CURRENT dream-list membership (#90). A far role names its
+    location, taken from the stored geo, so it never looks local. A company that has left the
+    tier shows nothing, whatever the job's old flag says."""
+    if not is_dream:
+        return ""
+    if is_far and location:
+        return f"Dream, on-site {location}"
+    return "Dream"
+
+
+def _where_text(row: dict) -> str:
+    return " ".join(str(row.get("geo_location_raw") or row.get("geo_city") or "").split())
+
+
+def _dream_far_flags(conn: sqlite3.Connection, rows: list[dict]) -> dict[int, int]:
+    """job id -> dream_far. Rows from `_COLS` already carry it; any other list is looked up
+    in chunks, never per row."""
+    flags = {r["id"]: r["dream_far"] for r in rows if "dream_far" in r and r.get("id") is not None}
+    missing = [r["id"] for r in rows if r.get("id") is not None and r["id"] not in flags]
+    for i in range(0, len(missing), _JD_CHUNK):
+        chunk = missing[i : i + _JD_CHUNK]
+        marks = ",".join("?" * len(chunk))
+        for hit in conn.execute(f"SELECT id, dream_far FROM jobs WHERE id IN ({marks})", chunk):
+            flags[hit["id"]] = hit["dream_far"]
+    return flags
 
 
 _JD_CHUNK = 500  # stays under SQLite's bound-variable ceiling
@@ -517,9 +552,10 @@ def all_active(conn: sqlite3.Connection, cfg: BlastJobConfig) -> list[dict]:
     """Every active job with a plain-language disposition + reason, so the total
     is fully explorable — nothing is a black box. Ordered best fit first; the
     unscored (filtered, pending) follow, grouped by disposition."""
-    from blastjob.matching.geo import assess_geo
+    from blastjob.matching.geo import assess_geo, is_geo_reject
     from blastjob.matching.prefilter import classify_scope
 
+    rule = DreamRule.load(conn, cfg.discovery)
     rows = conn.execute(f"SELECT {_COLS} FROM jobs WHERE source_state='active'").fetchall()
     # raw_jd (up to 60,000 pasted chars each) is only needed for the "unscored"
     # branch below (classify_scope) -- every other disposition never reads it,
@@ -555,7 +591,7 @@ def all_active(conn: sqlite3.Connection, cfg: BlastJobConfig) -> list[dict]:
             disp, reason = "low fit", f"scored {score}%"
         else:
             # unscored: was it geo or the scope prefilter that dropped it?
-            _st, _dist, passes, _cond = assess_geo(
+            verdict = assess_geo(
                 remote=bool(r["geo_remote"]),
                 city=r["geo_city"] or "",
                 region=r["geo_region"] or "",
@@ -568,7 +604,7 @@ def all_active(conn: sqlite3.Connection, cfg: BlastJobConfig) -> list[dict]:
                 cfg.discovery.title_keep_terms,
                 cfg.discovery.title_drop_terms,
             )
-            if not passes:
+            if is_geo_reject(verdict, dream=rule.applies(r["company"] or "", r["source"] or "")):
                 disp, reason = "filtered", "outside commute area (not remote)"
             elif not keep:
                 disp, reason = "filtered", "different role type (not a leadership role)"

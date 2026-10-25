@@ -37,6 +37,8 @@ Replies. Under "Replies", each reply from a company you applied to, with the sen
 
 Target news. Under "Target news", dated news at companies on your [target list](targets.md): the company, what kind of news, "published" and the date, whether it came from the employer's own site or a news report, the host, the sentence the page printed, how many people you know there and a link to that company in the cockpit. It is a lead to read, not a fact to quote. If a weekly scan failed, one line says how many, so a quiet week and a broken scan look different.
 
+Dream list. Once a week, on the search-firm weekday (`discovery.search_firm_weekday`, Monday unless you changed it), a "Dream list" section lists roles at your [dream companies](targets.md#dream-companies) that are on-site far from home and scored at or above your threshold, best fit first, in the same two-line form as new roles. A role that is remote or near comes in the daily list. Each role is announced once, at most 15 a week; the rest lead next week's section. A day with only a Dream list still sends.
+
 Follow-ups due. Under "Follow-ups due", the applied roles that need a nudge, with the reason. See [applying](applying.md#follow-ups).
 
 Source errors and notes. Under "Source errors", a source that failed this run. Under "Notes", things worth knowing, such as a board that returned suspiciously few jobs and so was not used to mark postings stale.

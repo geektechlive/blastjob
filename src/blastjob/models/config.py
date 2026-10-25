@@ -60,6 +60,10 @@ class TargetBoard(BaseModel):
     company: str = ""
     ats: str = ""  # one of SUPPORTED_ATS
     token: str = ""
+    # How the board was tied to the company (#90, ADR 0056): "domain_link" (the company's own
+    # careers page links to it), "ats_name" (the ATS reports an organization name that names the
+    # company) or "owner_confirmed". "" = a board entered by hand, before this field existed.
+    identity_basis: Literal["", "domain_link", "ats_name", "owner_confirmed"] = ""
 
     @field_validator("ats")
     @classmethod

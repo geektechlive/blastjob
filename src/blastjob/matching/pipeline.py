@@ -19,10 +19,11 @@ from dataclasses import dataclass, field
 
 from blastjob import config as cfg_mod
 from blastjob.core.company import company_key
+from blastjob.core.dream_rule import DreamRule
 from blastjob.llm.cost import CallCost, CostTracker, aggregate_calls
 from blastjob.matching.fingerprint import scoring_fingerprint
 from blastjob.matching.gate import decide
-from blastjob.matching.geo import assess_geo
+from blastjob.matching.geo import assess_geo, is_dream_bypass, is_geo_reject
 from blastjob.matching.prefilter import classify_scope
 from blastjob.matching.scorer import reuse_key, score_candidates
 from blastjob.models.config import BlastJobConfig
@@ -227,7 +228,10 @@ def _load_candidates(
     collection means "nothing to score" — it must not degrade to "all jobs"."""
     if job_ids is not None and not job_ids:
         return []
-    extra = " AND alignment_score IS NULL" if only_unscored else ""
+    # The daily pass scores only never-scored rows, but a role the dream exception is keeping
+    # (`dream_far`) is revisited every pass: its company may have left the dream tier, or its
+    # location or the radius may have changed. A scored row replays its score for free.
+    extra = " AND (alignment_score IS NULL OR dream_far=1)" if only_unscored else ""
     params: tuple[int, ...] = ()
     id_clause = ""
     if job_ids is not None:
@@ -235,7 +239,7 @@ def _load_candidates(
         id_clause = f" AND id IN ({placeholders})"
         params = tuple(job_ids)
     return conn.execute(
-        "SELECT id, title, company, raw_jd, comp_provenance, comp_max, comp_currency, "
+        "SELECT id, source, title, company, raw_jd, comp_provenance, comp_max, comp_currency, "
         "geo_remote, geo_city, geo_region, geo_location_raw "
         "FROM jobs WHERE source_state='active' "
         f"AND review_state IN ({MACHINE_STATES}){extra}{id_clause}",
@@ -250,7 +254,14 @@ def count_candidates(conn: sqlite3.Connection) -> int:
     return len(_load_candidates(conn, only_unscored=False))
 
 
-def _set_geo(conn: sqlite3.Connection, job_id: int, status: GeoStatus, dist: float | None) -> None:
+def _set_geo(
+    conn: sqlite3.Connection,
+    job_id: int,
+    status: GeoStatus,
+    dist: float | None,
+    *,
+    dream_far: bool = False,
+) -> None:
     """Persist the geo verdict. Only status + distance are stored, but that is
     lossless: every outcome of `assess_geo` is recoverable from persisted
     columns, so the DB can answer "why was this dropped" without a new column.
@@ -263,10 +274,14 @@ def _set_geo(conn: sqlite3.Connection, job_id: int, status: GeoStatus, dist: flo
 
     A denormalised `geo_reason TEXT` would be friendlier for the cockpit, but
     that is a schema change and is not made here.
+
+    `dream_far` (#90) is the one extra fact: the verdict above is far and the company is on the
+    dream list, so the geo exception kept the role. It is written with the verdict on every
+    pass, so it is 0 again the moment the role, the radius or the dream tier changes.
     """
     conn.execute(
-        "UPDATE jobs SET geo_status=?, geo_distance_mi=? WHERE id=?",
-        (status.value, dist, job_id),
+        "UPDATE jobs SET geo_status=?, geo_distance_mi=?, dream_far=? WHERE id=?",
+        (status.value, dist, 1 if dream_far else 0, job_id),
     )
 
 
@@ -360,18 +375,24 @@ async def _run_matching(
 
     to_score: list[dict] = []
     geo_by_id: dict[int, tuple[GeoStatus, bool, bool]] = {}
+    rule = DreamRule.load(conn, cfg.discovery)  # once per run (#90)
 
     for r in rows:
         jid = int(r["id"])
-        status, dist, passes, conditional = assess_geo(
+        verdict = assess_geo(
             remote=bool(r["geo_remote"]),
             city=r["geo_city"] or "",
             region=r["geo_region"] or "",
             location_raw=r["geo_location_raw"] or "",
             cfg=cfg.discovery,
         )
-        _set_geo(conn, jid, status, dist)
-        geo_by_id[jid] = (status, passes, conditional)
+        status, dist, passes, conditional = verdict
+        dream = rule.applies(r["company"] or "", r["source"] or "")
+        bypass = is_dream_bypass(verdict, dream=dream)
+        _set_geo(conn, jid, status, dist, dream_far=bypass)
+        # The gate repeats the location check, so a role the exception keeps must pass it too.
+        # The stored verdict above stays truthful (far).
+        geo_by_id[jid] = (status, passes or bypass, conditional)
 
         # Cheap rejects before spending an LLM call. An UNKNOWN location is NOT
         # a reject: it means the string was unparseable, so the job goes on to
@@ -380,7 +401,7 @@ async def _run_matching(
         # re-reject the same job forever.
         if status == GeoStatus.UNKNOWN:
             res.geo_unknown += 1
-        elif not passes:
+        elif is_geo_reject(verdict, dream=dream):
             conn.execute(_RESET_TO_NEW, (jid,))
             res.geo_rejected += 1
             continue

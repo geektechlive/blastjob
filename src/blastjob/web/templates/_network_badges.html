@@ -1,4 +1,5 @@
-{# The network count and alumni badge, shared by the stage-list rows and /all. #}
+{# The Dream, network count and alumni badges, shared by the stage-list rows and /all. #}
+{% if job.dream_badge is defined and job.dream_badge %}<span class="badge dream" title="a company on your dream list">{{ job.dream_badge }}</span>{% endif %}
 {% if job.warm_count is defined and job.warm_count %}
   <span class="badge fit fit-hi" title="connections at this company">{{ job.warm_count }} in your network</span>
 {% endif %}

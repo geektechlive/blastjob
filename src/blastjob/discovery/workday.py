@@ -278,10 +278,14 @@ class WorkdayAdapter:
         keep_terms: Sequence[str] = (),
         drop_terms: Sequence[str] = (),
         transport: httpx.AsyncBaseTransport | None = None,
+        max_wanted: int = 0,
     ):
         self.company = company
         self.ref = parse_board_token(token)
         self.source = source_for(self.ref)
+        # 0 = no cap. A dream board (discovery/dream_boards.py) sets one, so the number of
+        # description fetches per run is bounded whatever the board's size.
+        self.max_wanted = max_wanted
         self.queries = [q for q in queries if q.strip()] or [""]
         self.timeout_s = timeout_s
         self.max_retries = max_retries
@@ -413,5 +417,7 @@ class WorkdayAdapter:
             wanted = [
                 i for i in items if title_wanted(i["title"], self.keep_terms, self.drop_terms)
             ]
+            if self.max_wanted:
+                wanted = wanted[: self.max_wanted]
             sem = asyncio.Semaphore(DETAIL_CONCURRENCY)
             return list(await asyncio.gather(*(self._one(client, sem, i) for i in wanted)))

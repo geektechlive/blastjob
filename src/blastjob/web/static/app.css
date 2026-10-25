@@ -135,6 +135,7 @@ main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
 .badge.comp-unknown { color: var(--ink-dim); border-color: var(--line); }
 .badge.geo { color: var(--ink); }
 .badge.src { color: var(--ink-dim); }
+.badge.dream { color: var(--amber); border-color: var(--amber); font-weight: 700; }
 
 .kept-badge { color: var(--lime); font-weight: 700; font-size: 0.8rem; }
 .archived-badge { color: var(--ink-dim); font-size: 0.8rem; }

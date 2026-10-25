@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from blastjob.core.target_store import BASIS_LABELS, EVENT_LABELS
+from blastjob.daily_dream import MAX_DREAM_JOBS, rendered_dream_jobs
 from blastjob.llm.cost import describe_cost
 from blastjob.web.apply_link import ApplyLink
 
@@ -139,6 +140,7 @@ def build_digest(
     notes: Mapping[str, str] | None = None,
     target_news: Sequence[TargetNewsItem] = (),
     target_failed: int = 0,
+    dream_jobs: Sequence[sqlite3.Row] = (),
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
@@ -147,7 +149,9 @@ def build_digest(
     closed = closed_postings or []
     replied = replies or []
     noted = notes or {}
-    quiet = not (jobs or errors or followups or heartbeat or closed or replied or noted)
+    quiet = not (
+        jobs or dream_jobs or errors or followups or heartbeat or closed or replied or noted
+    )
     if quiet and not (target_news or target_failed):
         return ""
     n = len(jobs)
@@ -166,6 +170,9 @@ def build_digest(
         # unlike "/" (surfaced only) or "/queue" (queued only), either of which
         # can miss part of what got left out of the digest.
         lines.append(f"…and {n - MAX_DIGEST_JOBS} more in the cockpit: <{base_url}/all>")
+    if dream_jobs:
+        lines.append("")
+        lines += format_dream_block(list(dream_jobs), base_url, links)
     if closed:
         lines.append("")
         lines.append(format_closed_line(closed))
@@ -202,6 +209,20 @@ def build_digest(
         lines.append("")
         lines.append(footer)
     return "\n".join(lines)
+
+
+def format_dream_block(
+    jobs: list[sqlite3.Row], base_url: str, links: Mapping[int, ApplyLink]
+) -> list[str]:
+    """The weekly "Dream list" section (#90): far on-site roles at companies the owner named,
+    best fit first, capped at `MAX_DREAM_JOBS`."""
+    lines = ["**Dream list** (on-site, far from home)"]
+    for row in rendered_dream_jobs(jobs):
+        link = links.get(int(row["id"]))
+        lines.append(format_job_line(row, base_url, url=link.url if link else ""))
+    if len(jobs) > MAX_DREAM_JOBS:
+        lines.append(f"…and {len(jobs) - MAX_DREAM_JOBS} more: <{base_url}/all>")
+    return lines
 
 
 def rendered_target_news(news: Sequence[TargetNewsItem]) -> list[TargetNewsItem]:

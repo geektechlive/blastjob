@@ -622,4 +622,11 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_company_events_key ON company_events(company_key);
         """,
     ),
+    # 59: a far on-site role from a dream-list company that the geo exception let through
+    # (#90, ADR 0056). Recomputed on every matching pass: 1 only while the company is on the
+    # dream tier AND the current geo verdict would otherwise have rejected the role, else 0.
+    (59, "ALTER TABLE jobs ADD COLUMN dream_far INTEGER DEFAULT 0;"),
+    # 60: when the weekly Dream list section carried this role (#90). Stamped per rendered
+    # job, only after the digest was sent. '' = not yet announced there.
+    (60, "ALTER TABLE jobs ADD COLUMN dream_notified_at TEXT DEFAULT '';"),
 ]

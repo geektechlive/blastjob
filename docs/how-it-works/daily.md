@@ -28,12 +28,13 @@ A dry run is not a no-op. `blastjob-daily --dry-run` still takes the backup, sti
 
 The digest is built by `build_digest`. Sections appear only when they have something to say, in this order:
 
-- **New roles.** Jobs from `pending_jobs`: surfaced or queued, active at the source, never announced (`notified_at` empty). A row whose cluster holds a kept or archived member is skipped, because the cockpit shows that cluster in the decided member's stage or hides it. That is how a repost of an application you already made stays quiet.
+- **New roles.** Jobs from `pending_jobs`: surfaced or queued, active at the source, never announced (`notified_at` empty), and not `dream_far` (those wait for the Dream list). A row whose cluster holds a kept or archived member is skipped, because the cockpit shows that cluster in the decided member's stage or hides it. That is how a repost of an application you already made stays quiet.
   - Best score first, except that roles with someone you know at the company (marked "you know someone here") go ahead of higher-scoring cold roles. The sort is stable, so each group keeps its score order. See [your network](network.md#alumni-signal).
   - At most 25 are shown (`MAX_DIGEST_JOBS`). If there are more, a line points at the cockpit's All page.
   - Each line has the score, company, title, "(review)" for queued roles, location or "Remote", a comp badge, the posting link, then a cockpit link. The comp badge never calls a figure posted unless the employer posted it: it reads "posted", "inferred (from the posting)", "est." or "unverified", and "comp n/a" when there is none.
   - The posting link comes before the cockpit link because the digest is usually read on a phone, where the cockpit's `127.0.0.1` address is the wrong machine. The posting link is the cluster's best apply link (`apply_link.apply_links_for`; see [same role](same-role.md#one-application-per-role)), else the row's own URL.
   - The cockpit links use the base from `cockpit_base`: `web.public_url` when set, else `http://127.0.0.1:<web.port>`. `web.public_url` is checked against the same Host rule the cockpit enforces (loopback or a private IP address, never a DNS name); see [LAN access](../operations/lan-access.md#digest-links-on-a-phone).
+- **Dream list.** On the search-firm weekday only (see [below](#dream-list)): far on-site roles at dream companies.
 - **Closed postings.** One line naming up to five kept jobs whose posting closed this run.
 - **Replies.** One entry per surfaced reply: who, about what, a one-line snippet and a cockpit link.
 - **Target news.** Events found for your target companies since the last digest (see [below](#target-news)).
@@ -49,7 +50,13 @@ The digest is built by `build_digest`. Sections appear only when they have somet
 
 The block is built from `company_events` rows that are not dismissed and have `notified_at` empty. Each entry shows the company, the event type, "published <date>", the source basis and host, the verified sentence (stripped of links, markup and mention characters, cut to 160 characters), how many people you know there and a cockpit link. At most 8 are shown (`MAX_TARGET_NEWS`), with an "and N more" line. Delivery follows the job rule: each event is stamped `notified_at` only for the ones rendered, and only after the send succeeded, so a failed send or the overflow leads the next digest. When scans failed in this run, one line says "N target scans failed" rather than nothing. A day with only target news is not a quiet day.
 
-**Quiet days send nothing.** With no roles, errors, follow-ups, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
+### Dream list
+
+`daily_dream.weekly_jobs` returns the roles for the section, and none on any other weekday (`due_today` with `discovery.search_firm_weekday`; there is no setting of its own). `pending_dream_jobs` applies the same rules as `pending_jobs` (active at the source, `review_state` surfaced or queued, no kept or archived cluster member), plus `dream_far=1`, the same exception rule as matching (`DreamRule`: current dream membership, a configured board with an identity basis), a score at or above `alignment_threshold` and `dream_notified_at` empty. A role that was archived, went stale, was turned away by the comp gate or has a decided cluster is therefore never announced. Best score first, at most 15 (`MAX_DREAM_JOBS`) with an "and N more" line.
+
+Delivery state is `jobs.dream_notified_at` (migration 60), separate from `notified_at`. The renderer's slice (`rendered_dream_jobs`) is exactly what gets stamped, and only after `send` returned, so a failed send stamps nothing and overflow leads the next week. The send is one call to the sender; if Discord accepts early chunks of a long message and fails a later one, the whole section is re-sent, so a duplicate is possible and accepted, as for the job digest. A dry run stamps nothing. A day with only a Dream list is not a quiet day. Dream roles that are remote or near are not `dream_far` and stay in the daily list with their badge.
+
+**Quiet days send nothing.** With no roles, Dream list, errors, follow-ups, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
 
 ## Delivery
 

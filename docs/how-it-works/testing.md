@@ -17,6 +17,7 @@ The guards, and the section that explains each:
 | `_no_real_page_fetches` | an employer page fetch or a Jina page search | [Page-fetch guard](#page-fetch-guard) |
 | `_no_real_packet_research` | Jina-backed packet research | [Packet-research guard](#packet-research-guard) |
 | `_no_real_target_watch` | Jina-backed target news scans | [Target-watch guard](#target-watch-guard) |
+| `_no_real_board_finder` | the dream-list board search | [Board-finder guard](#board-finder-guard) |
 | `isolated_secrets` | the real secrets file | [Secrets guard](#secrets-guard) |
 | `_no_real_config` | the real legacy config and data dir | [Config and data-dir guard](#config-and-data-dir-guard) |
 | `_no_real_output_dir` | the real packet folder | [Output-folder guard](#output-folder-guard) |
@@ -58,6 +59,10 @@ This guard came with the change that made packet research read fetched pages (#5
 ## Target-watch guard
 
 No test may run the target news watch against the network. `core/target_watch.py` searches and reads pages through Jina when a key is set. `_no_real_target_watch` makes its `_jina_key` return an empty string and replaces `_search` and `_read` with functions that call `pytest.fail`, for the same reason as the packet-research guard. To test a scan, inject `search=` and `read=` fakes and patch the module's own `make_stream`, which `_STREAM_BINDINGS` also guards.
+
+## Board-finder guard
+
+No test may search for a company's job board on the network. The dream-list board finder (`discovery/board_finder.py`) reaches ATS APIs and Jina through five leaf functions: `resolve.probe_company`, `resolve.probe_workday`, `resolve.probe_dayforce`, and the finder's own `fetch_samples` and `read_careers_page`. `_no_real_board_finder` replaces each with a function that calls `pytest.fail`, so a fail-soft `except Exception` cannot hide a leak. The finder and the route look the leaves up through their modules at call time, so the patch covers every path in. To fake a search, `monkeypatch.setattr` the same names. To test the real Dayforce probe through the route, put `resolve.probe_dayforce` back and fake `resolve.httpx.get` and `resolve.count_postings` (`tests/test_dream_board_routes.py`).
 
 ## Secrets guard
 

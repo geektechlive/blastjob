@@ -304,3 +304,26 @@ def _assess_place(
     # Home-state-ish but unplaceable, geo not configured, or no usable
     # location signal: don't guess -- review it.
     return GeoStatus.UNKNOWN, None, True, False
+
+
+GeoVerdict = tuple[GeoStatus, float | None, bool, bool]
+
+
+def _is_far(verdict: GeoVerdict) -> bool:
+    """The location gate would turn this role away: a concrete other place, or beyond the
+    extended radius. An unplaceable location is never far (it goes to review)."""
+    status, _dist, passes, _conditional = verdict
+    return not passes and status != GeoStatus.UNKNOWN
+
+
+def is_geo_reject(verdict: GeoVerdict, *, dream: bool) -> bool:
+    """The ONE rule for "rejected on location", shared by matching and /funnel so the funnel
+    never says rejected for a role the pipeline kept. A company on the dream list is never
+    rejected on location alone (#90, ADR 0056); every other gate still applies."""
+    return _is_far(verdict) and not dream
+
+
+def is_dream_bypass(verdict: GeoVerdict, *, dream: bool) -> bool:
+    """True when the dream exception is what keeps this role: it is far, and its company is
+    on the dream list. This is what `jobs.dream_far` stores."""
+    return _is_far(verdict) and dream

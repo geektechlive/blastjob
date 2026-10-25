@@ -241,8 +241,10 @@ class DayforceAdapter:
         keep_terms: Sequence[str] = (),
         drop_terms: Sequence[str] = (),
         transport: httpx.AsyncBaseTransport | None = None,
+        max_wanted: int = 0,
     ):
         self.company = company
+        self.max_wanted = max_wanted  # 0 = no cap (a dream board sets one)
         self.ref = parse_board_token(token)
         self.source = source_for(self.ref)
         # Accepted for parity with the other board adapters; see module docstring
@@ -329,4 +331,6 @@ class DayforceAdapter:
             len(items),
             len(wanted),
         )
+        if self.max_wanted:
+            wanted = wanted[: self.max_wanted]
         return [parse_posting(self.company, self.ref, i) for i in wanted]

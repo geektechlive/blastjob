@@ -193,6 +193,14 @@ def get_target(conn: sqlite3.Connection, key: str) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM target_companies WHERE company_key=?", (key,)).fetchone()
 
 
+def dream_keys(conn: sqlite3.Connection) -> frozenset[str]:
+    """The `company_key` of every company currently on the dream tier (#90). Read once per
+    pass (matching, the funnel, a list render); membership is always current, never stored on
+    a job."""
+    rows = conn.execute("SELECT company_key FROM target_companies WHERE tier='dream'").fetchall()
+    return frozenset(str(r["company_key"]) for r in rows)
+
+
 def list_targets(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT * FROM target_companies ORDER BY company COLLATE NOCASE").fetchall()
 
