@@ -70,7 +70,7 @@ to a "never produced" check.</p>
   <tr><th>Firm</th><th class="num">Postings</th><th>Last seen</th><th>State</th></tr>
   {% for c in silent %}
   <tr><td>{{ c.firm }}</td><td class="num">{{ c.postings }}</td>
-      <td class="num">{{ c.last or '&mdash;' | safe }}</td>
+      <td class="num">{% if c.last %}{{ c.last }}{% else %}&mdash;{% endif %}</td>
       <td class="dim">{{ c.state }}</td></tr>
   {% endfor %}
 </table>

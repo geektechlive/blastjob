@@ -8,6 +8,7 @@ web layer, not here.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import uuid
@@ -21,6 +22,8 @@ from blastjob.db.schema import MIGRATIONS
 from blastjob.discovery.textutil import html_to_text
 from blastjob.models.config import BlastJobConfig
 from blastjob.models.job import BuildState
+
+log = logging.getLogger(__name__)
 
 BUSY_TIMEOUT_MS = 5000
 DEFAULT_LEASE_MINUTES = 20
@@ -227,13 +230,17 @@ def upsert_job(
     ).fetchone()
 
     if existing is None:
+        known = {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}
+        unknown = sorted(k for k in fields if k not in known)
+        if unknown:
+            log.warning("upsert_job dropped unknown jobs columns: %s", unknown)
         cols = {
             "source": source,
             "external_id": external_id,
             "first_seen": now,
             "last_seen": now,
             "source_state": "active",
-            **fields,
+            **{k: v for k, v in fields.items() if k in known},
         }
         placeholders = ", ".join("?" for _ in cols)
         col_names = ", ".join(cols)
