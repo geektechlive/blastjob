@@ -67,7 +67,7 @@ All untrusted job text renders through Jinja autoescaping and is fenced in promp
 
 ## Navigation
 
-`app.STAGE_NAV` is the one list of pipeline stages. It is derived from `stages.STAGES`, `stages.LABELS` and `stages.ROUTES`, and `web/templates/base.html` renders it as the nav bar. Everything else sits under a **More** menu: Matches, All, Compare, Pipeline, Funnel, Packets, Companies, Network, Work history, Ingest and Settings.
+`app.STAGE_NAV` is the one list of pipeline stages. It is derived from `stages.STAGES`, `stages.LABELS` and `stages.ROUTES`, and `web/templates/base.html` renders it as the nav bar. Everything else sits under a **More** menu: Matches, All, Compare, Pipeline, Funnel, Packets, Companies, Network, Work history, Ingest, Settings and Running now. While the scheduled run is paused the nav also shows a "Scheduled runs paused" tag linking to the Running now page.
 
 `app.render` injects the stage counts (from the `nav_counts` callable on `Deps`) into every full-page template that did not pass its own. Partials, whose template names start with an underscore, are skipped. It also sets `first_run` for full pages: until the candidate profile is configured (`is_configured` on the candidate model in `models/config.py`, which needs `candidate.target_titles`), the cockpit shows a banner linking to `/settings`.
 
@@ -79,6 +79,10 @@ There are two ways to follow a run:
 
 - **Build panels** (tailor, refine, prep, outreach, research, follow-up, ingest) stream over server-sent events from `/builds/{run_id}/events`. The browser sends `Last-Event-ID` on reconnect and the stream resumes from there, so a refresh resumes the panel instead of restarting the work. If the run is gone (the cockpit restarted, or it aged out) the stream answers with one error frame that says so, which closes the panel.
 - **The global banner** polls instead. `web/templates/base.html` loads `/runs/active` on every page and re-polls `/runs/{run_id}` while a run is going, so a discovery or matching run started on one page stays visible after you navigate. `app.BANNER_RUNS` lists the run names the banner tracks: discovery, matching and the scoped `score-job` run.
+
+**Model slots and queued runs.** Every run's task body holds one slot of `limits.cockpit_concurrency` (default 3, 1 to 8) while it works, and the people search holds one inline. A run waiting for a slot stays `running` (single-flight, the banner and the event stream all key off that) but shows as "queued" in the banner and on Running now. The gate is kept per event loop and per size, so editing the setting takes effect for the next run. Each run sets its origin to `clicked` and names itself as the caller in the call ledger.
+
+**Stop.** A `Run` keeps its task. Stopping cancels the task, so the gateway's reap kills the model child ([llm](llm.md#the-supervised-cli-child)); `_driver` then marks the run `cancelled`, stamps `finished_at`, emits a terminal "Stopped." event and re-raises. The Running now page shows "stopping for 0m 12s" until the run unwinds. If the work swallows the cancellation and finishes normally, the run is recorded as "done (stop arrived too late)", never plain done. A second Stop while the first unwinds does nothing, because a second cancel would interrupt the reap. A run cancelled while queued never takes a slot it did not hold.
 
 `runtime.Run.events` is capped at `runtime.MAX_EVENTS_PER_RUN`, dropping the oldest first. One event is appended per streamed chunk, and the cockpit is a service that never restarts on its own, so the log would otherwise grow without bound. Event ids keep increasing, so replay still works: a consumer asking for an older id gets everything still held. Finished runs are evicted after `runtime.RUN_RETENTION_SECONDS`, and `runtime.MAX_RUNS` caps the total.
 
@@ -104,6 +108,17 @@ Only a *running* run holds its key. With no key there is no deduplication. Tailo
 The scoped `score-job` run (`manual_job.MANUAL_SCORE_RUN`: scoring one manual job, a paste re-score, the employer-description lookup) is deliberately not in `SINGLE_FLIGHT`, so it still runs while a full matching pass is in flight. It is in `BANNER_RUNS`, so the existing banner shows it and there is no second progress system. A response that starts such a run sends `HX-Trigger: refresh-run-status`; `web/templates/base.html`'s `#run-status` listens for it and re-reads `/runs/active`, which makes the run appear without a page reload.
 
 There is deliberately no global cap on concurrent LLM calls. It was considered and dropped (#24).
+
+## Running now
+
+`/runs` (More, Running now; `web/routes_runs.py`) is the control view. It refreshes every few seconds and works on an iPad like any other page. It shows:
+
+- **Pause scheduled runs.** A button that creates the `PAUSE` file in the data folder (`core/pause.py`), the same file `touch` makes, and a Resume button that deletes it. While paused the page and the nav say so, with the time it was paused. A paused daily run exits at once and sends nothing ([kill switch](daily.md#kill-switch)). Pause does not stop a run already going; Stop does. If the `PAUSE` file cannot be made (a symlink in its place), the button answers with a clear error.
+- **In progress.** Every run in the registry that is still going, with how long it has been going and a **Stop** button. Runs waiting for a model slot are listed apart as queued. Stop ends a run started here; it cannot stop the daily run, which is a separate process.
+- **Model calls today.** Per origin (scheduled, clicked): calls so far, the daily cap, known spend and refusals. Below it, a by-caller table. A call whose cost was not reported is counted as unknown and never shown as $0.
+- **Abandoned calls.** Calls whose process ended before they finished ([llm](llm.md#the-call-ledger-and-budget)). They may have spent, so they still count against the cap, and their cost is unknown.
+
+The routes are `GET /runs`, `GET /runs/panel` (the refresh), `POST /runs/pause`, `POST /runs/resume` and `POST /runs/{run_id}/stop`. Every POST goes through `require_csrf`, and the Origin and Host checks cover them like any other write. The fixed paths are registered before the `/runs/{run_id}` status route so they are not read as run ids.
 
 ## Pipeline stages
 

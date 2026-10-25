@@ -17,6 +17,7 @@ SDK_PACKAGES = {"anthropic", "openai"}
 PROCESS_ALLOWLIST = {
     "llm/gateway.py": "launches the supervised model CLI",
     "llm/supervise.py": "the supervisor starts the model CLI's child",
+    "llm/ledger.py": "runs `ps -o lstart=` to read a process start time, no model call",
     "setup_doctor.py": "runs `claude --version`, no model call",
     "web/routes_packets.py": "runs `open <folder>` to reveal a packet in Finder",
 }

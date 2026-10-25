@@ -386,7 +386,7 @@ async def _within(deadline: float, limit: float, awaitable: Awaitable[_T]) -> _T
     try:
         return await asyncio.wait_for(awaitable, remaining)
     except TimeoutError:
-        raise CLIError(f"claude -p timed out after {limit:g}s") from None
+        raise gateway.CallTimeout(f"claude -p timed out after {limit:g}s") from None
 
 
 async def _run_cli(args: list[str], prompt: str, usage_box: _CLIUsageBox) -> AsyncIterator[str]:
@@ -510,11 +510,11 @@ async def make_stream(
 
     per_call = CLI_TIMEOUT_SECONDS if provider == "claude-cli" else gateway.STREAM_TIMEOUT_SECONDS
     limit = gateway.call_limit(per_call)  # DeadlineReached: nothing is started
-    reservation = gateway.reserve("make_stream")
+    reservation = await gateway.reserve_async("make_stream")
     try:
         inner = await _open_stream(provider, cfg, system, messages, max_tokens)
-    except BaseException:
-        gateway.finish(reservation, "error")
+    except BaseException as e:
+        gateway.finish(reservation, gateway.outcome_for(e))
         raise
     return gateway.BoundedStream(inner, limit, reservation)
 
@@ -546,7 +546,7 @@ async def _anthropic_research(
     from blastjob.llm.prompts import RESEARCH_PROMPT
 
     limit = gateway.call_limit(gateway.STREAM_TIMEOUT_SECONDS)
-    reservation = gateway.reserve("make_research_call")
+    reservation = await gateway.reserve_async("make_research_call")
     client = None
     try:
         client = gateway.anthropic_client(os.environ.get(cfg.llm.anthropic_api_key_env))
@@ -572,13 +572,13 @@ async def _anthropic_research(
         gateway.finish(reservation, "error")
         log.warning("company research via the Anthropic API failed for %s: %s", company, e)
         return ""
-    except BaseException:
-        gateway.finish(reservation, "error")
+    except BaseException as e:
+        gateway.finish(reservation, gateway.outcome_for(e))
         raise
     finally:
         if client is not None:
             await client.close()
-    gateway.finish(reservation, "ok")
+    gateway.finish(reservation, "ok", response.usage)
     cost_tracker.record(cost_from_usage(response.usage, cfg.pricing))
     parts = [b.text for b in response.content if hasattr(b, "text") and b.text]
     return "\n\n".join(parts) or "No research available."

@@ -151,3 +151,43 @@ def test_a_clicked_pass_that_hits_the_limit_says_so(client, cfg, started, monkey
     asyncio.run(started[0][1](run))
 
     assert any("Stopped at the 7-minute limit" in e.data for e in run.events)
+
+
+@pytest.mark.parametrize(
+    ("path", "target"),
+    [("/run/matching", "matching"), ("/run/discovery", "discovery")],
+)
+def test_a_clicked_pass_that_hits_the_call_cap_names_the_cap_not_the_time_limit(
+    client, cfg, conn, started, monkeypatch, path, target
+):
+    import datetime as dt
+
+    from blastjob.discovery.pipeline import DiscoveryResult
+    from blastjob.llm import gateway
+
+    cfg.limits.clicked_calls_per_day = 1
+    stamp = dt.datetime.now().isoformat(timespec="seconds")
+    conn.execute(
+        "INSERT INTO model_calls (started_at, ended_at, caller, origin, outcome) "
+        "VALUES (?, ?, 'earlier', 'clicked', 'ok')",
+        (stamp, stamp),
+    )
+    conn.commit()
+
+    async def over_the_cap(_cfg, _conn, _cost, **kw):
+        with pytest.raises(gateway.BudgetExceeded):  # the scorer swallows it, as here
+            gateway.reserve("scoring")
+        return MatchResult()
+
+    async def fake_discovery(_cfg, _conn, adapters=None):
+        return DiscoveryResult()
+
+    monkeypatch.setattr("blastjob.matching.pipeline.run_matching", over_the_cap)
+    monkeypatch.setattr("blastjob.discovery.pipeline.run_discovery", fake_discovery)
+    client.post(path, headers=HEADERS)
+    run = Run(id="x", name=target)
+    asyncio.run(started[0][1](run))
+
+    text = " ".join(e.data for e in run.events)
+    assert "Stopped at the daily limit of 1 clicked model call" in text
+    assert "minute limit" not in text

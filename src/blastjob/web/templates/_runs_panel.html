@@ -1,0 +1,94 @@
+<div id="runs-panel" class="runs-panel" hx-get="/runs/panel" hx-trigger="every 4s" hx-swap="outerHTML">
+  <section class="runs-section">
+    <h2 class="runs-head">Pause scheduled runs</h2>
+    {% if paused %}
+      <p><b class="runs-paused">Paused{% if paused_since %} since {{ paused_since }}{% endif %}.</b>
+      The scheduled daily run exits without work and sends nothing. A run already going is not stopped.</p>
+      <button hx-post="/runs/resume" hx-target="#runs-panel" hx-swap="outerHTML">Resume scheduled runs</button>
+    {% else %}
+      <p>The scheduled daily run is on. Pausing does not stop a run already going; use Stop below for that.</p>
+      <button hx-post="/runs/pause" hx-target="#runs-panel" hx-swap="outerHTML">Pause scheduled runs</button>
+    {% endif %}
+  </section>
+
+  <section class="runs-section">
+    <h2 class="runs-head">In progress</h2>
+    {% if running %}
+      <ul class="runs-list">
+        {% for r in running %}
+        <li>
+          <span class="runs-name">{{ r.name }}{% if r.key %} <span class="dim">({{ r.key }})</span>{% endif %}</span>
+          <span class="dim">running for {{ r.elapsed }}</span>
+          {% if r.stopping %}<span class="dim">stopping for {{ r.stopping_for }}&hellip; (waiting for the run to unwind)</span>{% else %}
+          <button class="btn-archive" hx-post="/runs/{{ r.id }}/stop" hx-target="#runs-panel" hx-swap="outerHTML">Stop</button>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="dim">Nothing is running.</p>
+    {% endif %}
+    {% if queued %}
+      <h3 class="runs-sub">Queued</h3>
+      <ul class="runs-list">
+        {% for r in queued %}
+        <li>
+          <span class="runs-name">{{ r.name }}{% if r.key %} <span class="dim">({{ r.key }})</span>{% endif %}</span>
+          <span class="dim">queued for {{ r.elapsed }}, waiting for a free model slot</span>
+          {% if r.stopping %}<span class="dim">stopping for {{ r.stopping_for }}&hellip;</span>{% else %}
+          <button class="btn-archive" hx-post="/runs/{{ r.id }}/stop" hx-target="#runs-panel" hx-swap="outerHTML">Stop</button>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+
+  <section class="runs-section">
+    <h2 class="runs-head">Model calls today</h2>
+    <div class="table-wrap">
+    <table class="all-table">
+      <tr><th>Origin</th><th>Calls</th><th>Daily cap</th><th>Known spend</th><th>Refused</th></tr>
+      {% for o in origins %}
+      <tr>
+        <td>{{ o.label }}</td>
+        <td>{{ o.calls }}</td>
+        <td>{{ o.cap }}</td>
+        <td>{{ o.spend }}</td>
+        <td>{{ o.refused }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+    {% if groups %}
+    <h3 class="runs-sub">By caller</h3>
+    <div class="table-wrap">
+    <table class="all-table">
+      <tr><th>Caller</th><th>Origin</th><th>Calls</th><th>Known spend</th><th>Unknown cost</th></tr>
+      {% for g in groups %}
+      <tr>
+        <td>{{ g.caller }}</td>
+        <td>{{ g.origin }}</td>
+        <td>{{ g.calls }}</td>
+        <td>{% if g.unknown_cost_calls and not g.known_cost %}unknown{% else %}${{ '%.4f' % g.known_cost }}{% endif %}</td>
+        <td>{{ g.unknown_cost_calls }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    </div>
+    {% endif %}
+    <p class="dim">A call whose usage was not reported counts as a call with unknown cost, never as $0.</p>
+  </section>
+
+  {% if abandoned %}
+  <section class="runs-section">
+    <h2 class="runs-head">Abandoned calls</h2>
+    <p class="dim">The process that made these calls ended before they finished. They may have spent, so they still count against the cap, and their cost is unknown.</p>
+    <ul class="runs-list">
+      {% for a in abandoned %}
+      <li>{{ a.started_at }} &middot; {{ a.caller }} &middot; {{ a.origin }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</div>

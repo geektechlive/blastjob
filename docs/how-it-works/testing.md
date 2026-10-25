@@ -14,6 +14,7 @@ The guards, and the section that explains each:
 |---|---|---|
 | `_no_real_network` | any non-loopback socket or DNS lookup | [Network guard](#network-guard) |
 | `_no_real_llm_calls` | a real LLM provider | [LLM guard](#llm-guard) |
+| `_isolated_call_ledger` | the call ledger writing to the real data dir, or one test's ledger leaking into the next | [LLM guard](#llm-guard) |
 | `_no_real_page_fetches` | an employer page fetch or a Jina page search | [Page-fetch guard](#page-fetch-guard) |
 | `_no_real_packet_research` | Jina-backed packet research | [Packet-research guard](#packet-research-guard) |
 | `_no_real_target_watch` | Jina-backed target news scans | [Target-watch guard](#target-watch-guard) |
@@ -43,6 +44,8 @@ No test may reach a real LLM provider. Each module that calls the model does `fr
 The leak this prevents already happened and cost money. `run_build` makes seven provider calls through five modules. A cost test patched only `core/build.py` and `core/scoring.py`, so the research-distillation, coverage-gap and cover-letter-scoring calls went to the live provider on every run. All three callers are fail-soft, so the real call happened, the exception was swallowed and nothing was recorded. The suite was green, and one test run alone failed with an extra cost record carrying real cache tokens and a real dollar cost. It was invisible in the suite and reproducible only by running that one test.
 
 `tests/test_no_real_llm_guard.py` keeps the list honest. It parses `src/` with `ast` and fails if a module binds `make_stream` without being in `_STREAM_BINDINGS`, and also if the list names a module that no longer binds it. It parses rather than greps so a comment that mentions `make_stream` does not count. The same file checks that a blocked call names its module.
+
+The call ledger ([llm](llm.md#the-call-ledger-and-budget)) is module state installed by `config.apply_runtime_settings`. `_isolated_call_ledger` uninstalls it before and after every test, so the default is the no-op state, and wraps the ledger's connection so a test that reaches the real data dir fails by name. A ledger test installs a temp database itself (`ledger.install(path, LimitsConfig(...), PricingConfig())`) and fakes `providers._open_stream`, below `make_stream`, so the real reserve, stream and finish path runs. The cross-process race test spawns children that install the path and limits themselves.
 
 ## Real-subprocess tests
 

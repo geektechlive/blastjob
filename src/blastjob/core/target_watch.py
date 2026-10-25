@@ -412,8 +412,10 @@ async def _scan(
     try:
         reply = await _classify(cfg, company, pages, cost_tracker)
         events = _verified_events(reply, pages, company)
-    except gateway.DeadlineReached:
-        return ScanOutcome(ok=False, status="not run (time limit)", counts=counts, not_run=True)
+    except gateway.CallRefused:
+        return ScanOutcome(
+            ok=False, status=f"not run ({gateway.refusal_label()})", counts=counts, not_run=True
+        )
     except Exception as e:  # noqa: BLE001 - an unreadable answer is a failed scan, not "no news"
         log.warning("target watch classification failed: %s", type(e).__name__)
         return _failed(f"model step ({type(e).__name__})", counts)

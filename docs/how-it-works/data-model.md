@@ -90,6 +90,7 @@ The schema is `schema.MIGRATIONS`, an ordered list of `(version, sql)` entries a
 | `comp_signals` | 12 | every compensation observation per job | [employer data](employer-data.md) |
 | `daily_runs` | 13 | one row per `blastjob-daily` run | [daily](daily.md) |
 | `daily_runs.stopped_reason`, `daily_runs.stopped_note` | 62, 63 | why a run ended early (`''`, `deadline`, `lock_held` or `budget`), and the digest line saying what is left and what did not run | [daily](daily.md#one-run-at-a-time-and-the-deadline) |
+| `model_calls` | 64 | one row per model call: origin, caller, outcome, tokens and cost (NULL when unknown), and the owning process. The daily call budget counts these rows | [llm](llm.md#the-call-ledger-and-budget) |
 | `jobs.dream_far`, `jobs.dream_notified_at` | 59, 60 | `dream_far`: the dream-list geo exception kept this far on-site role, recomputed every matching pass. `dream_notified_at`: when the weekly Dream list section carried it | [matching](matching.md#the-dream-list-exception), [daily](daily.md#dream-list) |
 | `jobs.app_channel`, `app_channel_via`, `app_channel_at` | 57 | how an application started: cold, referral, recruiter or inbound, NULL = unknown | [web](web.md#stage-moves) |
 | `network_contacts`, `company_follows` | 14 to 25, 56 | your LinkedIn export, and the enrichment results; `recruiter_override` (56) holds your own recruiter label | [network](network.md) |

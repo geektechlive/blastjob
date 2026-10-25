@@ -39,6 +39,8 @@ Target news. Under "Target news", dated news at companies on your [target list](
 
 Dream list. Once a week, on the search-firm weekday (`discovery.search_firm_weekday`, Monday unless you changed it), a "Dream list" section lists roles at your [dream companies](targets.md#dream-companies) that are on-site far from home and scored at or above your threshold, best fit first, in the same two-line form as new roles. A role that is remote or near comes in the daily list. Each role is announced once, at most 15 a week; the rest lead next week's section. A day with only a Dream list still sends.
 
+Model calls. When a digest goes out anyway, its last line says how many model calls the day before made, scheduled and clicked, with an estimated cost. A call whose cost was not reported is counted but left out of the cost, and the line says so. This line never makes a quiet day send. If the daily run reached its call limit, the digest says it stopped there and which steps did not run. The limit is in [settings](../operations/settings-and-secrets.md), and the cockpit's Running now page shows the day's calls ([web](../how-it-works/web.md#running-now)).
+
 Follow-ups due. Under "Follow-ups due", the applied roles that need a nudge, with the reason. See [applying](applying.md#follow-ups).
 
 Source errors and notes. Under "Source errors", a source that failed this run. Under "Notes", things worth knowing, such as a board that returned suspiciously few jobs and so was not used to mark postings stale.

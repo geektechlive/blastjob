@@ -173,7 +173,11 @@ def register(app: FastAPI, deps: Deps) -> None:
                 return HTMLResponse("Not found", status_code=404)
             error = ""
             try:
-                found = await people.find_people(deps.load_config(), job["company"], job["title"])
+                # Inline model call: it takes a cockpit model slot like any run does.
+                async with RUNTIME.slot():
+                    found = await people.find_people(
+                        deps.load_config(), job["company"], job["title"]
+                    )
                 if not found:
                     error = "Search returned no one clearly tied to this company."
                 else:

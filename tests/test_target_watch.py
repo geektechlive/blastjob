@@ -557,12 +557,13 @@ def _state_row(conn, key="acme widgets"):
     return conn.execute("SELECT * FROM target_companies WHERE company_key=?", (key,)).fetchone()
 
 
-async def test_a_scan_refused_by_the_deadline_is_not_run_and_not_failed(monkeypatch, conn):
+@pytest.mark.parametrize("refusal", ["DeadlineReached", "BudgetExceeded"])
+async def test_a_scan_refused_by_the_deadline_is_not_run_and_not_failed(monkeypatch, conn, refusal):
     from blastjob.llm import gateway
 
     _add(conn)
     world = World(monkeypatch)
-    world.llm_error = gateway.DeadlineReached("not starting a model call")
+    world.llm_error = getattr(gateway, refusal)("not starting a model call")
     before = dict(_state_row(conn, company_key("Acme Widgets")))
 
     summary = await _run(world, conn)

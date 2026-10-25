@@ -157,12 +157,75 @@ defined there and re-exported by `providers`.
   `clicked`, so a missing tag is never treated as free.
 - **SDK clients** are built only by `gateway.anthropic_client` and `gateway.openai_client`,
   always with `max_retries=0` (a retry is a second billed call that nobody asked for) and a
-  timeout of `min(SDK_TIMEOUT_SECONDS (300), time left)`. Provider SDK errors become
-  `CLIError`, and each client is closed when its call ends. The timeout is a module constant,
-  not yet a setting. A streamed call's whole lifecycle is capped at `STREAM_TIMEOUT_SECONDS`
-  (900) or the time left, whichever is less.
-- **Hook points.** `gateway.reserve` runs before a provider is contacted and `gateway.finish`
-  once when it ends. Both are no-ops for now; the call ledger and budget attach here.
+  timeout of `min(limits.sdk_timeout_seconds (default 300, 30 to 900), time left)`. Provider
+  SDK errors become `CLIError`, and each client is closed when its call ends. A streamed
+  call's whole lifecycle is capped at `STREAM_TIMEOUT_SECONDS` (900) or the time left,
+  whichever is less.
+- **Ledger and budget.** `gateway.reserve` runs before a provider is contacted and
+  `gateway.finish` once when it ends; see [the call ledger and budget](#the-call-ledger-and-budget).
+- **Refusals.** `DeadlineReached` and `BudgetExceeded` share a base, `CallRefused`, a
+  `CLIError`. Fail-soft callers treat either as "not run", never as a failure of the item. A
+  refusal sets the same `DeadlineState` flag (`hit`, with `reason` `deadline` or `budget`), so
+  the scorer, re-score and target-watch early-outs work for both unchanged. The flag needs a
+  scope to live in: the daily run's deadline scope, or `gateway.refusal_scope()`, which a
+  cockpit run (`_driver`) and a hand-run `blastjob-daily` command open because they have no
+  deadline. Without it the scorer would try every batch after the first refusal.
+  `gateway.refused()` is the name for `deadline_hit()` now that it covers both.
+- **Caller.** `gateway.caller_scope(name)` names what is calling (a cockpit run's name, a daily
+  step such as "daily scoring"); the ledger groups by it. Without a scope it records the
+  gateway call site, `make_stream` or `make_research_call`.
+
+### The call ledger and budget
+
+`llm/ledger.py` keeps one row per model call in `model_calls` (migration 64): when it started
+and ended, the caller, the origin (`scheduled` or `clicked`), the outcome, tokens, cost, and
+the owner process (PID plus the OS start time, so a reused PID is not mistaken for the owner).
+`started` is a call in flight. Closed outcomes are `ok`, `error`, `timeout` and `cancelled`.
+`refused_budget` is a refusal and `abandoned` a call whose owner died.
+
+- **Atomic reservation.** `gateway.reserve` opens `BEGIN IMMEDIATE`, counts today's (local date)
+  chargeable rows for the call's origin, inserts the `started` row and commits. Only then is
+  the provider contacted. SQLite's write lock serialises two processes racing for the last
+  slot, so exactly one starts (`tests/test_call_ledger.py` races six processes at cap minus
+  one). Everything except `refused_budget` counts, and `abandoned` counts because it may have
+  spent. Over the cap the refusal is written as a `refused_budget` row and
+  `BudgetExceeded` is raised. Refusal rows are deduped to one per origin and caller per local
+  day, so a retry loop cannot bloat the table (the page counts distinct refused callers). If the ledger itself cannot be opened or written, the call is
+  refused with a `CLIError` ("model call ledger unavailable"): an unmeasured call is never
+  waved through. The reservation uses its own connection and waits for SQLite's write lock (up
+  to the 5 s busy timeout), so code that awaits a model call must not hold an uncommitted write
+  on its own connection. The matching, re-score, employer-description and target steps commit
+  before they call the model; a new step must too, or its calls will be refused as
+  "ledger unavailable".
+- **Caps.** `limits.scheduled_calls_per_day` (default 150) for the daily run and every
+  hand-run `blastjob-daily` command, `limits.clicked_calls_per_day` (default 300) for
+  everything started in the cockpit. Each is 1 to 5000. A call with no origin tag is
+  `clicked`. About four times a busy day's measured calls, so the cap catches a runaway, not
+  normal use.
+- **Off the loop.** Async callers (`make_stream`, the research call) reserve through
+  `gateway.reserve_async`, which runs the write in a worker thread; a caller cancelled mid-reserve
+  has its row closed as `cancelled`. `finish` stays a short synchronous write. A
+  `BoundedStream` that is never entered, or dropped mid-way, closes its row as `abandoned` when
+  it is garbage collected.
+- **Close.** `gateway.finish` fills in the tokens and the cost from the provider's usage
+  object. When usage is not reported (the CLI never sent its `result` line, a call that
+  failed midway), the tokens and cost stay NULL and `cost_known` is 0: unknown, never $0.
+  Only the first `finish` changes a row.
+- **Abandoned rows.** At the gateway's first use in a process and at cockpit startup, every
+  `started` row whose owner process is gone becomes `abandoned` with unknown cost. A process
+  counts as gone when its PID no longer exists or now has a different OS start time
+  (`ps -o lstart=`, no extra dependency). A row owned by the running process is kept only if its recorded start time matches this
+  process's (a restarted cockpit can be given its old PID). A row with no recorded start time
+  that is over a day old is treated as dead, so it cannot look live forever.
+- **Installed, not passed.** The gateway has no config in hand, so
+  `config.apply_runtime_settings` installs the database path, the limits and the pricing on
+  every config load, the way company aliases reach `company_key`. With nothing installed (the
+  test suite, a tool that never loaded a config) the ledger and the budget are a no-op: no
+  row, no refusal. `tests/conftest.py::_isolated_call_ledger` clears the installed state around
+  every test and fails any test that tries to open the real data dir.
+- **Read side.** `llm/ledger_stats.py` feeds the `/runs` page ([web](web.md#running-now)) and the
+  digest's "Model calls yesterday" line ([daily](daily.md#the-call-budget)). Spend adds up only
+  calls with a known cost; the rest are counted and shown as unknown.
 
 ### The supervised CLI child
 

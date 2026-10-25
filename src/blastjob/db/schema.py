@@ -663,9 +663,35 @@ MIGRATIONS: list[tuple[int, str]] = [
     ),
     # 62: why a daily run stopped early (#95, ADR 0060). '' = ran to the end; 'deadline' = it hit
     # limits.daily_deadline_minutes; 'lock_held' = another run held the run lock, so it did no
-    # work; 'budget' = reserved for the call budget (#96).
+    # work; 'budget' = the daily call budget was reached (#96).
     (62, "ALTER TABLE daily_runs ADD COLUMN stopped_reason TEXT DEFAULT '';"),
     # 63: the digest line for a run that ended early (#95): the limit, what is left, and the
     # steps that did not run. Shown by `blastjob-daily --status`.
     (63, "ALTER TABLE daily_runs ADD COLUMN stopped_note TEXT DEFAULT '';"),
+    # 64: the model-call ledger (#96, ADR 0060). One row per model call, written at reservation
+    # time (outcome 'started') and closed by `finish`. The daily call budget counts these rows,
+    # so the reservation is a BEGIN IMMEDIATE count-then-insert. A NULL token or cost is
+    # unknown, never zero (cost_known 0). owner_pid + owner_started identify the process that
+    # made the call, so a row whose owner died becomes 'abandoned' (it may have spent).
+    (
+        64,
+        """
+        CREATE TABLE IF NOT EXISTS model_calls (
+            id            INTEGER PRIMARY KEY,
+            started_at    TEXT NOT NULL,
+            ended_at      TEXT,
+            caller        TEXT NOT NULL DEFAULT '',
+            origin        TEXT NOT NULL CHECK (origin IN ('scheduled','clicked')),
+            outcome       TEXT NOT NULL DEFAULT 'started' CHECK (outcome IN
+                ('started','ok','error','timeout','cancelled','refused_budget','abandoned')),
+            input_tokens  INTEGER,
+            output_tokens INTEGER,
+            cost_usd      REAL,
+            cost_known    INTEGER NOT NULL DEFAULT 0,
+            owner_pid     INTEGER NOT NULL DEFAULT 0,
+            owner_started TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_model_calls_started ON model_calls(started_at);
+        """,
+    ),
 ]

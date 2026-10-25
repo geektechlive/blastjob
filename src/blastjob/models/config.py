@@ -381,6 +381,12 @@ class NotifyConfig(BaseModel):
 
 DAILY_DEADLINE_MIN_MINUTES = 5
 DAILY_DEADLINE_MAX_MINUTES = 240
+CALLS_PER_DAY_MIN = 1
+CALLS_PER_DAY_MAX = 5000
+CONCURRENCY_MIN = 1
+CONCURRENCY_MAX = 8
+SDK_TIMEOUT_MIN = 30
+SDK_TIMEOUT_MAX = 900
 
 
 class LimitsConfig(BaseModel):
@@ -392,6 +398,16 @@ class LimitsConfig(BaseModel):
     daily_deadline_minutes: int = Field(
         default=45, ge=DAILY_DEADLINE_MIN_MINUTES, le=DAILY_DEADLINE_MAX_MINUTES
     )
+    # Model calls per local day, counted per origin in the call ledger (`model_calls`). The daily
+    # run and hand-run commands are 'scheduled'; everything the owner clicks is 'clicked'. A
+    # call over the cap is refused, not queued (docs/how-it-works/llm.md).
+    scheduled_calls_per_day: int = Field(default=150, ge=CALLS_PER_DAY_MIN, le=CALLS_PER_DAY_MAX)
+    clicked_calls_per_day: int = Field(default=300, ge=CALLS_PER_DAY_MIN, le=CALLS_PER_DAY_MAX)
+    # How many cockpit runs may make model calls at once; the rest show "queued".
+    cockpit_concurrency: int = Field(default=3, ge=CONCURRENCY_MIN, le=CONCURRENCY_MAX)
+    # Per-operation timeout for the Anthropic and OpenAI clients (a call is also bounded by the
+    # run's deadline and the stream ceiling).
+    sdk_timeout_seconds: int = Field(default=300, ge=SDK_TIMEOUT_MIN, le=SDK_TIMEOUT_MAX)
 
 
 class BlastJobConfig(BaseModel):

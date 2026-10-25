@@ -43,11 +43,24 @@ Passes scoped to named jobs by a cockpit click (a pasted description, a manual j
 
 A clicked cockpit full pass (Find and score, Re-score changed, Re-score all) runs under the same `limits.daily_deadline_minutes`, so it can never hold the run lock indefinitely and make the next daily run skip. A clicked pass that hits the limit says so in its log. In the scorer, once the deadline has refused a call there are no more attempts: no retry, no later batch, no per-job fallback, and a refused batch is not counted as a failed one.
 
-**Stopped reasons.** `daily_runs.stopped_reason` is `''` for a run that finished, `deadline`, `lock_held` or `budget` (reserved for the call budget).
+**Stopped reasons.** `daily_runs.stopped_reason` is `''` for a run that finished, `deadline`, `lock_held` or `budget` (the call budget, [below](#the-call-budget)).
 
 - `deadline`: the run is recorded with the reason, never as complete. A cut-off run always sends its digest, even on a day with nothing new, because the owner wants to know when a run was cut off (pinned by a test). The digest leads with "Stopped at the 45-minute limit; up to N jobs left for tomorrow". N counts never-scored jobs and is an upper bound: a job the geo check or the title prefilter will turn away also has no score. When there are none, it says "the remaining steps run tomorrow". After the cutoff the run still does the two cheap, local steps that make no model call: the reply scan (recruiter replies are the top channel) and packet filing, and then the digest. Every model or network step waits for the next run (discovery, employer-description copies, scoring, closure checks, the employer-description lookup, target scans), and the digest line ends "Not run (time limit): ..." naming each one, so a skipped step is never shown as done. `--status` shows the same line (stored in `daily_runs.stopped_note`).
 
 **A refused call is not a failure.** Where the deadline refuses a model call inside a step, the item is "not run": a target scan counts no failure, sets no backoff, keeps its last status and scan time, releases its lease and stays due (`RunSummary.not_run`); a kept-row re-score is not counted failed and is not stamped as attempted, so it keeps its place in the stale-kept rotation (`RescoreCounts.not_run`). Both are named in the "Not run" list. The code is in `daily_steps.py`; `daily.py` keeps the frame (lock, deadline scope, digest). A refused scoring batch is not reported as a failed batch. The jobs left unscored are picked up by the next run, since matching takes only never-scored jobs.
+
+### The call budget
+
+The daily run's model calls are tagged `scheduled` (`run_daily` and every hand-run `blastjob-daily` command set the origin) and counted against `limits.scheduled_calls_per_day` (default 150, 1 to 5000) in the call ledger ([llm](llm.md#the-call-ledger-and-budget)). Each step names itself in the ledger: "daily scoring", "daily employer description", "daily target scans".
+
+When a call is refused for the cap, the run stops like a deadline cut, with `stopped_reason` `budget`:
+
+- The refusal marks the same scope flag the deadline does, and every "not run" rule above applies to it unchanged: a target scan is not a failure, a kept-row re-score is not stamped as attempted, the scorer makes no further attempt, and a refused batch is not a failed batch.
+- Steps that had not started are named in the digest line: "Stopped at the daily limit of 150 scheduled model calls; up to N jobs left for the next run. Not run (daily call limit): scoring, closure checks, ...". `--status` leads with "STOPPED EARLY: the model call budget was reached". It is never shown as a complete run.
+- A budget-stopped run always sends its digest, like a deadline cut, because the owner wants to know.
+- The cap is per local day and shared by every scheduled caller, so a run that starts late in the day after hand-run commands may stop earlier than usual. The next day starts from zero.
+
+**Model calls yesterday.** A digest that is sent anyway ends with one footer line: "Model calls yesterday: N scheduled, M clicked (est. $X)". The cost adds up only calls with a known cost; when a call's cost was not reported it says "est. $X known, N unknown", or "unknown" if none was reported. The line is added after the quiet-day check, so it can never make a quiet day send. A paused run sends nothing, so it carries no line.
 - `lock_held`: nothing runs and nothing is sent, so a skip does not spam; the next run's digest carries everything. It is recorded (`--status` shows it, and the summary line says "daily run skipped") so a skipped morning is not invisible. The next digest that goes out anyway ends with "N earlier runs skipped: another run held the run lock" in its footer; a skip never makes a quiet day send. Skipped runs are left out of the weekly heartbeat totals and out of the funnel page's run list, where a skip would read as a zero-fetch day.
 
 ## Digest contents

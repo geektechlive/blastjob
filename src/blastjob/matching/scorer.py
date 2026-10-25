@@ -571,7 +571,7 @@ async def _score_one_batch(
             parsed = parse_scores(full, valid_ids)
             if parsed:
                 return parsed
-        except gateway.DeadlineReached:
+        except gateway.CallRefused:
             return {}  # refused for the deadline: never retried
         except Exception as e:  # noqa: BLE001 — retry, then hand back to the caller
             log.warning("scoring batch failed for jobs %s: %s", sorted(valid_ids), e)

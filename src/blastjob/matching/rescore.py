@@ -82,7 +82,7 @@ async def rescore_jobs(
     for row in kept:
         try:
             landed = await score_kept(cfg, conn, cost_tracker, row)
-        except gateway.DeadlineReached:
+        except gateway.CallRefused:
             landed = 0
         except Exception:
             log.warning("kept re-score failed for job %s", row["id"], exc_info=True)

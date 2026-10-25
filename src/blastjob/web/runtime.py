@@ -13,12 +13,14 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 from blastjob import logging as applog
 from blastjob.core.run_lock import RunLockHeld
+from blastjob.llm import gateway, ledger
 from blastjob.web import progress as progress_mod
 
 log = logging.getLogger(__name__)
@@ -56,6 +58,10 @@ MAX_RUNS = 200
 # output, not calibrated against anything finer.
 MAX_EVENTS_PER_RUN = 2000
 
+# Cockpit runs that may make model calls at once when no limits are installed
+# (`limits.cockpit_concurrency` otherwise).
+DEFAULT_CONCURRENCY = 3
+
 # After this long, a finished run is evicted even if an SSE consumer is still
 # parked on it. A browser tab left open on a finished run used to pin that run
 # and its whole event log for the life of the process; the waiter is woken by
@@ -88,7 +94,15 @@ class Run:
     id: str
     name: str
     key: str | None = None  # per-(name, key) single flight; None = not deduplicated
-    status: str = "running"  # running | done | failed
+    status: str = "running"  # running | done | failed | cancelled
+    # True while the run waits for a model slot (`limits.cockpit_concurrency`). The status stays
+    # "running": single-flight, the banner and the SSE stream all key off it.
+    queued: bool = False
+    started_at: float = field(default_factory=time.monotonic)
+    task: asyncio.Task[None] | None = None
+    stop_requested: bool = False
+    stop_requested_at: float = 0.0
+    stopped_too_late: bool = False  # Stop was asked for, but the run finished normally
     events: list[Event] = field(default_factory=list)
     result: Any = None
     finished_at: float | None = None  # time.monotonic() when status left "running"
@@ -127,9 +141,54 @@ class Runtime:
         # killing a discovery, matching or tailor job while the UI still says
         # "running". Hold a strong reference until it completes.
         self._tasks: set[asyncio.Task[None]] = set()
+        # The concurrency gate, one per (event loop, size): an `asyncio.Semaphore` binds to the
+        # loop it first waits on, and a settings edit can change the size.
+        self._gate: tuple[asyncio.AbstractEventLoop, int, asyncio.Semaphore] | None = None
 
     def get(self, run_id: str) -> Run | None:
         return self._runs.get(run_id)
+
+    def running_runs(self) -> list[Run]:
+        """Runs still going (running or queued), oldest first, for the /runs page."""
+        return [r for r in self._runs.values() if r.status == "running"]
+
+    def stop(self, run_id: str) -> bool:
+        """Cancel a run's task (the gateway's reap then kills the model child). Idempotent: a
+        second Stop while the first is still unwinding does nothing, because a second
+        `cancel()` would interrupt the reap's waits. False when there is nothing to stop."""
+        run = self._runs.get(run_id)
+        if run is None or run.status != "running" or run.task is None:
+            return False
+        if not run.stop_requested:
+            run.stop_requested = True
+            run.stop_requested_at = time.monotonic()
+            run.task.cancel()
+        return True
+
+    def _semaphore(self) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        inst = ledger.installed()
+        size = inst.limits.cockpit_concurrency if inst is not None else DEFAULT_CONCURRENCY
+        if self._gate is None or self._gate[0] is not loop or self._gate[1] != size:
+            self._gate = (loop, size, asyncio.Semaphore(size))
+        return self._gate[2]
+
+    @asynccontextmanager
+    async def slot(self, run: Run | None = None) -> AsyncIterator[None]:
+        """Hold one model slot for the block. A caller that has to wait is shown as queued; a
+        run cancelled while it waits never releases a slot it did not hold."""
+        sem = self._semaphore()
+        if run is not None and sem.locked():
+            run.queued = True
+            run.emit("log", "Queued: waiting for a free model slot.")
+        try:
+            async with sem:
+                if run is not None:
+                    run.queued = False
+                yield
+        finally:
+            if run is not None:
+                run.queued = False
 
     def active(self, names: tuple[str, ...], recent_seconds: float = 300.0) -> Run | None:
         """The run the global status banner should show: the newest *running*
@@ -233,10 +292,25 @@ class Runtime:
 
         async def _driver() -> None:
             try:
-                run.result = await work(run)
+                async with self.slot(run):
+                    with (
+                        gateway.origin_scope("clicked"),
+                        gateway.caller_scope(run.name),
+                        gateway.refusal_scope(),
+                    ):
+                        run.result = await work(run)
                 run.status = "done"
                 run.finished_at = time.monotonic()
+                if run.stop_requested:
+                    run.stopped_too_late = True
+                    run.emit("log", "Stop arrived too late: the run had already finished.")
                 run.emit("done", "")
+            except asyncio.CancelledError:
+                # Stop (or shutdown): say so honestly, then let the cancellation continue.
+                run.status = "cancelled"
+                run.finished_at = time.monotonic()
+                run.emit("error", "Stopped.")
+                raise
             except RunLockHeld as e:
                 # Not a fault: another run holds the lock. Say so plainly, no class name.
                 log.info("run %s refused: %s", run.name, e)
@@ -250,8 +324,18 @@ class Runtime:
                 run.emit("error", applog.redact(f"{type(e).__name__}: {e}"))
 
         task = asyncio.create_task(_driver())
+        run.task = task
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+        def _cancelled_before_it_began(t: asyncio.Task[None]) -> None:
+            # A task cancelled before its first step never enters `_driver`'s try block.
+            if t.cancelled() and run.status == "running":
+                run.status = "cancelled"
+                run.finished_at = time.monotonic()
+                run.emit("error", "Stopped.")
+
+        task.add_done_callback(_cancelled_before_it_began)
         return run, True
 
     async def stream(self, run_id: str, last_id: int = 0):

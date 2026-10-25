@@ -18,6 +18,7 @@
         <a href="{{ href }}" class="stage-tab{% if view is defined and view == key %} active{% endif %}"
            {% if view is defined and view == key %}aria-current="page"{% endif %}>{{ label }}{% if counts is defined and counts and key in counts %} <b>{{ counts[key] }}</b>{% endif %}</a>
       {% endfor %}
+      {% if paused is defined and paused %}<a class="pause-flag" href="/runs" title="The scheduled daily run is paused{% if paused_since %} since {{ paused_since }}{% endif %}">Scheduled runs paused</a>{% endif %}
       <details class="more-menu">
         <summary>More &#9662;</summary>
         <div class="more-panel">
@@ -28,7 +29,7 @@
           <div class="more-group"><span class="more-head">Research</span>
             <a href="/companies">Companies</a><a href="/targets">Targets</a><a href="/network">Network</a></div>
           <div class="more-group"><span class="more-head">Setup</span>
-            <a href="/work-history">Work history</a><a href="/work-history/ingest">Ingest</a><a href="/settings">Settings</a></div>
+            <a href="/work-history">Work history</a><a href="/work-history/ingest">Ingest</a><a href="/settings">Settings</a><a href="/runs">Running now</a></div>
         </div>
       </details>
     </nav>

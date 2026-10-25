@@ -4,7 +4,7 @@
      {% endif %}>
   <span class="run-label">
     {{ run.name }}:
-    {% if run.status == 'running' %}running&hellip;{% elif run.status == 'done' %}done{% else %}failed{% endif %}
+    {% if run.status == 'running' %}{% if run.queued %}queued&hellip;{% else %}running&hellip;{% endif %}{% elif run.status == 'done' %}{% if run.stopped_too_late %}done (stop arrived too late){% else %}done{% endif %}{% elif run.status == 'cancelled' %}stopped{% else %}failed{% endif %}
   </span>
   {% set disp = run.display_event() %}
   {% if disp %}

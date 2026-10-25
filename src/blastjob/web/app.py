@@ -25,6 +25,7 @@ from blastjob.core import closure, debrief, filing_lock, page_links, run_lock
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
+from blastjob.daily_budget import clicked_cut_off
 from blastjob.db import client as dbc
 from blastjob.llm import gateway
 from blastjob.llm.cost import CostTracker, describe_cost
@@ -44,6 +45,7 @@ from blastjob.web import (
     routes_network,
     routes_outcomes,
     routes_packets,
+    routes_runs,
     routes_scores,
     routes_settings,
     routes_stages,
@@ -151,12 +153,16 @@ def render(request: Request, name: str, **extra):
     configured = getattr(request.app.state, "profile_configured", None)
     if not name.startswith("_") and configured is not None:
         ctx.setdefault("first_run", not configured())
+    pause_state = getattr(request.app.state, "pause_state", None)
+    if not name.startswith("_") and pause_state is not None:
+        paused_since = pause_state()
+        ctx.setdefault("paused", paused_since is not None)
+        ctx.setdefault("paused_since", paused_since or "")
     return templates.TemplateResponse(request, name, ctx)
 
 
 # A clicked full pass gets the same time limit as the daily run (`limits.daily_deadline_minutes`),
 # so it can never hold the run lock indefinitely and make the daily run skip.
-_CUT_OFF = "Stopped at the {minutes}-minute limit; unscored jobs wait for the next run."
 
 
 def create_app(
@@ -173,6 +179,7 @@ def create_app(
     load_config = _installing_load
 
     app = FastAPI(title="blastjob cockpit")
+    app.router.on_startup.append(routes_runs.reconcile_on_startup(load_config))
     # Outermost: require_csrf's `await request.form()` spools the whole body
     # before any route runs, so an in-route size check can never fire first.
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=MAX_NETWORK_UPLOAD_BYTES)
@@ -198,6 +205,8 @@ def create_app(
     app.state.nav_counts = _nav_counts
     app.state.profile_configured = lambda: load_config().candidate.is_configured()
 
+    app.state.pause_state = routes_runs.pause_state(load_config)
+
     def _radius() -> float:
         return load_config().discovery.commute_radius_miles
 
@@ -215,7 +224,7 @@ def create_app(
         ):
             result = await _discovery_pass(run)
         if state.hit:
-            run.emit("log", _CUT_OFF.format(minutes=minutes))
+            run.emit("log", clicked_cut_off(state, cfg.limits))
         return result
 
     async def _discovery_pass(run: Run):
@@ -285,7 +294,7 @@ def create_app(
                     cfg, c, CostTracker(), on_progress=prog, rescore_all=rescore_all
                 )
             if state.hit:
-                run.emit("log", _CUT_OFF.format(minutes=minutes))
+                run.emit("log", clicked_cut_off(state, cfg.limits))
             run.emit(
                 "log",
                 f"Considered {res.considered}, scored {res.scored} -> surfaced "
@@ -327,6 +336,7 @@ def create_app(
     web_employer_jd.register(app, deps)
     routes_activity.register(app, deps)
     routes_scores.register(app, deps)
+    routes_runs.register(app, deps)
 
     def _packet_role_slug(packet, title: str) -> str | None:
         return vh.packet_role_slug(packet, title)

@@ -363,3 +363,14 @@ table.facts th { color: var(--ink-dim); width: 12rem; font-weight: 500; }
 .app-channel-form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.75rem 0; }
 .app-channel-label { color: var(--ink-dim); text-transform: uppercase; font-size: 0.75rem; }
 .app-channel-current { font-weight: 600; }
+
+/* Running now (/runs) */
+.runs-section { margin-bottom: 1.5rem; }
+.runs-head { font-size: 0.9rem; color: var(--ink); border-bottom: 1px solid var(--line); padding-bottom: 0.25rem; margin: 0 0 0.6rem; }
+.runs-sub { font-size: 0.8rem; color: var(--ink-dim); margin: 0.8rem 0 0.4rem; }
+.runs-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.runs-list li { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+.runs-name { font-weight: 700; }
+.runs-paused { color: var(--amber); }
+.pause-flag { color: var(--amber); font-size: 0.8rem; border: 1px solid var(--amber); padding: 0.1rem 0.5rem; }
+.run-status.run-cancelled { color: var(--ink-dim); }

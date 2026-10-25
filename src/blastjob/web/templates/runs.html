@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Running now &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Running now</h1>
+<p class="dim">What the cockpit is running, what the model has cost today, and the switch that
+holds back the scheduled daily run. Stop ends a run you started here; Pause only keeps the next
+scheduled run from starting.</p>
+{% include "_runs_panel.html" %}
+{% endblock %}

@@ -42,6 +42,8 @@ from blastjob import secrets as secrets_mod
 from blastjob.core import closure, run_lock
 from blastjob.core import target_store as target_store
 from blastjob.core.closure_links import is_authoritative
+from blastjob.core.pause import PAUSE_FILE
+from blastjob.daily_budget import STOPPED_BUDGET, budget_note, yesterday_calls_line
 from blastjob.daily_digest import (  # noqa: F401 -- re-exported: daily.build_digest etc.
     COCKPIT_BASE,
     HEADER,
@@ -77,7 +79,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 HEARTBEAT_WEEKDAY = 0  # Monday
-PAUSE_FILE = "PAUSE"
 
 # `res.errors` keys that mean the pipeline itself threw (as opposed to a single
 # adapter failing, which is already isolated and reported per-source). --status
@@ -256,7 +257,7 @@ def week_totals(conn: sqlite3.Connection, today: dt.date) -> dict:
     return dict(row)
 
 
-STOPPED_DEADLINE = "deadline"
+STOPPED_DEADLINE = "deadline"  # the budget's is daily_budget.STOPPED_BUDGET
 STOPPED_LOCK_HELD = "lock_held"
 
 
@@ -330,11 +331,17 @@ async def run_daily(
         except run_lock.RunLockHeld as held:
             return _record_skipped(conn, res, held, run_start, dry_run=dry_run)
         minutes = cfg.limits.daily_deadline_minutes
-        with gateway.deadline_scope(minutes * 60) as state:
+        with gateway.origin_scope("scheduled"), gateway.deadline_scope(minutes * 60) as state:
             cut = await run_steps(cfg, conn, res, state, score=score, dry_run=dry_run, today=today)
         if cut or state.hit:
-            res.stopped_reason = STOPPED_DEADLINE
-            res.stopped_note = _deadline_note(conn, minutes, res.skipped_steps, score=score)
+            if state.reason == STOPPED_BUDGET:
+                res.stopped_reason = STOPPED_BUDGET
+                res.stopped_note = budget_note(
+                    conn, cfg.limits.scheduled_calls_per_day, res.skipped_steps, score=score
+                )
+            else:
+                res.stopped_reason = STOPPED_DEADLINE
+                res.stopped_note = _deadline_note(conn, minutes, res.skipped_steps, score=score)
             log.warning("daily run %s (first refused call at %s)", res.stopped_note, state.hit_at)
         return await _announce(cfg, conn, res, send, run_start, dry_run=dry_run, today=today)
 
@@ -406,7 +413,9 @@ async def _announce(
         log.info("nothing to announce")
         return res
 
-    res.digest = digest(format_run_footer(res) + _skipped_runs_line(conn, run_id))
+    # The calls line rides on a digest that is sent anyway (the quiet-day return is above).
+    footer = format_run_footer(res) + _skipped_runs_line(conn, run_id)
+    res.digest = digest(footer + yesterday_calls_line(conn, today))
     await send(res.digest)  # raises on failure -> nothing stamped
     # Stamp only what was actually rendered in the sent digest — anything
     # past the MAX_DIGEST_JOBS cutoff stays notified_at='' so it leads the
@@ -624,7 +633,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     daily_tools.add_arguments(ap)
     args = ap.parse_args(argv)
+    # Every hand-run daily command counts against the scheduled call budget (ADR 0060).
+    with gateway.origin_scope("scheduled"), gateway.refusal_scope():
+        return _dispatch(args)
 
+
+def _dispatch(args: argparse.Namespace) -> int:
     applog.setup()
     cfg = cfg_mod.load_config()
     conn = dbc.init_db(cfg)

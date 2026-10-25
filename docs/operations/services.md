@@ -70,7 +70,7 @@ uv run blastjob-daily --status      # the last recorded run
 touch ~/.blastjob/PAUSE             # kill switch: the daily run exits at once
 ```
 
-To resume, delete the `PAUSE` file. It lives in your data folder (`BLASTJOB_DATA_DIR`, default `~/.blastjob`). What a pause skips is in [the kill switch](../how-it-works/daily.md#kill-switch).
+The cockpit's Running now page has the same switch ("Pause scheduled runs" and "Resume scheduled runs"; see [web](../how-it-works/web.md#running-now)). To resume, delete the `PAUSE` file. It lives in your data folder (`BLASTJOB_DATA_DIR`, default `~/.blastjob`). What a pause skips is in [the kill switch](../how-it-works/daily.md#kill-switch).
 
 ## Logs
 

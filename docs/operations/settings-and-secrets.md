@@ -31,7 +31,18 @@ How `setup set` reads a value:
 
 `limits.daily_deadline_minutes` (default 45, whole minutes from 5 to 240) is how long the daily run may keep starting work; see [the deadline](../how-it-works/daily.md#one-run-at-a-time-and-the-deadline). It is also on the settings page under "Daily run time limit". An out-of-range value is refused by both.
 
-To pause the daily run without changing any setting, create a file named `PAUSE` in the data folder ([services](services.md#the-daily-run-service)).
+The other limits keep a model from running away ([the call ledger and budget](../how-it-works/llm.md#the-call-ledger-and-budget)). Each is whole numbers, validated on the settings page, `setup set` and a TOML import alike, and a save of one never resets the others:
+
+| Setting | Default | Range | Settings page label |
+|---|---|---|---|
+| `limits.scheduled_calls_per_day` | 150 | 1 to 5000 | "Scheduled model calls per day" |
+| `limits.clicked_calls_per_day` | 300 | 1 to 5000 | "Clicked model calls per day" |
+| `limits.cockpit_concurrency` | 3 | 1 to 8 | "Cockpit runs at once" |
+| `limits.sdk_timeout_seconds` | 300 | 30 to 900 | "API call timeout" |
+
+A call over a daily cap is refused, not queued. The daily run says it stopped at its limit ([daily](../how-it-works/daily.md#the-call-budget)). Cockpit runs beyond `cockpit_concurrency` wait and show as queued ([web](../how-it-works/web.md#running-now)).
+
+To pause the daily run without changing any setting, create a file named `PAUSE` in the data folder ([services](services.md#the-daily-run-service)), or use "Pause scheduled runs" on the cockpit's Running now page, which makes and deletes the same file.
 
 ## The secrets file
 

@@ -36,12 +36,13 @@ log = logging.getLogger(__name__)
 
 
 def out_of_time(state: gateway.DeadlineState) -> bool:
-    """Between steps: stop starting work once a call was refused or too little time is left."""
+    """Between steps: stop starting work once a call was refused (deadline or call budget) or too
+    little time is left."""
     return state.hit or gateway.deadline_reached()
 
 
 def _may_run(res: DailyResult, state: gateway.DeadlineState, name: str) -> bool:
-    """Whether a deadline-gated step may start. A step that may not is named as not run."""
+    """Whether a gated step may start. A step that may not is named as not run."""
     if out_of_time(state):
         res.skipped_steps.append(name)
         return False
@@ -104,7 +105,8 @@ async def run_steps(
         free_copy = await daily_employer_jd.free_copy_step(cfg, conn, res, dry_run=dry_run)
 
     if score and _may_run(res, state, "scoring"):
-        await _matching_step(cfg, conn, res, state, run_matching)
+        with gateway.caller_scope("daily scoring"):
+            await _matching_step(cfg, conn, res, state, run_matching)
 
     shared_deps = None
     closure_res = None
@@ -117,16 +119,25 @@ async def run_steps(
     # it runs after the cutoff too.
     daily_filing.filing_pass(cfg, conn, dry_run=dry_run)
     if shared_deps is not None and _may_run(res, state, "employer-description lookup"):
-        await daily_employer_jd.lookup_step(
-            cfg, conn, res, closure_res, shared_deps, free=free_copy, dry_run=dry_run, score=score
-        )
+        with gateway.caller_scope("daily employer description"):
+            await daily_employer_jd.lookup_step(
+                cfg,
+                conn,
+                res,
+                closure_res,
+                shared_deps,
+                free=free_copy,
+                dry_run=dry_run,
+                score=score,
+            )
     elif shared_deps is None:
         res.skipped_steps.append("employer-description lookup")
     # The reply scan makes no model call and recruiters are the owner's top channel: it runs
     # after the cutoff too.
     await _replies_pass(cfg, conn, res, dry_run=dry_run)
     if _may_run(res, state, "target scans"):
-        await daily_targets.targets_step(cfg, conn, res, dry_run=dry_run, today=today)
+        with gateway.caller_scope("daily target scans"):
+            await daily_targets.targets_step(cfg, conn, res, dry_run=dry_run, today=today)
     return state.hit or bool(res.skipped_steps)
 
 
@@ -151,8 +162,8 @@ async def _matching_step(
         res.scoring_s = time.monotonic() - scoring_start
         res.scored = mres.scored
         res.scoring_cost = mres.cost
-        # A batch the deadline refused is counted as failed by the scorer; the run says it
-        # stopped at the limit instead of blaming the batch.
+        # A batch the deadline or the call budget refused is counted as failed by the scorer; the
+        # run says it stopped at the limit instead of blaming the batch.
         if mres.scoring_failures and not state.hit:
             res.errors["scoring"] = f"{mres.scoring_failures} batch(es) failed; retried next run"
         for note in mres.notes:
@@ -164,11 +175,12 @@ async def _matching_step(
             mres.queued,
             describe_cost(mres.cost),
         )
-    except gateway.DeadlineReached:
+    except gateway.CallRefused:
         conn.rollback()
         res.scoring_s = time.monotonic() - scoring_start
         state.hit = True
-        log.warning("matching cut off by the daily deadline")
+        state.reason = state.reason or "deadline"
+        log.warning("matching cut off by the daily %s", gateway.refusal_label())
     except Exception as e:
         conn.rollback()
         res.scoring_s = time.monotonic() - scoring_start

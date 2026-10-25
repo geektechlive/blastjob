@@ -31,6 +31,31 @@ def _clean_runtime():
 
 
 @pytest.fixture(autouse=True)
+def _isolated_call_ledger(monkeypatch):
+    """The model-call ledger (`llm/ledger.py`) is installed by `apply_runtime_settings` into
+    module state. Start every test with nothing installed (the no-op state) and clear it
+    after, so one test's database or caps never leak into another. The ledger also refuses to
+    open the owner's real data dir: the suite must never write to it."""
+    from pathlib import Path
+
+    from blastjob.llm import ledger
+    from blastjob.models.config import DEFAULT_DATA_DIR
+
+    real = Path(os.path.expanduser(DEFAULT_DATA_DIR)).resolve()
+    real_connect = ledger._connect
+
+    def _guarded(path):
+        if real == Path(path).resolve().parent or real in Path(path).resolve().parents:
+            pytest.fail(f"the call ledger tried to open the real data dir: {path}")
+        return real_connect(path)
+
+    ledger.uninstall()
+    monkeypatch.setattr(ledger, "_connect", _guarded)
+    yield
+    ledger.uninstall()
+
+
+@pytest.fixture(autouse=True)
 def _offline_closure_deps(monkeypatch):
     """The daily run now includes the closure pass, whose default resolver
     probes live ATS boards. Any test that reaches it without injecting its own

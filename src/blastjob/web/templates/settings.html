@@ -132,6 +132,22 @@
     <input type="number" name="limits_daily_deadline_minutes" value="{{ cfg.limits.daily_deadline_minutes }}" min="5" max="240">
     <small>The daily run starts no new model work after this long. Anything left waits for the next run, and the digest says so.</small>
   </label>
+  <label>Scheduled model calls per day
+    <input type="number" name="limits_scheduled_calls_per_day" value="{{ cfg.limits.scheduled_calls_per_day }}" min="1" max="5000">
+    <small>The daily run (and hand-run commands) stop making model calls after this many in a day. The run says so and the rest waits.</small>
+  </label>
+  <label>Clicked model calls per day
+    <input type="number" name="limits_clicked_calls_per_day" value="{{ cfg.limits.clicked_calls_per_day }}" min="1" max="5000">
+    <small>The same cap for everything you start in the cockpit (builds, research, re-scores).</small>
+  </label>
+  <label>Cockpit runs at once
+    <input type="number" name="limits_cockpit_concurrency" value="{{ cfg.limits.cockpit_concurrency }}" min="1" max="8">
+    <small>How many cockpit runs may call the model at the same time. The rest show as queued on the Running now page.</small>
+  </label>
+  <label>API call timeout (seconds)
+    <input type="number" name="limits_sdk_timeout_seconds" value="{{ cfg.limits.sdk_timeout_seconds }}" min="30" max="900">
+    <small>Per-operation timeout for the Anthropic and OpenAI API clients. A call is also bounded by the run's time limit.</small>
+  </label>
 
   <button type="submit" class="btn-save">Save</button>
 </form>

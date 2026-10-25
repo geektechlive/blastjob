@@ -22,8 +22,14 @@ from pydantic import ValidationError
 from blastjob.core import employer_domains
 from blastjob.core.company import company_key
 from blastjob.models.config import (
+    CALLS_PER_DAY_MAX,
+    CALLS_PER_DAY_MIN,
+    CONCURRENCY_MAX,
+    CONCURRENCY_MIN,
     DAILY_DEADLINE_MAX_MINUTES,
     DAILY_DEADLINE_MIN_MINUTES,
+    SDK_TIMEOUT_MAX,
+    SDK_TIMEOUT_MIN,
     BlastJobConfig,
     LimitsConfig,
     TargetBoard,
@@ -161,18 +167,51 @@ def _service(cfg: BlastJobConfig, form: Form) -> None:
     cfg.web.host = form.get("web_host", "").strip()
     cfg.web.port = _num(form, "web_port", int)
     cfg.web.public_url = form.get("web_public_url", cfg.web.public_url).strip()
-    if "limits_daily_deadline_minutes" in form:
-        cfg.limits = _limits(form["limits_daily_deadline_minutes"])
+    cfg.limits = _limits(cfg.limits, form)
 
 
-def _limits(raw: str) -> LimitsConfig:
-    try:
-        return LimitsConfig(daily_deadline_minutes=int(raw))
-    except (ValueError, ValidationError) as e:
-        raise FormError(
-            f"Daily run time limit: whole minutes from {DAILY_DEADLINE_MIN_MINUTES} "
-            f"to {DAILY_DEADLINE_MAX_MINUTES}"
-        ) from e
+# (LimitsConfig field, form field, label, unit, min, max). Each field reports its own error.
+_LIMIT_FIELDS = (
+    (
+        "daily_deadline_minutes",
+        "Daily run time limit",
+        "minutes",
+        DAILY_DEADLINE_MIN_MINUTES,
+        DAILY_DEADLINE_MAX_MINUTES,
+    ),
+    (
+        "scheduled_calls_per_day",
+        "Scheduled model calls per day",
+        "calls",
+        CALLS_PER_DAY_MIN,
+        CALLS_PER_DAY_MAX,
+    ),
+    (
+        "clicked_calls_per_day",
+        "Clicked model calls per day",
+        "calls",
+        CALLS_PER_DAY_MIN,
+        CALLS_PER_DAY_MAX,
+    ),
+    ("cockpit_concurrency", "Cockpit runs at once", "runs", CONCURRENCY_MIN, CONCURRENCY_MAX),
+    ("sdk_timeout_seconds", "API call timeout", "seconds", SDK_TIMEOUT_MIN, SDK_TIMEOUT_MAX),
+)
+
+
+def _limits(current: LimitsConfig, form: Form) -> LimitsConfig:
+    """The limits with every submitted `limits_<field>` applied on top of `current`, so a form
+    that carries only some of them never resets the others to their defaults."""
+    values = current.model_dump()
+    for field, label, unit, low, high in _LIMIT_FIELDS:
+        raw = form.get(f"limits_{field}")
+        if raw is None:
+            continue
+        try:
+            values[field] = int(raw)
+            LimitsConfig(**values)
+        except (ValueError, ValidationError) as e:
+            raise FormError(f"{label}: whole {unit} from {low} to {high}") from e
+    return LimitsConfig(**values)
 
 
 _APPLY: dict[str, Callable[[BlastJobConfig, Form], None]] = {
