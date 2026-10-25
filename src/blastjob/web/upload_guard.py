@@ -15,6 +15,8 @@ feature exists for.
 
 from __future__ import annotations
 
+import re
+
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # Lives here rather than in web/app.py: the middleware below enforces it and the
@@ -71,12 +73,46 @@ class MaxBodySizeMiddleware:
         await self.app(scope, guarded_receive, send)
 
 
-async def _reject(send: Send) -> None:
+async def _reject(
+    send: Send, status: int = 413, body: bytes = b"That upload is too large."
+) -> None:
     await send(
         {
             "type": "http.response.start",
-            "status": 413,
+            "status": status,
             "headers": [(b"content-type", b"text/plain; charset=utf-8")],
         }
     )
-    await send({"type": "http.response.body", "body": b"That upload is too large."})
+    await send({"type": "http.response.body", "body": body})
+
+
+# The interview debrief (#84) takes a pasted transcript as an urlencoded form. Its cap is far
+# below the network import's, and a multipart body is refused outright: Starlette spools a
+# multipart body to a temporary file before any route runs, which would write the transcript
+# to disk. Bodies here are parsed in memory only.
+MAX_DEBRIEF_BODY_BYTES = 2 * 1024 * 1024
+# A prefix, matched without an end anchor: Starlette's route patterns end in `$`, which also
+# accepts a trailing newline (`/debrief/upload%0A`), so an anchored pattern here would miss it.
+DEBRIEF_PATH = r"/jobs/\d+/debrief"
+_MULTIPART = b"multipart/"
+
+
+class PathBodyCapMiddleware:
+    """Apply a smaller body cap, and refuse multipart, on paths that start with `pattern`."""
+
+    def __init__(self, app: ASGIApp, pattern: str, max_bytes: int) -> None:
+        self.app = app
+        self.pattern = re.compile(pattern)
+        self.capped = MaxBodySizeMiddleware(app, max_bytes)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not self.pattern.match(scope["path"]):
+            await self.app(scope, receive, send)
+            return
+        if scope["method"] == "POST":
+            # Every content-type header counts: a duplicate must not hide a multipart one.
+            ctypes = [v for k, v in scope.get("headers") or [] if k.lower() == b"content-type"]
+            if any(v.strip().lower().startswith(_MULTIPART) for v in ctypes):
+                await _reject(send, 415, b"This page accepts pasted text only.")
+                return
+        await self.capped(scope, receive, send)

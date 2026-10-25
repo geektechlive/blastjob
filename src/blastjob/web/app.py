@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from blastjob import config as cfg_mod
-from blastjob.core import closure, filing_lock, page_links
+from blastjob.core import closure, debrief, filing_lock, page_links
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
@@ -39,6 +39,7 @@ from blastjob.web import (
     progress,
     routes_activity,
     routes_boards,
+    routes_debrief,
     routes_network,
     routes_outcomes,
     routes_packets,
@@ -64,7 +65,12 @@ from blastjob.web.security import (
     LocalRequestGuard,
     require_csrf,
 )
-from blastjob.web.upload_guard import MaxBodySizeMiddleware
+from blastjob.web.upload_guard import (
+    DEBRIEF_PATH,
+    MAX_DEBRIEF_BODY_BYTES,
+    MaxBodySizeMiddleware,
+    PathBodyCapMiddleware,
+)
 from blastjob.web.urls import safe_external_url
 
 # Runs the global status banner tracks; per-job runs (tailor/prep/research)
@@ -98,6 +104,7 @@ templates.env.globals["jd_provenance"] = web_employer_jd.jd_provenance
 templates.env.globals["jd_provenance_url"] = web_employer_jd.jd_provenance_url
 templates.env.globals["ejd_refusal"] = web_employer_jd.refusal
 # Row actions depend on the stage a job is in (one rule, web/stages.py).
+templates.env.globals["clock"] = debrief.fmt_clock
 templates.env.globals["stage_of"] = st.stage_of
 templates.env.globals["next_stage"] = st.next_stage
 templates.env.globals["application_channels"] = APPLICATION_CHANNELS
@@ -163,6 +170,10 @@ def create_app(
     # Outermost: require_csrf's `await request.form()` spools the whole body
     # before any route runs, so an in-route size check can never fire first.
     app.add_middleware(MaxBodySizeMiddleware, max_bytes=MAX_NETWORK_UPLOAD_BYTES)
+    # The pasted-transcript routes get a far smaller cap and never take a multipart body.
+    app.add_middleware(
+        PathBodyCapMiddleware, pattern=DEBRIEF_PATH, max_bytes=MAX_DEBRIEF_BODY_BYTES
+    )
     # Added last, so it runs first: refuse a non-local Host (DNS rebinding) and a
     # foreign-Origin write before anything else, including the size check.
     app.add_middleware(LocalRequestGuard)
@@ -283,6 +294,7 @@ def create_app(
     routes_stages.register(app, deps)
     routes_network.register(app, deps)
     routes_targets.register(app, deps)
+    routes_debrief.register(app, deps)
     routes_boards.register(app, deps, save_config)
     routes_packets.register(app, deps)
     routes_settings.register(app, deps, save_config)
@@ -336,6 +348,7 @@ def create_app(
                 job=job,
                 followup_reason=followup_reason,
                 contacts=people.contacts_for_job(c, job_id),
+                debriefs=debrief.list_debriefs(c, job_id),
                 profile=co.get_profile(c, job["company"]),
                 signals=co.comp_signals(c, job_id=job_id),
                 floor=co.negotiated_floor(c, job_id),

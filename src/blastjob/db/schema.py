@@ -629,4 +629,36 @@ MIGRATIONS: list[tuple[int, str]] = [
     # 60: when the weekly Dream list section carried this role (#90). Stamped per rendered
     # job, only after the digest was sent. '' = not yet announced there.
     (60, "ALTER TABLE jobs ADD COLUMN dream_notified_at TEXT DEFAULT '';"),
+    # 61: the interview debrief (#84, ADR 0058). One row per debrief; it holds computed figures
+    # and the owner's own short excerpts only. No transcript text, no interviewer words and no
+    # file name: the transcript lives in memory until the owner picks a speaker, then is dropped.
+    # `ingest_id` is the unique id of the in-memory upload, so a double submit cannot add a
+    # second row. `label` is an optional owner-entered note (60 characters).
+    (
+        61,
+        """
+        CREATE TABLE IF NOT EXISTS interview_debriefs (
+            id               INTEGER PRIMARY KEY,
+            job_id           INTEGER NOT NULL,
+            ingest_id        TEXT NOT NULL UNIQUE,
+            created_at       TEXT NOT NULL,
+            label            TEXT DEFAULT '',
+            owner_label      TEXT NOT NULL,
+            duration_s       REAL DEFAULT 0,
+            time_basis       TEXT DEFAULT 'estimate',
+            owner_words      INTEGER DEFAULT 0,
+            other_words      INTEGER DEFAULT 0,
+            talk_share_words REAL DEFAULT 0,
+            owner_seconds    REAL DEFAULT 0,
+            other_seconds    REAL DEFAULT 0,
+            talk_share_time  REAL,
+            longest_json     TEXT DEFAULT '[]',
+            closing_questions INTEGER DEFAULT 0,
+            closing_json     TEXT DEFAULT '[]',
+            numbers_status   TEXT DEFAULT 'checked',
+            numbers_json     TEXT DEFAULT '[]'
+        );
+        CREATE INDEX IF NOT EXISTS idx_interview_debriefs_job ON interview_debriefs(job_id);
+        """,
+    ),
 ]

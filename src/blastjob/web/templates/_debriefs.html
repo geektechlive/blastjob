@@ -1,0 +1,62 @@
+{# Stored interview debriefs for one job, newest first. Every value is autoescaped: the
+   excerpts are the owner's own words, and the label is typed by the owner. #}
+<div class="detail-block debriefs" id="debriefs">
+  <h3>Interview debrief</h3>
+  <p><a href="/jobs/{{ job.id }}/debrief">Add a debrief from a transcript</a></p>
+  {% for d in debriefs | default([]) %}
+    <div class="debrief">
+      <h4>{{ d.created_at }}{% if d.label %} &middot; {{ d.label }}{% endif %}</h4>
+      <p class="dim">You were <strong>{{ d.owner_label }}</strong>. The interview ran
+        {{ (d.duration_s // 60) | int }} minutes.</p>
+      <ul>
+        <li><strong>Talk share by words:</strong> {{ d.talk_share_words | round(1) }}%
+          ({{ d.owner_words }} of {{ d.owner_words + d.other_words }} words).</li>
+        <li>
+          {% if d.talk_share_time is none %}
+            <strong>Talk share by time:</strong> not available.
+          {% elif d.time_basis == 'cue' %}
+            <strong>Talk share by time:</strong> {{ d.talk_share_time | round(1) }}% (from the
+            transcript's cue times).
+          {% else %}
+            <strong>Talk share by time:</strong> about {{ d.talk_share_time | round(1) }}%, a
+            floor-time estimate: a pause counts for at most 90 seconds, and the last turn has
+            no known length.
+          {% endif %}
+        </li>
+      </ul>
+      {% if d.longest %}
+        <h5>Longest answers</h5>
+        <ol>
+          {% for a in d.longest %}
+            <li>{{ a.words }} words
+              {% if a.seconds is not none %}(about {{ a.seconds | round | int }} s){% endif %}
+              from {{ clock(a.start) }}: <em>{{ a.excerpt }}</em></li>
+          {% endfor %}
+        </ol>
+      {% endif %}
+      <h5>Question-like lines near the close</h5>
+      <p>{{ d.closing_questions }} in the last 15% of the interview.
+        <span class="dim">Transcription punctuation varies, so this is a guide, not a count of
+        questions you asked.</span></p>
+      {% if d.closing %}<ul>{% for q in d.closing %}<li><em>{{ q }}</em></li>{% endfor %}</ul>{% endif %}
+      <h5>Numbers to double-check</h5>
+      {% if d.numbers_status == 'unavailable' %}
+        <p class="dim">Numbers check unavailable: your work history could not be read.</p>
+      {% elif d.number_prompts %}
+        <ul>
+          {% for n in d.number_prompts %}
+            <li>You said {{ n.token }}: not in your work history <span class="dim">({{ clock(n.at) }})</span></li>
+          {% endfor %}
+        </ul>
+        <p class="dim">A prompt, not a verdict: you may have rounded, or the figure may be
+          right and simply missing from your work history.</p>
+      {% else %}
+        <p class="dim">Every figure you said that this check covers is in your work history.</p>
+      {% endif %}
+      <form method="post" action="/jobs/{{ job.id }}/debrief/{{ d.id }}/delete">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <button type="submit">Delete this debrief</button>
+      </form>
+    </div>
+  {% endfor %}
+</div>

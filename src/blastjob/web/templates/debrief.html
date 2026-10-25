@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Interview debrief | blastjob{% endblock %}
+{% block content %}
+<a class="back" href="/jobs/{{ job.id }}">&larr; back</a>
+<h1 class="view-title">Interview debrief: {{ job.title }} at {{ job.company }}</h1>
+
+{% if error %}<div class="error"><p>{{ error }}</p></div>{% endif %}
+
+{% if step == 'paste' %}
+<p class="dim">Paste a transcript of the interview. Everything is worked out on this
+computer: nothing is sent anywhere, and the transcript is kept only in memory for up to
+30 minutes, then dropped as soon as you pick which speaker you are. Only the figures and
+your own short excerpts are saved.</p>
+
+
+<form class="settings-form" method="post" action="/jobs/{{ job.id }}/debrief/upload">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <label>Choose a transcript file
+    <input type="file" id="debrief-file" accept=".txt,.vtt,.srt,text/plain,text/vtt">
+    <small>The file is read in your browser into the box below; it is not uploaded.</small>
+  </label>
+  <label>Transcript
+    <textarea id="debrief-text" name="transcript" rows="14" required>{{ transcript | default('') }}</textarea>
+    <small>Timestamped lines such as <code>00:01:05 Speaker 1</code> with the text below,
+    WebVTT, or <code>[00:01:05] Name: text</code>. Up to about 1.5 MB.</small>
+  </label>
+  <label>Label (optional)
+    <input type="text" name="label" maxlength="60" value="{{ label | default('') }}">
+    <small>For example "second round". Up to 60 characters. The file name is not kept.</small>
+  </label>
+  <button type="submit">Read transcript</button>
+</form>
+<script nonce="{{ csp_nonce }}">
+  document.getElementById("debrief-file").addEventListener("change", function (e) {
+    var file = e.target.files[0];
+    if (!file) { return; }
+    var reader = new FileReader();
+    reader.onload = function () { document.getElementById("debrief-text").value = reader.result; };
+    reader.readAsText(file);
+  });
+</script>
+
+{% elif step == 'choose' %}
+<p class="dim">Which speaker are you? Nothing is saved until you choose, and the transcript
+is dropped from memory the moment you do.</p>
+<form class="settings-form" method="post" action="/jobs/{{ job.id }}/debrief/{{ upload_id }}/compute">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <fieldset>
+    <legend>Which speaker are you?</legend>
+    {% for s in speakers %}
+      <label><input type="radio" name="speaker" value="{{ s.name }}" required>
+        {{ s.name }} &middot; {{ s.turns }} turns &middot; <em>{{ s.preview }}</em></label>
+    {% endfor %}
+  </fieldset>
+  <button type="submit">Make the debrief</button>
+</form>
+
+{% else %}
+<p><a href="/jobs/{{ job.id }}/debrief">Paste the transcript again</a></p>
+{% endif %}
+{% endblock %}

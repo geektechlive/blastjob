@@ -18,6 +18,8 @@ Start with the install guide, then the cockpit tour.
 - [Pipeline stages](using/stages.md): the five stages and the moves on each page.
 - [Target companies](using/targets.md): keep a list of companies you want to work for
   and see dated news there, with who you know.
+- [Interview debrief](using/interview-debrief.md): turn an interview transcript into your talk
+  share, longest answers and numbers to double-check.
 - [Tailoring a packet](using/tailoring.md): build a resume, cover letter and prep pack,
   then read the verification verdict.
 - [Applying and following up](using/applying.md): mark a job applied, follow up, and
@@ -62,6 +64,8 @@ Read the overview first; every other page assumes it.
   claude CLI.
 - [Employer data](how-it-works/employer-data.md): employer descriptions for aggregator
   jobs, company profiles, comp signals and people.
+- [Interview debrief](how-it-works/debrief.md): the transcript formats, the in-memory hold
+  and how each figure is computed.
 - [Your network](how-it-works/network.md): the LinkedIn export import and warm paths.
 - [The daily run](how-it-works/daily.md): what runs each morning and how the digest is
   delivered.

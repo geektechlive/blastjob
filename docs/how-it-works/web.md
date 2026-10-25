@@ -41,6 +41,8 @@ Three layers enforce that, in this order.
 
 **2. `upload_guard.MaxBodySizeMiddleware`.** It rejects an over-cap body (413) by declared length or by counting bytes. It has to be middleware: `require_csrf` reads the form, and Starlette spools a whole upload to disk to build it, before any route code runs, so a size check inside the route can never fire first. The cap is `upload_guard.MAX_NETWORK_UPLOAD_BYTES`, sized for a full LinkedIn archive.
 
+The interview debrief routes add a path-aware cap: `upload_guard.PathBodyCapMiddleware` limits those bodies to 2 MB and refuses multipart, so a pasted transcript is never spooled to disk (see [the debrief](debrief.md#no-file-upload)).
+
 **3. `security.require_csrf`.** Every state-changing route depends on it. It requires the per-launch token, sent as the `x-blastjob-token` header (`web/templates/base.html` puts it on every HTMX request) or as a `_token` form field, compared in constant time, plus a local `Origin` or `Referer` when one is present. The token is new on each launch. A tab left open across a cockpit restart therefore carries a dead token; `web/templates/base.html` catches the 403, reloads the page and says why.
 
 ### Content-Security-Policy

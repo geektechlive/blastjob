@@ -98,6 +98,7 @@ The schema is `schema.MIGRATIONS`, an ordered list of `(version, sql)` entries a
 | `application_events` | 42 | the application timeline | [events and filing](events-and-filing.md#application-events) |
 | `artifacts` | 43 | the index of files written for a job | [events and filing](events-and-filing.md#artifact-index) |
 | `target_companies`, `company_events` | 58 | your target list with each company's scan state, and the dated news found for it | [employer data](employer-data.md#target-company-news-watch) |
+| `interview_debriefs` | 61 | the computed figures and the owner's own excerpts for each interview debrief; no transcript text | [interview debrief](debrief.md#what-is-stored) |
 | `settings` | 44 | the settings rows | [Settings storage](#settings-storage) |
 | `schema_migrations` | n/a | which migrations ran | here |
 

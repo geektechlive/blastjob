@@ -22,17 +22,14 @@ import re
 import sqlite3
 from collections.abc import Mapping
 from datetime import date
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from blastjob import config as cfg_mod
 from blastjob.core import artifacts, filing_lock
 from blastjob.core import company as co
-from blastjob.core.packet_gate import _SCALE as SHARED_SCALE
-from blastjob.core.packet_gate import _SCALE_WORDS as SHARED_SCALE_WORDS
+from blastjob.core.number_tokens import NUMERIC, figure_keys, normalize_number
 from blastjob.core.paths import application_dir, locate, resolve_role_slug, slugify
-from blastjob.core.percent_figures import PERCENT, percent_key
 from blastjob.llm import caching
 from blastjob.llm.providers import make_stream
 from blastjob.models.config import BlastJobConfig
@@ -227,46 +224,14 @@ def write_prep_pack(
     return path
 
 
-# A scale is one letter or one spelled-out word, and the shared \b is what keeps
-# the letter branch from eating the first character of an ordinary word: in
-# "$250,000 base" the B-branch takes the 'b' of "base", fails the boundary, and
-# the whole optional group collapses to empty rather than swallowing the space.
-# Shared with packet_gate (one scale vocabulary, `bn`/`mn`/`tn` included), so
-# "$2.1bn" is a figure here too and is marked when the trusted text lacks it.
-_SCALE = SHARED_SCALE
-_MONEY = rf"\$\d[\d,]*(?:\.\d+)?(?:\s?{_SCALE})?"
-_PERCENT = PERCENT
-_MAGNITUDE = rf"\d+(?:\.\d+)?\s?{_SCALE}"
-# Headcount-shaped: comma-grouped, or four digits and up (which also covers
-# years). Two- and three-digit bare integers stay unmatched on purpose, so a
-# 30/60/90 plan and "3-5 questions" do not fill with markers.
-_BIG_BARE = r"(?:\d{1,3}(?:,\d{3})+|\d{4,})(?:\.\d+)?"
-# The bare forms carry a prefix guard so a match cannot start inside a larger
-# number or a word; the shared suffix guard stops it ending inside one.
-_NUMERIC = re.compile(
-    rf"(?:{_MONEY}|(?<![\w.,$])(?:{_PERCENT}|{_MAGNITUDE}|{_BIG_BARE}))(?!\w|[.,]\d)"
-)
+_NUMERIC = NUMERIC
 _CONFIRM = "[confirm]"
-_SCALE_WORDS = SHARED_SCALE_WORDS
+_normalize_number = normalize_number
 
 
-def _normalize_number(token: str) -> str:
-    """One comparable key per figure, so `$3.5 billion`, `$3.5B` and `$3.5 B` are
-    the same figure while `$240` and `$240,000` stay different ones."""
-    percent = percent_key(token)
-    if percent is not None:
-        return percent
-    text = token.strip().lower()
-    for word, letter in _SCALE_WORDS.items():
-        text = text.replace(word, letter)
-    return text.replace(",", "").replace(" ", "")
-
-
-@lru_cache(maxsize=8)
 def _trusted_numbers(trusted: str) -> frozenset[str]:
-    """Parse the trusted text into whole figures. Cached because the streaming
-    path re-checks the same work history once per completed line."""
-    return frozenset(_normalize_number(m.group(0)) for m in _NUMERIC.finditer(trusted))
+    """Parse the trusted text into whole figures (shared, cached in number_tokens)."""
+    return figure_keys(trusted)
 
 
 def mark_unverified_numbers(body: str, trusted: str) -> tuple[str, int]:
