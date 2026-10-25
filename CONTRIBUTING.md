@@ -63,7 +63,7 @@ Two layers, both required before a PR:
    It reads your database and `work_history.md` (company names, contact names,
    emails, phones, your own name) and reports any of them found in tracked files.
    It has two tiers: **FAIL** for high-confidence hits (emails, phones, profile
-   URLs, your name, contact names, distinctive company names) and **WARN** for
+   URLs, your name, your home town, contact names, distinctive company names) and **WARN** for
    lower-confidence ones (common company names, long word-for-word overlaps with
    your work history). It exits non-zero on any FAIL. False positives can be
    listed, one per line, in `local/leak_allowlist.txt` (gitignored). In a linked

@@ -33,6 +33,9 @@ Tiers
       hostname (a subdomain matches; a longer name or word does not). Job
       boards, aggregators, shared ATS hosts and reserved names (example.com,
       *.example, *.test, *.invalid, localhost) never become terms.
+    - your home town: the part of the `discovery.home_location` setting before
+      the comma ("Springfield, OH" -> "Springfield"), matched as a whole
+      phrase. Nothing is added when the setting is empty or unset.
   WARN (review; does not fail):
     - other company names (single common words and names under 4
       characters are skipped: they would fire on ordinary code)
@@ -457,6 +460,7 @@ class UserData:
     people: list[str]
     applied_hosts: frozenset[str] = frozenset()  # hosts of kept/applied jobs' links
     listed_hosts: frozenset[str] = frozenset()  # discovery.employer_domains
+    home_town: str = ""  # discovery.home_location, the town part
 
 
 _APPLIED_COLS = frozenset({"review_state", "application_state", "applied_at"})
@@ -476,6 +480,8 @@ JOB_URL_COLUMNS = (
 )
 PAGE_LINK_PREFIX = "page:"
 EMPLOYER_DOMAINS_KEY = "discovery.employer_domains"
+HOME_LOCATION_KEY = "discovery.home_location"
+STATE_CODE_LEN = 2
 
 
 def _host_in(value: object) -> str:
@@ -523,6 +529,38 @@ def _listed_hosts(conn: sqlite3.Connection) -> frozenset[str]:
     )
 
 
+def _home_town(conn: sqlite3.Connection) -> str:
+    """The town in `discovery.home_location` ("Springfield, OH" -> "Springfield"),
+    or "" when unset or unreadable. Without a comma, a trailing two-letter
+    state code is dropped."""
+    if not {"key", "value"} <= _columns(conn, "settings"):
+        return ""
+    found = conn.execute("SELECT value FROM settings WHERE key = ?", (HOME_LOCATION_KEY,))
+    row = found.fetchone()
+    if not row:
+        return ""
+    try:
+        raw = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError) as exc:
+        print(f"warning: {HOME_LOCATION_KEY} is not valid JSON ({exc})", file=sys.stderr)
+        return ""
+    if not isinstance(raw, str):
+        return ""
+    town, comma, _ = raw.partition(",")
+    town = town.strip()
+    parts = town.split()
+    if not comma and len(parts) > 1 and len(parts[-1]) == STATE_CODE_LEN:
+        town = " ".join(parts[:-1])
+    return town
+
+
+def home_town_terms(town: str, allow: frozenset[str]) -> list[Term]:
+    words = tokens(town)
+    if not words or " ".join(words) in allow:
+        return []
+    return [Term(words, FAIL, "home_town", town)]
+
+
 def read_db(db: Path) -> UserData:
     """Company names, applied-to companies and people's names, opened read-only.
     Contact emails need no lookup: the email detector fails on any real one."""
@@ -549,9 +587,10 @@ def read_db(db: Path) -> UserData:
             people += [n for (n,) in conn.execute("SELECT full_name FROM network_contacts") if n]
         applied_hosts = _applied_hosts(conn, job_cols)
         listed_hosts = _listed_hosts(conn)
+        home_town = _home_town(conn)
     finally:
         conn.close()
-    return UserData(companies, applied, people, applied_hosts, listed_hosts)
+    return UserData(companies, applied, people, applied_hosts, listed_hosts, home_town)
 
 
 def load_allowlist(path: Path) -> frozenset[str]:
@@ -590,6 +629,7 @@ def build_personal(data_dir: Path, allow: frozenset[str]) -> Personal:
         user = read_db(db)
         terms += company_terms(user.companies, allow, user.applied)
         terms += person_terms(user.people, "contact", allow, MIN_CONTACT_NAME_WORDS)
+        terms += home_town_terms(user.home_town, allow)
         domains = domain_terms(user.applied_hosts, user.listed_hosts, allow)
     # macOS homes are already caught by the /Users/<name> detector.
     home = str(Path.home())

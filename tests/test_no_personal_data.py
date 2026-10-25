@@ -758,3 +758,70 @@ def test_no_settings_table_still_reads_job_domains(domain_setup):
 )
 def test_domain_candidates_take_host_and_registrable_domain(host, expected):
     assert leak.domain_candidates(host) == expected
+
+
+# --- home town ---------------------------------------------------------------
+
+HOME_TOWN = "Brindlemoor"
+
+
+def _set_home_location(data: Path, value: object) -> None:
+    conn = sqlite3.connect(data / "blastjob.db")
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, 'x')",
+        ("discovery.home_location", json.dumps(value)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _scan_notes(setup, capsys, text: str) -> tuple[int, str]:
+    data, repo = setup
+    (repo / "notes.md").write_text(text)
+    _git(repo, "add", ".")
+    return _run(capsys, "--repo", str(repo), "--data-dir", str(data))
+
+
+def test_home_town_in_a_tracked_file_fails(setup, capsys):
+    _set_home_location(setup[0], f"{HOME_TOWN}, OH")
+    code, out = _scan_notes(setup, capsys, f"lives near {HOME_TOWN.upper()}, Ohio\n")
+    assert code == 1
+    assert "L1     FAIL home_town" in out, out
+
+
+def test_home_town_is_matched_as_a_whole_phrase(setup, capsys):
+    _set_home_location(setup[0], f"{HOME_TOWN} Falls, OH")
+    code, out = _scan_notes(setup, capsys, f"{HOME_TOWN} is fine\nbrindlemoor falls\n")
+    assert code == 1
+    assert "L1     FAIL home_town" not in out, out
+    assert "L2     FAIL home_town" in out, out
+
+
+def test_an_unrelated_town_passes(setup, capsys):
+    _set_home_location(setup[0], f"{HOME_TOWN}, OH")
+    code, out = _scan_notes(setup, capsys, "Springfield and Fairview are fine\n")
+    assert code == 0, out
+
+
+def test_allowlisted_home_town_passes(setup, capsys):
+    _, repo = setup
+    _set_home_location(setup[0], f"{HOME_TOWN}, OH")
+    allow = repo / "local" / "leak_allowlist.txt"
+    allow.parent.mkdir()
+    allow.write_text(f"{HOME_TOWN}\n")
+    code, out = _scan_notes(setup, capsys, f"{HOME_TOWN}\n")
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("value", ["", "  ", None, 5, ["a"], ", OH"])
+def test_no_usable_home_town_adds_no_term(setup, capsys, value):
+    _set_home_location(setup[0], value)
+    code, out = _scan_notes(setup, capsys, f"{HOME_TOWN} OH\n")
+    assert code == 0, out
+
+
+def test_home_location_with_no_comma_drops_a_trailing_state_code(setup, capsys):
+    _set_home_location(setup[0], f"{HOME_TOWN} OH")
+    code, out = _scan_notes(setup, capsys, f"{HOME_TOWN}\n")
+    assert code == 1
+    assert "FAIL home_town" in out, out
