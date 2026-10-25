@@ -759,7 +759,12 @@ def warm_paths(conn: sqlite3.Connection, job_id: int) -> list[sqlite3.Row]:
     job = conn.execute("SELECT company FROM jobs WHERE id=?", (job_id,)).fetchone()
     if job is None:
         return []
-    key = company_key(job["company"] or "")
+    return contacts_for_key(conn, company_key(job["company"] or ""))
+
+
+def contacts_for_key(conn: sqlite3.Connection, key: str) -> list[sqlite3.Row]:
+    """Connections at one company_key, in `warm_paths` order (recommenders first, then
+    seniority, then recency). The target page uses it for a company with no job."""
     if not key:
         return []
     return conn.execute(
@@ -780,6 +785,21 @@ def warm_counts(conn: sqlite3.Connection, company_keys: Iterable[str]) -> dict[s
     rows = conn.execute(
         "SELECT company_key, COUNT(*) n FROM network_contacts "
         f"WHERE company_key IN ({placeholders}) GROUP BY company_key",
+        keys,
+    ).fetchall()
+    return {r["company_key"]: r["n"] for r in rows}
+
+
+def decision_maker_counts(conn: sqlite3.Connection, company_keys: Iterable[str]) -> dict[str, int]:
+    """Contacts the enrichment pass marked as decision makers, per company_key, in one
+    query (batched like `warm_counts`). A company with none is absent from the result."""
+    keys = sorted({k for k in company_keys if k})
+    if not keys:
+        return {}
+    placeholders = ",".join("?" for _ in keys)
+    rows = conn.execute(
+        "SELECT company_key, COUNT(*) n FROM network_contacts "
+        f"WHERE enrich_decision_maker=1 AND company_key IN ({placeholders}) GROUP BY company_key",
         keys,
     ).fetchall()
     return {r["company_key"]: r["n"] for r in rows}

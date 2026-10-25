@@ -16,6 +16,7 @@ The guards, and the section that explains each:
 | `_no_real_llm_calls` | a real LLM provider | [LLM guard](#llm-guard) |
 | `_no_real_page_fetches` | an employer page fetch or a Jina page search | [Page-fetch guard](#page-fetch-guard) |
 | `_no_real_packet_research` | Jina-backed packet research | [Packet-research guard](#packet-research-guard) |
+| `_no_real_target_watch` | Jina-backed target news scans | [Target-watch guard](#target-watch-guard) |
 | `isolated_secrets` | the real secrets file | [Secrets guard](#secrets-guard) |
 | `_no_real_config` | the real legacy config and data dir | [Config and data-dir guard](#config-and-data-dir-guard) |
 | `_no_real_output_dir` | the real packet folder | [Output-folder guard](#output-folder-guard) |
@@ -53,6 +54,10 @@ To fake it, inject `search=` and `fetch=` fakes, or patch those two names in you
 No test may run packet research against the network. Packet research (`core/packet_research.py`) searches and reads pages through Jina when a key is set. `_no_real_packet_research` does two things. It makes `_jina_key` return an empty string, so every test sees no key and `run_build` takes the knowledge-only fallback whatever the developer's shell exports. And it replaces `_search` and `_read` with functions that call `pytest.fail`, so a test that passes `api_key=` without injecting `search=` and `read=` fails loudly. It uses `pytest.fail` for the same reason as the page-fetch guard: the module's own fail-soft `except Exception` cannot hide it.
 
 This guard came with the change that made packet research read fetched pages (#59). To test research, inject `search=` and `read=` fakes.
+
+## Target-watch guard
+
+No test may run the target news watch against the network. `core/target_watch.py` searches and reads pages through Jina when a key is set. `_no_real_target_watch` makes its `_jina_key` return an empty string and replaces `_search` and `_read` with functions that call `pytest.fail`, for the same reason as the packet-research guard. To test a scan, inject `search=` and `read=` fakes and patch the module's own `make_stream`, which `_STREAM_BINDINGS` also guards.
 
 ## Secrets guard
 

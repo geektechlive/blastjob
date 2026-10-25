@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ target.company }} &mdash; blastjob{% endblock %}
+{% block content %}
+<a class="back" href="/targets">&larr; targets</a>
+<article class="detail company-page">
+  <h1>{{ target.company }}</h1>
+  <div class="detail-sub">
+    <span class="badge">{{ target.tier }}</span>
+    {% if target.domain %}<span class="dim">{{ target.domain }}</span>{% endif %}
+    {% if has_profile %}<a href="/companies/{{ key_path }}">company workup &rarr;</a>{% endif %}
+  </div>
+
+  <div class="detail-block">
+    <h3>Last scan</h3>
+    {% if target.last_scan_status.startswith('failed') %}
+      <p class="warn">Scan failed: {{ target.last_scan_status[7:] }}. {% if target.last_scan_ok_at %}Last good scan {{ target.last_scan_ok_at[:10] }}.{% else %}No scan has succeeded yet.{% endif %} This is not the same as no news.</p>
+    {% elif target.last_scan_ok_at %}
+      <p class="dim">Scanned {{ target.last_scan_ok_at[:10] }}.{% if not events %} No news found.{% endif %}</p>
+    {% else %}
+      <p class="dim">Not scanned yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="detail-block">
+    <h3>News <span class="col-count">{{ events|length }}</span></h3>
+    {% if events %}
+      <ul class="facts">
+      {% for e in events %}{% set back = '/targets/' ~ key_path %}{% include "_target_event.html" %}{% endfor %}
+      </ul>
+      <p class="dim">Each line is copied from the page named beside it. The date is when that page was published, not when the event happened.</p>
+    {% else %}
+      <p class="dim">Nothing on file.</p>
+    {% endif %}
+  </div>
+
+  <div class="detail-block">
+    <h3>People you know here <span class="col-count">{{ contacts|length }}</span></h3>
+    {% if contacts %}
+    <ul class="facts">
+      {% for p in contacts %}
+      <li>
+        {% set u = p.url | safe_url %}
+        {% if u %}<a class="ext" href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ p.full_name }}</a>{% else %}<b>{{ p.full_name }}</b>{% endif %}
+        &mdash; {{ p.position }}
+        {% if p.enrich_decision_maker %}<span class="badge comp">decision maker</span>{% endif %}
+        {% if p.recommended_me %}<span class="badge comp">recommended you</span>{% endif %}
+        {% if p.last_message_at %}<span class="dim">last spoke {{ p.last_message_at }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="dim">From your own LinkedIn export. Verify before writing.</p>
+    {% else %}
+      <p class="dim">No one from your export works here.</p>
+    {% endif %}
+  </div>
+</article>
+{% endblock %}

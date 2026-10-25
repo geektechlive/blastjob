@@ -95,7 +95,7 @@ Everything lives under `src/blastjob/`.
 - `src/blastjob/discovery/`: the source adapters (Greenhouse, Ashby, Lever, Workday, Dayforce, Adzuna, LinkedIn and Indeed alert email over IMAP, retained search firms, Apple), plus normalize, pipeline and the board resolver.
 - `src/blastjob/matching/`: the geo filter, the scope prefilter, the LLM alignment scorer, the gate and the pipeline that runs them.
 - `src/blastjob/web/`: the FastAPI app, the HTMX templates, the background runtime, the tailor and outreach builds, prep, compare and settings. See [the web cockpit](web.md).
-- `src/blastjob/daily.py` (with `daily_digest.py` for the digest text) and `src/blastjob/notify/`: `blastjob-daily` (discover, score, close, digest). The launchd plist templates are in `launchd/`, the installer is `scripts/install-launchd.sh` and the runner is `scripts/run-daily.sh`. See [daily](daily.md).
+- `src/blastjob/daily.py` (with `daily_digest.py` for the digest text and `daily_targets.py` for the target news step) and `src/blastjob/notify/`: `blastjob-daily` (discover, score, close, digest). The launchd plist templates are in `launchd/`, the installer is `scripts/install-launchd.sh` and the runner is `scripts/run-daily.sh`. See [daily](daily.md).
 - `src/blastjob/comp.py` parses compensation. `src/blastjob/secrets.py` autoloads the secrets file.
 - `src/blastjob/config.py` and `src/blastjob/settings_store.py` load and save settings. `src/blastjob/setup_cli.py` and `src/blastjob/setup_doctor.py` are the `blastjob setup` command and its checks.
 - `tests/` holds the suite and its guards. See [testing](testing.md).

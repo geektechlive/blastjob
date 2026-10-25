@@ -25,6 +25,7 @@ from blastjob import config as cfg_mod
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import network_views as nv
+from blastjob.core import target_store as ts
 from blastjob.core.paths import locate
 from blastjob.discovery import follow_seeds as fs
 from blastjob.web import people, service
@@ -221,6 +222,7 @@ def register(app: FastAPI, deps: Deps) -> None:
                 floor=None,
                 job=None,
                 comp_kinds=co.COMP_KINDS,
+                is_target=ts.get_target(c, key) is not None,
             )
         finally:
             c.close()

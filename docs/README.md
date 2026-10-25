@@ -16,6 +16,8 @@ Start with the install guide, then the cockpit tour.
 - [Reviewing matches](using/reviewing-matches.md): work through Surfaced and Queue,
   read scores and badges, and handle the same role showing up twice.
 - [Pipeline stages](using/stages.md): the five stages and the moves on each page.
+- [Target companies](using/targets.md): keep a list of companies you want to work for
+  and see dated news there, with who you know.
 - [Tailoring a packet](using/tailoring.md): build a resume, cover letter and prep pack,
   then read the verification verdict.
 - [Applying and following up](using/applying.md): mark a job applied, follow up, and

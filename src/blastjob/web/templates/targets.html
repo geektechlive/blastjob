@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Targets &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Targets &mdash; companies you are watching</h1>
+<p class="dim">Once a week the daily run looks for dated news at each core target that often
+comes before a leadership hire: a new executive, an acquisition, an ERP or cloud program.
+Each item is a sentence copied from the page that reported it, with the date that page was
+published and where it came from. It is a lead for outreach, never a fact to quote in a
+packet. A scan that failed says so; it is never shown as no news.</p>
+
+{% if add_result is defined and add_result %}
+  <p class="dim">Added {{ add_result.added|length }} to {{ added_tier }}.
+  {% if add_result.existing %}{{ add_result.existing|length }} already on the list: {{ add_result.existing|join(', ') }}.{% endif %}
+  {% if add_result.rejected %}Not added (no usable name): {{ add_result.rejected|join(', ') }}.{% endif %}</p>
+{% endif %}
+{% if add_errors %}
+  <div class="error"><p>These lines were not added:</p>
+  <ul>{% for err in add_errors %}<li>{{ err }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+<form class="settings-form" method="post" action="/targets/add">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <label>Add target companies
+    <textarea name="companies" rows="5" placeholder="Acme Widgets | acme.example.com&#10;Northwind Traders"></textarea>
+    <small>One company per line. Optionally add <code>| domain</code> (its own website, for
+    example <code>acme.example.com</code>) and <code>| ST</code> for a state other than your
+    home state. Without a domain, news can only be labelled a news report.</small>
+  </label>
+  <label>List
+    <select name="tier">
+      <option value="core">Core (scanned weekly)</option>
+      <option value="dream">Dream</option>
+    </select>
+  </label>
+  <button type="submit">Add</button>
+</form>
+
+{% if targets %}
+<div class="table-wrap">
+<table class="companies">
+  <thead><tr><th>Company</th><th>List</th><th>Last scan</th><th>News</th><th>People you know</th><th></th></tr></thead>
+  <tbody>
+  {% for t in targets %}
+    <tr>
+      <td><a href="/targets/{{ t.company_key | urlencode }}">{{ t.company }}</a>
+        {% if t.domain %}<div class="dim">{{ t.domain }}</div>{% endif %}</td>
+      <td>
+        <form method="post" action="/targets/{{ t.company_key | urlencode }}/tier" class="inline">
+          <input type="hidden" name="_token" value="{{ token }}">
+          <input type="hidden" name="tier" value="{{ 'dream' if t.tier == 'core' else 'core' }}">
+          <span class="badge">{{ t.tier }}</span>
+          <button type="submit">Make {{ 'dream' if t.tier == 'core' else 'core' }}</button>
+        </form>
+      </td>
+      <td>
+        {% if t.last_scan_status.startswith('failed') %}
+          <span class="warn">Scan failed</span> <span class="dim">{{ t.last_scan_status[7:] }}</span>
+          <div class="dim">{% if t.last_scan_ok_at %}last good scan {{ t.last_scan_ok_at[:10] }}{% else %}never scanned successfully{% endif %}</div>
+        {% elif t.last_scan_ok_at %}
+          <span class="dim">{{ t.last_scan_ok_at[:10] }}</span>
+        {% else %}
+          <span class="dim">Not scanned yet{% if t.tier == 'dream' %} (dream targets are not scanned for news){% endif %}</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if t.events %}
+          <ul class="facts">
+          {% for e in t.events[:3] %}{% set back = '/targets' %}{% include "_target_event.html" %}{% endfor %}
+          </ul>
+          {% if t.events|length > 3 %}<a href="/targets/{{ t.company_key | urlencode }}">{{ t.events|length - 3 }} more</a>{% endif %}
+        {% elif t.last_scan_ok_at and not t.last_scan_status.startswith('failed') %}
+          <span class="dim">No news found</span>
+        {% endif %}
+      </td>
+      <td>{{ t.contacts }} contact{{ '' if t.contacts == 1 else 's' }}{% if t.decision_makers %}, {{ t.decision_makers }} decision maker{{ '' if t.decision_makers == 1 else 's' }}{% endif %}</td>
+      <td>
+        <form method="post" action="/targets/{{ t.company_key | urlencode }}/remove" class="inline">
+          <input type="hidden" name="_token" value="{{ token }}">
+          <button type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No targets yet. Paste the companies you want to watch above.</p>
+{% endif %}
+{% endblock %}

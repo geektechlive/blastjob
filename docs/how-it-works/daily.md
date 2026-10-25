@@ -4,7 +4,7 @@
 
 ## What a run does
 
-`blastjob-daily` calls the same `run_discovery` and `run_matching` the cockpit uses (no HTTP hop), then closure, packet filing, the employer-description steps and the reply scan, and sends ONE digest according to `notify.mode`. A scheduled run is `blastjob-daily` with no arguments, at 07:30 (the launchd template in `launchd/`, through `scripts/run-daily.sh`).
+`blastjob-daily` calls the same `run_discovery` and `run_matching` the cockpit uses (no HTTP hop), then closure, packet filing, the employer-description steps, the reply scan and the target-company news step, and sends ONE digest according to `notify.mode`. A scheduled run is `blastjob-daily` with no arguments, at 07:30 (the launchd template in `launchd/`, through `scripts/run-daily.sh`).
 
 In order:
 
@@ -17,11 +17,12 @@ In order:
 7. **Packet filing** (`daily_filing.filing_pass`). Closure is what moves a kept job to `posting_closed`, so filing comes after it. A dry run only logs what it would do. See [packet filing](events-and-filing.md#packet-filing).
 8. **Employer-description lookup and re-score.** Opt-in network step. See [employer data](employer-data.md#in-the-daily-run).
 9. **Reply scan.** Surfaces recruiter replies to jobs you applied to. It never drafts or sends. With no mailbox credentials it does nothing, silently. See [recruiter replies](discovery.md#recruiter-replies).
-10. **Digest.** Built from what is now in the database, recorded, sent and stamped (see [Digest contents](#digest-contents) and [Delivery](#delivery)).
+10. **Target news.** Scans the core target companies that are due, at most 8 a run, and records failures. See [Target news](#target-news).
+11. **Digest.** Built from what is now in the database, recorded, sent and stamped (see [Digest contents](#digest-contents) and [Delivery](#delivery)).
 
-Every step is fail-soft. An exception rolls back the step's pending work, goes into the run's `errors` under the step's name (`discovery`, `scoring`, `matching`, `closure`, `replies`, `employer_jd` and per-source adapter keys) and the run carries on, because the run must still be recorded and reported. Errors appear under "Source errors" in the digest.
+Every step is fail-soft. An exception rolls back the step's pending work, goes into the run's `errors` under the step's name (`discovery`, `scoring`, `matching`, `closure`, `replies`, `employer_jd`, `target_watch` and per-source adapter keys) and the run carries on, because the run must still be recorded and reported. Errors appear under "Source errors" in the digest.
 
-A dry run is not a no-op. `blastjob-daily --dry-run` still takes the backup, still discovers and scores (and so still spends model calls), and those results are saved. What it does not do is send, stamp `notified_at`, record a `daily_runs` row, move jobs on closure, write employer descriptions, stamp the reply ledger or file packets. Because nothing is stamped, the next real run announces everything the dry run printed. The digest is printed after the summary line, under a `---` separator.
+A dry run is not a no-op. `blastjob-daily --dry-run` still takes the backup, still discovers and scores (and so still spends model calls), and those results are saved. What it does not do is send, stamp `notified_at`, record a `daily_runs` row, move jobs on closure, write employer descriptions, stamp the reply ledger, file packets or store target news. The target news step still searches, reads pages and calls the model (so it spends), but takes no lease and writes no event or scan status. Because nothing is stamped, the next real run announces everything the dry run printed. The digest is printed after the summary line, under a `---` separator.
 
 ## Digest contents
 
@@ -35,13 +36,20 @@ The digest is built by `build_digest`. Sections appear only when they have somet
   - The cockpit links use the base from `cockpit_base`: `web.public_url` when set, else `http://127.0.0.1:<web.port>`. `web.public_url` is checked against the same Host rule the cockpit enforces (loopback or a private IP address, never a DNS name); see [LAN access](../operations/lan-access.md#digest-links-on-a-phone).
 - **Closed postings.** One line naming up to five kept jobs whose posting closed this run.
 - **Replies.** One entry per surfaced reply: who, about what, a one-line snippet and a cockpit link.
+- **Target news.** Events found for your target companies since the last digest (see [below](#target-news)).
 - **Follow-ups due.** Applied-stage jobs with a follow-up due, most overdue first.
 - **Source errors.** One line per failing source or step, cut to 160 characters.
 - **Notes.** Things worth a human's attention that are not failures: a snapshot the stale-marking guard refused to act on, or an employer-description summary. Cut to 200 characters each.
 - **Weekly heartbeat.** On Mondays (`HEARTBEAT_WEEKDAY`): active and kept counts, plus the last seven days' runs, fetched, scored, new roles and average duration.
-- **Footer.** An italic line with the run duration, the top five sources by fetch count and scoring throughput and cost (`cost unknown` when the provider reported no usage). The cost covers matching plus the employer-description re-score pass of step 8; it is unknown if any call in either was. It is added only when the digest is actually sent.
+- **Footer.** An italic line with the run duration, the top five sources by fetch count and scoring throughput and cost (`cost unknown` when the provider reported no usage). The cost covers matching, the employer-description re-score pass of step 8 and the target news model call of step 10; it is unknown if any call in any was. It is added only when the digest is actually sent.
 
-**Quiet days send nothing.** With no roles, errors, follow-ups, notes, closures, replies or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
+### Target news
+
+`daily_targets.targets_step` runs after the reply scan, so the digest sees its result. It scans the due core targets (see [the target news watch](employer-data.md#target-company-news-watch)) and records `target_failed` and the model cost on the run result. The cost joins the run total in the footer.
+
+The block is built from `company_events` rows that are not dismissed and have `notified_at` empty. Each entry shows the company, the event type, "published <date>", the source basis and host, the verified sentence (stripped of links, markup and mention characters, cut to 160 characters), how many people you know there and a cockpit link. At most 8 are shown (`MAX_TARGET_NEWS`), with an "and N more" line. Delivery follows the job rule: each event is stamped `notified_at` only for the ones rendered, and only after the send succeeded, so a failed send or the overflow leads the next digest. When scans failed in this run, one line says "N target scans failed" rather than nothing. A day with only target news is not a quiet day.
+
+**Quiet days send nothing.** With no roles, errors, follow-ups, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
 
 ## Delivery
 

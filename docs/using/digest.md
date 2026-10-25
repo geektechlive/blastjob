@@ -35,6 +35,8 @@ Closed postings. A line like "2 kept postings closed: Acme Corp VP of Technology
 
 Replies. Under "Replies", each reply from a company you applied to, with the sender, the date and a short snippet. It is shown for you to read. No response is ever drafted.
 
+Target news. Under "Target news", dated news at companies on your [target list](targets.md): the company, what kind of news, "published" and the date, whether it came from the employer's own site or a news report, the host, the sentence the page printed, how many people you know there and a link to that company in the cockpit. It is a lead to read, not a fact to quote. If a weekly scan failed, one line says how many, so a quiet week and a broken scan look different.
+
 Follow-ups due. Under "Follow-ups due", the applied roles that need a nudge, with the reason. See [applying](applying.md#follow-ups).
 
 Source errors and notes. Under "Source errors", a source that failed this run. Under "Notes", things worth knowing, such as a board that returned suspiciously few jobs and so was not used to mark postings stale.

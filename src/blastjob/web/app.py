@@ -44,6 +44,7 @@ from blastjob.web import (
     routes_scores,
     routes_settings,
     routes_stages,
+    routes_targets,
     service,
 )
 from blastjob.web import manual_job as mj
@@ -280,6 +281,7 @@ def create_app(
     mj.register(app, conn, load_config, render)
     routes_stages.register(app, deps)
     routes_network.register(app, deps)
+    routes_targets.register(app, deps)
     routes_packets.register(app, deps)
     routes_settings.register(app, deps, save_config)
     routes_outcomes.register(app, deps)

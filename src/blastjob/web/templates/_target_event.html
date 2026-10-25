@@ -1,0 +1,19 @@
+{# One news event for a target company. `e` is the event, `back` the page to return to.
+   The span is a sentence copied from the cited page, shown as page text: never model prose.
+   The date is when the page was published, not when the event happened. #}
+<li class="target-event">
+  <span class="badge">{{ e.label }}</span>
+  <span class="dim">published {{ e.published_on }}</span>
+  <span class="badge state">{{ e.basis_label }}</span>
+  <blockquote>&ldquo;{{ e.source_span[:240] }}&rdquo;</blockquote>
+  {% set src = e.source_url | safe_url %}
+  <span class="dim">
+    {% if src %}<a class="ext" href="{{ src }}" target="_blank" rel="noopener noreferrer">{{ e.page_title or e.host }}</a>{% else %}{{ e.page_title or e.host }}{% endif %}
+    ({{ e.host }})
+  </span>
+  <form method="post" action="/events/{{ e.id }}/dismiss" class="inline">
+    <input type="hidden" name="_token" value="{{ token }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button type="submit">Dismiss</button>
+  </form>
+</li>

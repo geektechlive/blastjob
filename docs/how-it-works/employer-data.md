@@ -1,6 +1,6 @@
 # Employer data
 
-**What this covers:** The data blastjob gathers about employers: full job descriptions taken from the employer's own posting to replace aggregator snippets, company profiles and compensation signals, and the people found for addressed outreach. It is for anyone changing `core/employer_jd.py`, `core/company.py`, `web/research.py` or `web/people.py`.
+**What this covers:** The data blastjob gathers about employers: full job descriptions taken from the employer's own posting to replace aggregator snippets, company profiles and compensation signals, and the people found for addressed outreach. It is for anyone changing `core/employer_jd.py`, `core/company.py`, `web/research.py`, `web/people.py`, `core/target_watch.py` or `core/target_store.py`.
 
 ## Employer descriptions
 
@@ -170,3 +170,30 @@ People are stored in `contacts` (migration 10) with the source URL, so you can v
 **Draft note to** a contact calls the outreach draft with that `contact_id`. The prompt addresses the person by first name and shapes the ask to their role: a recruiter gets a crisp fit summary and availability, a hiring manager a peer-level note. With no contact it opens "Dear Hiring Manager" and says it is unaddressed. Outreach is single-flight per job and contact. It is still draft only: you copy the text into LinkedIn or email yourself. It needs `JINA_API_KEY` for the search step, and the model call for the note.
 
 The people list is separate from your own connections. For warm paths from your LinkedIn export, see [your network](network.md).
+
+## Target company news watch
+
+You keep a list of target companies on the **Targets** page (`web/routes_targets.py`). Once a week the daily run looks for dated news at each core target that often comes before a leadership hire, and shows it beside the people you know there. It is a lead for outreach. It never feeds a packet, the resume or the cover letter.
+
+**The list.** `target_companies` (migration 58) is keyed by `company_key()`, so "Acme Widgets, Inc." and "ACME WIDGETS" are one company. A target has a tier (`core` is scanned, `dream` is stored for later), an optional domain you entered, and an optional state. Without a state, the candidate's `discovery.home_state` is used. Removing a target deletes its row and keeps its events. Every event query joins the table, so the events stay hidden while the target is gone and reappear when you add it back. Bulk add (`target_store.parse_bulk`) reads `Name | domain | ST` lines, reports every bad line instead of dropping it, refuses job-board and shared-hosting domains (`employer_domains.normalize_domain`) and reads at most 200 lines.
+
+**Who is scanned.** `target_store.due_targets` picks core targets whose last good scan is a week old or missing, never more than 8 per run, never-scanned first and then the least recently attempted, so a long list rotates. A company whose scan failed is retried after 1 day, then 3, then 7. A lease (`scan_claimed_at`, claimed with one atomic `UPDATE` and ignored after 30 minutes) keeps two runs off one company. With no targets the step does nothing at all. With targets but no `JINA_API_KEY`, it scans nothing, writes nothing and adds a note to the digest.
+
+**One scan** (`target_watch.scan_target`) makes at most 2 Jina searches and 4 page reads, and one toolless `claude` call. It writes nothing itself. In order:
+
+1. **Anchors.** Identity is anchored only to facts you entered: the target's domain, `discovery.employer_domains` and the state. `company_profiles.website` is never used, because a model produced it. A target with none of these fails the scan ("no domain or home state") instead of guessing.
+2. **Before reading.** LinkedIn results are dropped. A result is read only if its title or description names the company as a whole phrase, or its address is on the target's own domain.
+3. **After reading.** The page must pass `research_match.page_matches`, the same check packet research uses: on the company's domain, or naming the company with the state close by. A common-word name on a page about another place is dropped.
+4. **Date.** `page_dates.page_date` or no event. The date is shown as "published", the date of the page, never as when the event happened. A page older than 120 days (or dated in the future) is skipped.
+5. **The model's job.** It gets the sanitized, fenced pages and returns `{url, event_type, polarity, source_span}`. Python keeps an entry only if the url is one it was given, the type is in the fixed set (`target_store.EVENT_TYPES`), the polarity is `affirmed` (so considered, rumored, denied and abandoned events are dropped), and `source_span` is verbatim in that page (`research_facts.span_verifies`). On a page that is not on a trusted domain, the span must also sit within 400 characters of the company's name. The model supplies no date and no prose that is shown. Page text is untrusted, and the span check is what enforces that.
+6. **Labels.** Each event stores `source_basis`: `employer_site` when the page is on a domain you entered or configured, otherwise `news_report`. The page shows the basis and the source host. Nothing is called confirmed.
+
+**Failure is never "no news".** A search error, a timeout, a model error, an unparseable reply, or any page read failing while no event was found (a page we could not read may have held the news) marks the scan `failed: <reason>`, bumps `scan_failures`, and leaves `last_scan_ok_at` alone. The page says "Scan failed" and the digest counts failed scans. Only zero search results, or pages that did not pass the checks, is a real "no news found". A scan's events, status and released lease are written in one transaction (`target_store.record_scan`).
+
+**Dedupe.** The key is a fingerprint of company, event type and the normalized span (`UNIQUE`), so the same sentence found again, in another run or at another URL, is stored once, and one page can hold several events. The stored URL is canonical: lowercase host, no fragment, tracking parameters removed.
+
+**Dry run.** `blastjob-daily --dry-run` still searches, reads and classifies, but takes no lease and writes no event, status or `notified_at`.
+
+**Digest.** See [the daily run](daily.md#target-news). **Cockpit.** `GET /targets` lists targets, best (newest event) first, with warm-path counts from `network.warm_counts` and `network.decision_maker_counts`. `GET /targets/{key}` works for a company with no profile and shows its events, scan status and the matching contacts, with decision makers marked by `enrich_decision_maker`. The company page links to it when the company is a target. The POST routes are `/targets/add`, `/targets/{key}/remove`, `/targets/{key}/tier` and `/events/{id}/dismiss`, each behind the usual CSRF token and Origin check.
+
+Defaults you can change in code: 120-day freshness, 8 companies per run, 1/3/7 day backoff, weekly cadence (`target_watch.FRESHNESS_DAYS`, `target_store.MAX_COMPANIES_PER_RUN`, `BACKOFF_DAYS`, `RESCAN_DAYS`). If the watch proves noisy, tighten it to `employer_site` sources only; if it is empty, relax freshness.

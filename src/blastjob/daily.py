@@ -34,16 +34,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from blastjob import config as cfg_mod
-from blastjob import daily_employer_jd, daily_filing, daily_tools
+from blastjob import daily_employer_jd, daily_filing, daily_targets, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
 from blastjob.core import closure, closure_links
+from blastjob.core import target_store as target_store
 from blastjob.core.closure_links import LinkDeps, is_authoritative
 from blastjob.daily_digest import (  # noqa: F401 -- re-exported: daily.build_digest etc.
     COCKPIT_BASE,
     HEADER,
     MAX_CLOSED_NAMES,
     MAX_DIGEST_JOBS,
+    MAX_TARGET_NEWS,
     _comp_badge,
     _top_sources,
     _where,
@@ -55,6 +57,7 @@ from blastjob.daily_digest import (  # noqa: F401 -- re-exported: daily.build_di
     format_run_footer,
     order_for_digest,
     rendered_jobs,
+    rendered_target_news,
     warm_job_ids,
 )
 from blastjob.daily_tools import recluster_cli
@@ -96,6 +99,9 @@ class DailyResult:
     scoring_cost: CallCost = field(default_factory=CallCost)
     # The employer-description re-score pass (daily_employer_jd.lookup_step), same rules.
     rescore_cost: CallCost = field(default_factory=CallCost)
+    # The target-company news step (daily_targets): scans that failed this run, and its model cost.
+    target_failed: int = 0
+    target_cost: CallCost = field(default_factory=CallCost)
     new_jobs: int = 0
     followups: int = 0
     errors: dict[str, str] = field(default_factory=dict)
@@ -112,7 +118,7 @@ class DailyResult:
     @property
     def total_cost(self) -> CallCost:
         """Everything the run's model passes cost (unknown if any part was)."""
-        return aggregate_calls([self.scoring_cost, self.rescore_cost])
+        return aggregate_calls([self.scoring_cost, self.rescore_cost, self.target_cost])
 
     @property
     def has_cost(self) -> bool:
@@ -122,6 +128,8 @@ class DailyResult:
             bool(self.scoring_batches)
             or self.rescore_cost.cost_usd > 0
             or (not self.rescore_cost.known)
+            or self.target_cost.cost_usd > 0
+            or (not self.target_cost.known)
         )
 
 
@@ -335,8 +343,10 @@ async def run_daily(
         cfg, conn, res, closure_res, shared_deps, free=free_copy, dry_run=dry_run, score=score
     )
     await _replies_pass(cfg, conn, res, dry_run=dry_run)
+    await daily_targets.targets_step(cfg, conn, res, dry_run=dry_run, today=today)
 
     jobs = pending_jobs(conn)
+    target_news = daily_targets.pending_news(conn)
     fups = followups_due(conn)
     warm_ids = warm_job_ids(conn, jobs)
     links = apply_links_for(conn, jobs)
@@ -354,6 +364,8 @@ async def run_daily(
         replies=res.replies,
         notes=res.notes,
         apply_links=links,
+        target_news=target_news,
+        target_failed=res.target_failed,
     )
     res.duration_s = time.monotonic() - run_start
 
@@ -379,12 +391,16 @@ async def run_daily(
         replies=res.replies,
         notes=res.notes,
         apply_links=links,
+        target_news=target_news,
+        target_failed=res.target_failed,
     )
     await send(res.digest)  # raises on failure -> nothing stamped
     # Stamp only what was actually rendered in the sent digest — anything
     # past the MAX_DIGEST_JOBS cutoff stays notified_at='' so it leads the
     # next run's digest instead of being silently buried forever.
     mark_notified(conn, [int(r["id"]) for r in rendered_jobs(jobs, warm_ids)])
+    # Same rule for target news: only the events the sent digest rendered.
+    target_store.mark_notified(conn, [n.id for n in rendered_target_news(target_news)])
     res.sent = True
     mark_run_sent(conn, run_id)
     return res

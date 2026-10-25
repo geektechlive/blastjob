@@ -17,6 +17,7 @@ People start at [README.md](README.md); every doc is indexed in [docs/README.md]
     a new binding module joins the guard list (`tests/test_no_real_llm_guard.py` checks).
   - Page fetch or Jina search: `tests/conftest.py::_no_real_page_fetches`.
   - Packet research: `tests/conftest.py::_no_real_packet_research`.
+  - Target news watch: `tests/conftest.py::_no_real_target_watch` (inject `search=` and `read=`).
   - Secrets file: `tests/conftest.py::isolated_secrets` (use `monkeypatch.setenv`).
   - Config or data dir: `tests/conftest.py::_no_real_config` (`BLASTJOB_DATA_DIR` = a `tmp_path`).
   - Output folder: `tests/conftest.py::_no_real_output_dir` (`paths.output_dir` = a temp dir).

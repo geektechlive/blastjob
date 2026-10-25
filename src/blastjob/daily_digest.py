@@ -10,10 +10,14 @@ re-exports every public name here so `daily.build_digest` and friends still work
 
 from __future__ import annotations
 
+import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
+from blastjob.core.target_store import BASIS_LABELS, EVENT_LABELS
 from blastjob.llm.cost import describe_cost
 from blastjob.web.apply_link import ApplyLink
 
@@ -25,6 +29,28 @@ HEADER = "🎯 **blastjob**"
 COCKPIT_BASE = "http://127.0.0.1:8765"  # fallback default; the run derives it: cockpit_base()
 MAX_DIGEST_JOBS = 25
 MAX_CLOSED_NAMES = 5
+MAX_TARGET_NEWS = 8
+MAX_TARGET_SPAN_CHARS = 160
+# Page text is untrusted: no markdown, links, mentions or mass-ping syntax get through.
+_UNSAFE_SPAN_CHARS = re.compile(r"[<>@*_`\[\]()|~\\#]")
+
+
+_BARE_URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class TargetNewsItem:
+    """One target-company event as the digest shows it (core/target_store row + contacts)."""
+
+    id: int
+    company_key: str
+    company: str
+    event_type: str
+    published_on: str
+    span: str
+    host: str
+    basis: str
+    contacts: int
 
 
 _COMP_TAGS = {"posted": "posted", "inferred": "inferred (from the posting)", "estimated": "est."}
@@ -111,6 +137,8 @@ def build_digest(
     replies: list[ReplyMatch] | None = None,
     apply_links: Mapping[int, ApplyLink] | None = None,
     notes: Mapping[str, str] | None = None,
+    target_news: Sequence[TargetNewsItem] = (),
+    target_failed: int = 0,
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
@@ -119,7 +147,8 @@ def build_digest(
     closed = closed_postings or []
     replied = replies or []
     noted = notes or {}
-    if not (jobs or errors or followups or heartbeat or closed or replied or noted):
+    quiet = not (jobs or errors or followups or heartbeat or closed or replied or noted)
+    if quiet and not (target_news or target_failed):
         return ""
     n = len(jobs)
     title = f"{HEADER} — {n} new role{'s' if n != 1 else ''}" if n else HEADER
@@ -145,6 +174,9 @@ def build_digest(
         lines.append("**Replies**")
         for r in replied:
             lines.append(format_reply_line(r, base_url))
+    if target_news or target_failed:
+        lines.append("")
+        lines += format_target_block(target_news, target_failed, base_url)
     if followups:
         lines.append("")
         lines.append("**Follow-ups due**")
@@ -170,6 +202,46 @@ def build_digest(
         lines.append("")
         lines.append(footer)
     return "\n".join(lines)
+
+
+def rendered_target_news(news: Sequence[TargetNewsItem]) -> list[TargetNewsItem]:
+    """The events `build_digest` renders (`MAX_TARGET_NEWS`); the rest stay unnotified."""
+    return list(news)[:MAX_TARGET_NEWS]
+
+
+def _plain_span(span: str) -> str:
+    """The span with links, markup and mention syntax removed (Discord embeds a bare URL)."""
+    no_links = _BARE_URL.sub("link omitted", span)
+    cleaned = " ".join(_UNSAFE_SPAN_CHARS.sub(" ", no_links).split())
+    return cleaned[:MAX_TARGET_SPAN_CHARS]
+
+
+def format_target_line(item: TargetNewsItem, base_url: str) -> str:
+    n = item.contacts
+    who = f"{n} contact{'s' if n != 1 else ''}"
+    source = f"{BASIS_LABELS.get(item.basis, item.basis)}, {item.host}"
+    label = EVENT_LABELS.get(item.event_type, item.event_type)
+    return (
+        f"• {item.company} · {label} · published {item.published_on} · {source}\n"
+        f'   "{_plain_span(item.span)}" · {who} · '
+        f"cockpit <{base_url}/targets/{quote(item.company_key, safe='')}>"
+    )
+
+
+def format_target_block(
+    news: Sequence[TargetNewsItem], failed: int, base_url: str = COCKPIT_BASE
+) -> list[str]:
+    """The "Target news" section: new events (capped) and, when scans failed, one line
+    saying so rather than nothing."""
+    lines = ["**Target news**"]
+    lines += [format_target_line(i, base_url) for i in rendered_target_news(news)]
+    if len(news) > MAX_TARGET_NEWS:
+        lines.append(f"…and {len(news) - MAX_TARGET_NEWS} more: <{base_url}/targets>")
+    if failed:
+        lines.append(
+            f"{failed} target scan{'s' if failed != 1 else ''} failed: <{base_url}/targets>"
+        )
+    return lines
 
 
 def format_reply_line(r: ReplyMatch, base_url: str = COCKPIT_BASE) -> str:

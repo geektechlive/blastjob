@@ -24,7 +24,7 @@ Everything else is under **More**:
 
 - **Browse**: **Matches** (every undecided role scored 65 or higher, ranked), **All** (every active job and why it is where it is), and **Compare** (a side-by-side table).
 - **Track**: **Pipeline** (a board of your kept jobs by lane), **Funnel** (every job counted by the stage it sits in, plus sources that never produce a match), and **Packets** (every resume and cover letter bundle built).
-- **Research**: **Companies** (company workups, plus the companies you have excluded) and **Network** (your own LinkedIn export, matched to employers).
+- **Research**: **Companies** (company workups, plus the companies you have excluded), **Targets** (companies you are watching, see [target companies](targets.md)) and **Network** (your own LinkedIn export, matched to employers).
 - **Setup**: **Work history**, **Ingest** (upload old resumes to build the work history) and **Settings**.
 
 On the right of the bar are four buttons:

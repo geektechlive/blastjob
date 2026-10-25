@@ -576,4 +576,50 @@ MIGRATIONS: list[tuple[int, str]] = [
         "ALTER TABLE jobs ADD COLUMN app_channel_via TEXT DEFAULT '';"
         "ALTER TABLE jobs ADD COLUMN app_channel_at TEXT;",
     ),
+    # 58: the target-company news watch (#85). `target_companies` is the owner's list
+    # (core tier is scanned weekly; dream is for #90). Removing a target deletes its row
+    # and keeps its events, which every event query hides by joining this table; adding it
+    # again shows them again. `scan_claimed_at` is the per-target lease and `scan_failures`
+    # drives the 1/3/7 day retry backoff. `company_events` holds one verbatim sentence from
+    # a dated page per event: `fingerprint` (company, type, normalized span) is the dedupe
+    # key, so one page may hold several events. `source_basis` says whether the page sits on
+    # an owner-entered employer domain or is a news report; nothing is called confirmed.
+    # `notified_at` is stamped per event only after a digest carrying it was sent.
+    (
+        58,
+        """
+        CREATE TABLE IF NOT EXISTS target_companies (
+            company_key      TEXT PRIMARY KEY,
+            company          TEXT NOT NULL,
+            tier             TEXT NOT NULL DEFAULT 'core' CHECK (tier IN ('core', 'dream')),
+            domain           TEXT DEFAULT '',
+            state            TEXT DEFAULT '',
+            added_at         TEXT NOT NULL,
+            last_scan_at     TEXT DEFAULT '',
+            last_scan_status TEXT DEFAULT '',
+            last_scan_ok_at  TEXT DEFAULT '',
+            scan_failures    INTEGER DEFAULT 0,
+            scan_claimed_at  TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS company_events (
+            id             INTEGER PRIMARY KEY,
+            company_key    TEXT NOT NULL,
+            event_type     TEXT NOT NULL CHECK (event_type IN (
+                'new_ceo', 'new_cfo', 'new_cio_or_cto', 'it_leader_departure',
+                'acquisition', 'private_equity', 'merger', 'funding',
+                'erp_or_cloud_program', 'restructuring')),
+            source_url     TEXT NOT NULL,
+            page_title     TEXT DEFAULT '',
+            source_span    TEXT NOT NULL,
+            published_on   TEXT NOT NULL,
+            source_basis   TEXT NOT NULL CHECK (source_basis IN ('employer_site', 'news_report')),
+            identity_basis TEXT NOT NULL CHECK (identity_basis IN ('domain', 'located_mention')),
+            fingerprint    TEXT NOT NULL UNIQUE,
+            found_at       TEXT NOT NULL,
+            notified_at    TEXT DEFAULT '',
+            dismissed_at   TEXT DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_company_events_key ON company_events(company_key);
+        """,
+    ),
 ]

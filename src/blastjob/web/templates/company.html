@@ -10,6 +10,7 @@
     {% if profile.hq %}<span class="dim">{{ profile.hq }}</span>{% endif %}
     {% if profile.founded %}<span class="dim">· founded {{ profile.founded }}</span>{% endif %}
     <span class="dim">· updated {{ profile.updated_at[:10] }}</span>
+    {% if is_target %}<a href="/targets/{{ profile.company_key | urlencode }}">target news &rarr;</a>{% endif %}
   </div>
 
   {% if profile.identity_basis == 'judged' %}<p class="warn">Identity judged by the model, not confirmed: no page matched this company's website or job locations, so check that the sources below are about the right company.</p>{% endif %}
