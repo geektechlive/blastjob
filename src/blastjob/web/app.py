@@ -51,6 +51,7 @@ from blastjob.web import (
     routes_scores,
     routes_settings,
     routes_stages,
+    routes_submissions,
     routes_targets,
     service,
 )
@@ -332,6 +333,7 @@ def create_app(
     routes_stages.register(app, deps)
     routes_network.register(app, deps)
     routes_asks.register(app, deps)
+    routes_submissions.register(app, deps)
     routes_recruiters.register(app, deps)
     routes_targets.register(app, deps)
     routes_debrief.register(app, deps)
@@ -397,6 +399,7 @@ def create_app(
                 warm_paths=warm_paths,
                 warm_people=nv.warm_paths_for_job(c, job_id),
                 **asks_view.ask_context(c, job_id),
+                **routes_submissions.section_context(c, job_id, cfg),
                 packet=packet,
                 groundedness=fitscore.load_fit_score(
                     packet["dir"] if packet else None,
@@ -443,6 +446,7 @@ def create_app(
         action: str,
         channel: str = Form(""),
         via: str = Form(""),
+        submission_ack: str = Form(""),
         _: None = Depends(require_csrf),
     ):
         """List-row stage moves: apply, advance, withdraw, reopen. Each is a
@@ -458,7 +462,11 @@ def create_app(
         c = conn()
         try:
             # A move that took also re-files the job's packets (best-effort).
-            moved = sm.run_action(c, job_id, action, load_config=load_config)
+            moved, refused = routes_submissions.stage_move(
+                deps, c, job_id, action, submission_ack, load_config
+            )
+            if refused:
+                return refused
             if moved and action == "apply" and chosen:
                 service.set_application_channel(c, job_id, chosen, note)
             if moved and action == "advance":
@@ -496,10 +504,6 @@ def create_app(
         finally:
             c.close()
 
-    def _applied_at(c: sqlite3.Connection, job_id: int) -> str:
-        row = c.execute("SELECT applied_at FROM jobs WHERE id=?", (job_id,)).fetchone()
-        return ((row["applied_at"] if row else "") or "").strip()
-
     @app.post("/jobs/{job_id}/status", response_class=HTMLResponse)
     async def set_status(
         request: Request,
@@ -507,6 +511,7 @@ def create_app(
         status: str = Form(...),
         channel: str = Form(""),
         via: str = Form(""),
+        submission_ack: str = Form(""),
         _: None = Depends(require_csrf),
     ):
         # posting_closed/filled belong to the closure lifecycle, which records
@@ -521,8 +526,12 @@ def create_app(
         try:
             # Permissive expected set: any current application_state is allowed to
             # move (users correct mistakes); the CAS still guards review_state='kept'.
-            first_send = status == "applied" and not _applied_at(c, job_id)
-            moved = service.set_application_state(c, job_id, status, ["", *STATUSES])
+            first_send = status == "applied" and not service.applied_at(c, job_id)
+            moved, refused = routes_submissions.status_move(
+                deps, request, c, job_id, status, ["", *STATUSES], submission_ack
+            )
+            if refused:
+                return refused
             send_note = ""
             if moved and status == "applied" and chosen:
                 service.set_application_channel(c, job_id, chosen, note)

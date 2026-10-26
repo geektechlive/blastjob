@@ -12,11 +12,20 @@
     <span class="badge state">{{ (job.application_state or 'not applied') | replace('_', ' ') }}</span>
     {% if job.applied_at %}<span class="app-applied-at">applied {{ job.applied_at }}</span>{% endif %}
   </div>
+  {# A first application to a role a recruiter submitted: warn, and send the acknowledgement
+     the server requires (#100). Never on a job that already has applied_at. #}
+  {% set fac = first_apply_confirm if first_apply_confirm is defined and not job.applied_at else '' %}
+  {% if submission_block %}
+    <div class="followup-nudge">{{ submission_block }}</div>
+  {% endif %}
   <div class="app-status-actions">
     {% for st in ['applied', 'screen', 'interview', 'offer', 'rejected', 'withdrawn'] %}
+      {% set parts = [] %}
+      {% if apply_confirm is defined and apply_confirm and st in ('applied', 'screen', 'interview', 'offer') and job.application_state != st %}{% set _ = parts.append(apply_confirm) %}{% endif %}
+      {% if fac and st == 'applied' and job.application_state != st %}{% set _ = parts.append(fac) %}{% endif %}
       <button class="btn-status{% if job.application_state == st %} active{% endif %}"
-              hx-post="/jobs/{{ job.id }}/status" hx-vals='{"status": "{{ st }}"}'
-              {% if apply_confirm is defined and apply_confirm and st in ('applied', 'screen', 'interview', 'offer') and job.application_state != st %}hx-confirm="{{ apply_confirm }}"{% endif %}
+              hx-post="/jobs/{{ job.id }}/status" hx-vals='{"status": "{{ st }}"{% if fac and st == 'applied' %}, "submission_ack": "{{ submission_token }}"{% endif %}}'
+              {% if parts %}hx-confirm="{{ parts | join(' ') }}"{% endif %}
               hx-target="#app-status" hx-swap="outerHTML">{{ st|capitalize }}</button>
     {% endfor %}
     {% if not job.application_state %}
@@ -24,8 +33,9 @@
       {% for code, label in application_channels.items() %}
         <button class="btn-status btn-channel"
                 hx-post="/jobs/{{ job.id }}/status"
-                hx-vals='{"status": "applied", "channel": "{{ code }}"}'
-                {% if apply_confirm is defined and apply_confirm %}hx-confirm="{{ apply_confirm }}"{% endif %}
+                hx-vals='{"status": "applied", "channel": "{{ code }}"{% if fac %}, "submission_ack": "{{ submission_token }}"{% endif %}}'
+                {% set both = [apply_confirm if apply_confirm is defined else '', fac] | select | join(' ') %}
+                {% if both %}hx-confirm="{{ both }}"{% endif %}
                 hx-target="#app-status" hx-swap="outerHTML">Applied: {{ label|lower }}</button>
       {% endfor %}
     {% endif %}

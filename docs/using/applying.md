@@ -10,6 +10,8 @@ Apply on the employer's site, using the documents from your [packet](tailoring.m
 
 ## Mark it applied
 
+If a recruiter has put you forward for a role, log it first: open the job and use **Log a submission** under **Recruiter submissions**. Applying directly to the same role afterwards asks you to confirm, because the employer would see two submissions. See [same role](../how-it-works/same-role.md#recruiter-submissions).
+
 Back in the cockpit, click **Mark applied** on the role's row in the **Shortlist**, or click **Applied** under **Application status** on the job's page. Two things happen:
 
 - The role moves to **Applied**, with today as the date you applied.

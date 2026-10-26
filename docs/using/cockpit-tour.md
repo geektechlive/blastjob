@@ -56,6 +56,7 @@ Click any job title to open it. From top to bottom you will see:
 - "Why this scored" with the reasons, then **Strengths** and **Gaps to probe**.
 - Action buttons. On an undecided role: **Keep & tailor** and **Archive**. On a kept role: tailoring, outreach, prep and follow-up buttons ([tailoring](tailoring.md), [applying](applying.md)).
 - The packet, once you have tailored one.
+- **Recruiter submissions**, where you log a recruiter putting you forward; applying directly to the same role afterwards asks you to confirm ([same role](../how-it-works/same-role.md#recruiter-submissions)).
 - **Posting** status, **Activity** and **Files** for kept roles, then **Application status**, **Company**, **Compensation signals** and **People at** the company.
 - The job description at the bottom.
 

@@ -32,6 +32,8 @@ def _state(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
 
 
 LoadConfig = Callable[[], BlastJobConfig]
+# Runs inside the state write's transaction (service.set_application_state); may raise to refuse.
+Guard = Callable[[sqlite3.Connection, str, sqlite3.Row], None]
 
 
 def file_after_move(
@@ -52,7 +54,10 @@ def file_after_move(
 
 
 def mark_applied(
-    conn: sqlite3.Connection, job_id: int, load_config: LoadConfig = cfg_mod.load_config
+    conn: sqlite3.Connection,
+    job_id: int,
+    load_config: LoadConfig = cfg_mod.load_config,
+    guard: Guard | None = None,
 ) -> bool:
     """Shortlist -> Applied. applied_at is stamped today if it was empty.
 
@@ -61,7 +66,7 @@ def mark_applied(
     files later would attribute a future screen to a document that was never
     sent.
     """
-    moved = set_application_state(conn, job_id, "applied", list(st.SHORTLIST_STATES))
+    moved = set_application_state(conn, job_id, "applied", list(st.SHORTLIST_STATES), guard=guard)
     if not moved:
         return False
     # One transaction for both writes. `set_application_state` has already
@@ -241,11 +246,13 @@ def run_action(
     job_id: int,
     action: str,
     load_config: LoadConfig = cfg_mod.load_config,
+    guard: Guard | None = None,
 ) -> bool:
     """Dispatch a list-row action by name; False for an unknown one. A move
-    that took re-files the job's packets (`file_after_move`)."""
+    that took re-files the job's packets (`file_after_move`). `guard` applies to
+    Mark applied only (the one list move that is a first application)."""
     if action == "apply":
-        moved = mark_applied(conn, job_id, load_config=load_config)
+        moved = mark_applied(conn, job_id, load_config=load_config, guard=guard)
     else:
         moves = {"advance": advance, "withdraw": withdraw, "reopen": reopen}
         move = moves.get(action)

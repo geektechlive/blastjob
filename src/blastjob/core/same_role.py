@@ -108,18 +108,25 @@ def _applied_row(row: sqlite3.Row) -> bool:
     )
 
 
-def _previous(
+def _same_role_pair(
     job: sqlite3.Row, other: sqlite3.Row, radius_miles: float, geo: DiscoveryConfig
 ) -> bool:
-    """`other` is an application of this same employer's same title (module doc)."""
-    if not _applied_row(other):
-        return False
+    """`other` is the same employer's same title in another cluster and a loosely
+    shared metro. Says nothing about whether either was applied to (the title rule
+    is the caller's: `SameRoleIndex` groups by normalized title)."""
     if job["cluster_id"] is not None and job["cluster_id"] == other["cluster_id"]:
         return False
     key = company_key(job["company"] or "")
     if not key or key != company_key(other["company"] or ""):
         return False
     return rc.same_metro(rc.place_of(job, geo), rc.place_of(other, geo), radius_miles, loose=True)
+
+
+def _previous(
+    job: sqlite3.Row, other: sqlite3.Row, radius_miles: float, geo: DiscoveryConfig
+) -> bool:
+    """`other` is an application of this same employer's same title (module doc)."""
+    return _applied_row(other) and _same_role_pair(job, other, radius_miles, geo)
 
 
 def _matches(
@@ -150,29 +157,49 @@ class SameRoleIndex:
         job = self.rows.get(job_id)
         if job is None:
             return []
+        return [
+            _candidate(job, other, decision, kind, self.geo)
+            for other, decision, kind in self._scan(job, require_applied=True)
+        ]
+
+    def peer_ids(self, job_id: int) -> list[int]:
+        """Jobs that may be the same role as `job_id`, whatever the user has
+        applied to: the agency/employer pair and the same-employer repost, minus
+        pairs ruled 'different'. For the recruiter-submission check; suggestions
+        (`for_job`) keep the applied gate on same-employer reposts."""
+        job = self.rows.get(job_id)
+        if job is None:
+            return []
+        return [int(o["id"]) for o, _d, _k in self._scan(job, require_applied=False)]
+
+    def _scan(
+        self, job: sqlite3.Row, *, require_applied: bool
+    ) -> Iterable[tuple[sqlite3.Row, str, str]]:
+        job_id = int(job["id"])
         job_is_agency = is_agency(job["company"] or "")
-        out: list[Candidate] = []
         for other in self.by_title.get(normalize_role_title(job["title"]), []):
             if other["id"] == job_id:
                 continue
             decision = self.decided.get(rc.pair_of(job_id, int(other["id"])), "")
             if decision == rc.DIFFERENT:
                 continue
-            kind = self._kind(job, other, job_is_agency)
+            kind = self._kind(job, other, job_is_agency, require_applied)
             if kind:
-                out.append(_candidate(job, other, decision, kind, self.geo))
-        return out
+                yield other, decision, kind
 
-    def _kind(self, job: sqlite3.Row, other: sqlite3.Row, job_is_agency: bool) -> str:
+    def _kind(
+        self, job: sqlite3.Row, other: sqlite3.Row, job_is_agency: bool, require_applied: bool
+    ) -> str:
         """Which suggestion `other` is for `job`, or "" for none."""
         other_is_agency = is_agency(other["company"] or "")
         if other_is_agency != job_is_agency:
             if not _matches(job, other, self.radius, self.geo):
                 return ""
             return EMPLOYER if job_is_agency else AGENCY
-        if job_is_agency or not _previous(job, other, self.radius, self.geo):
+        if job_is_agency:
             return ""
-        return PREVIOUS
+        pair = _previous if require_applied else _same_role_pair
+        return PREVIOUS if pair(job, other, self.radius, self.geo) else ""
 
 
 def _candidate(

@@ -56,7 +56,10 @@
   </div>
   {# Every action from a list row sends from_list, so the answer is empty and the
      outerHTML swap removes the row: the job has moved to another stage. #}
-  {% macro row_target(id) %}hx-target="#job-{{ id }}" hx-swap="outerHTML" hx-vals='{"from_list": "1"}'{% endmacro %}
+  {% macro row_target(id, ack='') %}hx-target="#job-{{ id }}" hx-swap="outerHTML" hx-vals='{"from_list": "1"{% if ack %}, "submission_ack": "{{ ack }}"{% endif %}}'{% endmacro %}
+  {# One hx-confirm for a first application: the same-role note, then the recruiter's (#100). #}
+  {% set apply_msg = [job.apply_confirm if job.apply_confirm is defined else '', job.first_apply_confirm if job.first_apply_confirm is defined else ''] | select | join(' ') %}
+  {% set has_sub = job.first_apply_confirm is defined and job.first_apply_confirm %}
   {% set stage = job.stage if job.stage is defined else stage_of(job) %}
   <div class="job-actions">
     {% if job.review_state in ('new', 'surfaced', 'queued') %}
@@ -87,14 +90,14 @@
               title="{{ 'Back to Applied' if job.applied_at else 'Back to the Shortlist' }}">Reopen</button>
     {% elif job.review_state == 'kept' %}
       <a class="btn-tailor" href="/jobs/{{ job.id }}?source_view=shortlist">Tailor &rarr;</a>
-      <button class="btn-keep" hx-post="/jobs/{{ job.id }}/stage/apply" {{ row_target(job.id) }}
-              {% if job.apply_confirm is defined and job.apply_confirm %}hx-confirm="{{ job.apply_confirm }}"{% endif %}>Mark applied</button>
+      <button class="btn-keep" hx-post="/jobs/{{ job.id }}/stage/apply" {{ row_target(job.id, job.submission_token if has_sub else '') }}
+              {% if apply_msg %}hx-confirm="{{ apply_msg }}"{% endif %}>Mark applied</button>
       {# How it started (#80): one click records it with the move; plain "Mark applied" skips it. #}
       <span class="channel-ctl" title="Mark applied and record how it started">
         {% for code, label in application_channels.items() %}
         <button class="btn-channel" hx-post="/jobs/{{ job.id }}/stage/apply"
-                hx-vals='{"channel": "{{ code }}"}' {{ row_target(job.id) }}
-                {% if job.apply_confirm is defined and job.apply_confirm %}hx-confirm="{{ job.apply_confirm }}"{% endif %}>{{ label }}</button>
+                hx-vals='{"channel": "{{ code }}"{% if has_sub %}, "submission_ack": "{{ job.submission_token }}"{% endif %}}' {{ row_target(job.id) }}
+                {% if apply_msg %}hx-confirm="{{ apply_msg }}"{% endif %}>{{ label }}</button>
         {% endfor %}
       </span>
       <button class="btn-archive" hx-post="/jobs/{{ job.id }}/unkeep" {{ row_target(job.id) }}

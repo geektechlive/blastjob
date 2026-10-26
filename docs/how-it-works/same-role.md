@@ -85,6 +85,19 @@ Because the duplicate's application is cleared, withdrawing the survivor never r
 
 `blastjob-daily --duplicate-applications` lists kept application pairs that share a company key and a normalized title, clustered or not (read-only).
 
+## Recruiter submissions
+
+A recruiter can put you forward for a role you then apply to directly, and the employer sees two submissions. `recruiter_submissions` records each one (recruiter, firm, date, note) against a job; it is a record only, so `jobs.source` and the application stage never change from it. Nothing is sent.
+
+"The same role" here ignores what you applied to. `core/submissions.role_job_ids` takes the job's cluster, then every job `same_role.SameRoleIndex.peer_ids` names for any member (the agency and employer pair, and the same employer's repost with an equal normalized title and a loose metro in another cluster, with or without an application), then the clusters of those jobs. A pair ruled "different" stays out. `possible_same_role` is unchanged: its same-employer rule still needs the other posting to be an application.
+
+- **Before the first direct application.** When `applied_at` is empty and a submission exists for the role, **Mark applied** and the **Applied** buttons confirm: "<recruiter> (<firm>) submitted you to this role on <date>. Applying directly as well can sink both. Apply anyway?". The page then sends `submission_ack`, a short fingerprint of the submissions it showed. Screen, Interview, Offer and Advance on an applied job never warn. A direct jump from unapplied to Screen or Interview is not guarded either, on purpose: an interview after a recruiter submission is most likely the recruiter's doing, so blocking it would be wrong.
+- **Enforced on the server.** Both routes that can mark a job applied (`POST /jobs/{id}/status` and `POST /jobs/{id}/stage/apply`) run `core/submissions.ack_guard` inside the state write's transaction. Inside that transaction the fingerprint is recomputed from the submissions that exist now. If it is missing or differs (a submission was logged or removed after the page rendered), nothing is written and the answer is 409 (the status panel re-renders with the warning; a list row reloads). A stale page therefore cannot skip, or acknowledge, a warning it never showed. These 409s carry `X-Submission-Warning: 1`, which is the only 409 `cockpit.js` swaps in.
+- **Logging after a direct application.** `POST /jobs/{id}/submissions` refuses (409, nothing written) while any job that is the same role has `applied_at` set or a state in `APPLIED_STATES`, closed ones included, until the form carries `log_anyway=1` ("Log it anyway"). The message differs for an application still in progress and a closed one.
+- **Recipient modes are exclusive.** With a recruiter picked from your network (it must be an effective recruiter), the name and firm come from that contact and a typed name or firm is a 400. Without one, a typed name is required.
+
+`POST /submissions/{id}/delete` removes a record. Every route sits behind the CSRF, Origin and Host checks.
+
 ## One apply link per role
 
 Each role shows one "apply here" link: the best URL across its cluster (`web/apply_link.py`, `best_apply_link`). Preference, best first:

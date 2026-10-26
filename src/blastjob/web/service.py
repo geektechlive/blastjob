@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import sqlite3
+from collections.abc import Callable
 
 from blastjob.core import events
 from blastjob.core import network as net
@@ -398,8 +399,18 @@ def set_application_channel(
     return cur.rowcount == 1
 
 
+def applied_at(conn: sqlite3.Connection, job_id: int) -> str:
+    """The job's applied_at, stripped; "" when empty or the job is missing."""
+    row = conn.execute("SELECT applied_at FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return ((row["applied_at"] if row else "") or "").strip()
+
+
 def set_application_state(
-    conn: sqlite3.Connection, job_id: int, new_state: str, expected: list[str]
+    conn: sqlite3.Connection,
+    job_id: int,
+    new_state: str,
+    expected: list[str],
+    guard: Callable[[sqlite3.Connection, str, sqlite3.Row], None] | None = None,
 ) -> bool:
     """CAS transition of a kept job's application_state. Only moves if the job is
     kept and currently in an expected application_state. Stamps applied_at on the
@@ -416,7 +427,11 @@ def set_application_state(
     False and writes nothing. A real change records its application event
     (`core/events`, source 'state') in the SAME transaction, committed once;
     if the event cannot be written the move is rolled back and the error
-    raised, so a state never lands without its event or vice versa."""
+    raised, so a state never lands without its event or vice versa.
+
+    `guard(conn, new_state, prior)` runs inside that transaction, after the prior row is
+    read and before anything is written; if it raises, the transaction is rolled back and
+    the error propagates (the recruiter-submission acknowledgement, core/submissions.py)."""
     placeholders = ",".join("?" for _ in expected)
     stamp = stage_stamp()
     today = datetime.date.today().isoformat()
@@ -430,6 +445,8 @@ def set_application_state(
         (job_id,),
     ).fetchone()
     try:
+        if guard is not None and prior is not None:
+            guard(conn, new_state, prior)
         cur = conn.execute(
             "UPDATE jobs SET application_state=?, "
             "applied_at = CASE WHEN ?='applied' AND (applied_at IS NULL OR applied_at='') "

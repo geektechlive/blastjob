@@ -747,4 +747,24 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    # 70: one row per recruiter submission (#100, ADR 0063): a recruiter put the owner forward
+    # for a role. A record only; jobs.source and the application stage never change from it.
+    # recruiter_name and firm are snapshots (a contact's later rename does not rewrite history).
+    (
+        70,
+        """
+        CREATE TABLE IF NOT EXISTS recruiter_submissions (
+            id                 INTEGER PRIMARY KEY,
+            job_id             INTEGER NOT NULL REFERENCES jobs(id),
+            network_contact_id INTEGER REFERENCES network_contacts(id),
+            recruiter_name     TEXT NOT NULL CHECK (length(recruiter_name) <= 80),
+            firm               TEXT DEFAULT '' CHECK (length(firm) <= 80),
+            submitted_on       TEXT NOT NULL,
+            note               TEXT DEFAULT '' CHECK (length(note) <= 300),
+            created_at         TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_recruiter_submissions_job
+            ON recruiter_submissions(job_id);
+        """,
+    ),
 ]

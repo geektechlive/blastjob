@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse
 from blastjob.core import events, page_links
 from blastjob.core import role_clusters as rc
 from blastjob.core import same_role as sr
+from blastjob.core import submissions as subs
 from blastjob.core.agencies import is_agency
 from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.web import stages as st
@@ -126,6 +127,8 @@ def row_annotations(job: dict[str, Any], cands: list[sr.Candidate]) -> dict[str,
         "same_role_red": red,
         "employer_hidden": agency and not cands,
         "apply_confirm": apply_confirm(cands),
+        "first_apply_confirm": "",
+        "submission_token": "",
     }
 
 
@@ -138,7 +141,18 @@ def annotate_rows(
 ) -> list[dict[str, Any]]:
     """Every row with its same-role fields, from ONE batch lookup."""
     batch = sr.possible_same_role_batch(conn, [int(r["id"]) for r in rows], radius_miles, geo)
-    return [row_annotations(r, batch.get(int(r["id"]), [])) for r in rows]
+    out = [row_annotations(r, batch.get(int(r["id"]), [])) for r in rows]
+    kept = [int(r["id"]) for r in out if r.get("review_state") == "kept"]
+    warn = subs.first_apply_confirms(conn, kept, radius_miles, geo)
+    return [
+        {
+            **r,
+            **dict(
+                zip(("first_apply_confirm", "submission_token"), warn.get(int(r["id"]), ("", "")))
+            ),
+        }
+        for r in out
+    ]
 
 
 def _cluster_rows(conn: sqlite3.Connection, job_id: int) -> list[sqlite3.Row]:

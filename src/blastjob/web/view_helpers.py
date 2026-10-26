@@ -19,6 +19,7 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from blastjob.core import same_role as sr
+from blastjob.core import submissions as subs
 from blastjob.web import same_role as srv
 from blastjob.web import service, status_filter
 from blastjob.web import stage_lists as sl
@@ -85,11 +86,13 @@ def app_status_context(
     the out-of-band refresh after a posting verdict must not drift (the latter once
     lost the Mark applied hx-confirm)."""
     if not job:
-        return {"followup_reason": "", "apply_confirm": ""}
-    cands = sr.possible_same_role(c, job_id, deps.radius(), deps.load_config().discovery)
+        return {"followup_reason": "", "apply_confirm": "", "first_apply_confirm": ""}
+    geo = deps.load_config().discovery
+    cands = sr.possible_same_role(c, job_id, deps.radius(), geo)
     return {
         "followup_reason": sl.followup_reason(job, c),
         "apply_confirm": srv.apply_confirm(cands),
+        "first_apply_confirm": subs.first_apply_confirm(c, job_id, deps.radius(), geo),
     }
 
 
@@ -100,6 +103,8 @@ def render_app_status(
     job_id: int,
     send_note: str = "",
     notes_draft: str | None = None,
+    submission_block: str = "",
+    status_code: int = 200,
 ) -> HTMLResponse:
     """`send_note` is non-empty when a state change could NOT snapshot which
     documents went out. It is rendered, not swallowed: an as-sent record that
@@ -107,14 +112,17 @@ def render_app_status(
     `notes_draft` is set (even to "") only when a notes save was refused because the
     stored notes changed: the template then shows the stored text and keeps the draft."""
     job = service.job_detail(c, job_id)
-    return deps.render(
+    resp = deps.render(
         request,
         "_app_status.html",
         job=job,
         send_note=send_note,
         notes_draft=notes_draft,
+        submission_block=submission_block,
         **app_status_context(deps, c, job_id, job),
     )
+    resp.status_code = status_code
+    return resp
 
 
 def stage_page(deps: Deps, request: Request, view: str, sort: str = "fit") -> HTMLResponse:

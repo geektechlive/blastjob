@@ -24,6 +24,18 @@
     if (el && xhr && xhr.status === 400) { window.alert(xhr.responseText); }
   });
 
+  // A 409 marked X-Submission-Warning carries a server-rendered warning (recruiter submission,
+  // #100) that replaces the control it answers. Other 409s, and one that asks for a reload
+  // (HX-Refresh), are left to htmx.
+  document.addEventListener("htmx:beforeSwap", function (e) {
+    var xhr = e.detail && e.detail.xhr;
+    if (xhr && xhr.status === 409 && xhr.getResponseHeader("X-Submission-Warning") &&
+        !xhr.getResponseHeader("HX-Refresh")) {
+      e.detail.shouldSwap = true;
+      e.detail.isError = false;
+    }
+  });
+
   // data-ask-form on a Log ask form: after a saved ask, take a fresh one-use request token
   // (the server treats a repeated token as a double submit) and close the form.
   document.addEventListener("htmx:afterRequest", function (e) {

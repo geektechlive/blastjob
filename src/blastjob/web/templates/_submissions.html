@@ -1,0 +1,41 @@
+{# Recruiter submissions (#100): a recruiter put you forward for this role (or a copy of it).
+   A record only; nothing is sent. Logging after a direct application needs "Log it anyway"
+   (the server enforces it). The div always renders so a first entry has a target. #}
+<div id="submissions" class="detail-block submissions">
+  <h3>Recruiter submissions <span class="col-count">{{ submissions|length }}</span></h3>
+  {% if sub_error %}<p class="dim">{{ sub_error }}</p>{% endif %}
+  {% if submissions %}
+  <ul class="facts">
+    {% for s in submissions %}
+    <li id="submission-{{ s.id }}">
+      <b>{{ s.recruiter_name }}</b>{% if s.firm %} <span class="dim">({{ s.firm }})</span>{% endif %}
+      <span class="dim">submitted you {{ s.submitted_on }}{% if s.job_id != sub_job_id %}, on a copy of this role (<a href="/jobs/{{ s.job_id }}">#{{ s.job_id }}</a>){% endif %}</span>
+      {% if s.note %}<p class="contact-why">{{ s.note }}</p>{% endif %}
+      <button class="btn-archive" hx-post="/submissions/{{ s.id }}/delete"
+              hx-target="#submissions" hx-swap="outerHTML"
+              hx-confirm="Remove this record? Nothing is sent or changed elsewhere.">Remove</button>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <details class="ask-form"{% if sub_warning %} open{% endif %}>
+    <summary>Log a submission</summary>
+    <form hx-post="/jobs/{{ sub_job_id }}/submissions" hx-target="#submissions" hx-swap="outerHTML"
+          data-alert-error>
+      {% if sub_warning %}
+      <p class="followup-nudge">{{ sub_warning }}</p>
+      <label><input type="checkbox" name="log_anyway" value="1"> Log it anyway</label>
+      {% endif %}
+      <select name="network_contact_id" aria-label="Recruiter">
+        <option value="">type a name instead</option>
+        {% for r in sub_recruiters %}<option value="{{ r.id }}"{% if sub_form.get('network_contact_id') == r.id|string %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
+      </select>
+      <input type="text" name="recruiter_name" maxlength="{{ sub_name_max }}" value="{{ sub_form.get('recruiter_name', '') }}" placeholder="recruiter name" aria-label="Recruiter name">
+      <input type="text" name="firm" maxlength="{{ sub_firm_max }}" value="{{ sub_form.get('firm', '') }}" placeholder="firm" aria-label="Firm">
+      <input type="date" name="submitted_on" value="{{ sub_form.get('submitted_on') or sub_today }}" max="{{ sub_today }}" aria-label="Submitted on">
+      <input type="text" name="note" maxlength="{{ sub_note_max }}" value="{{ sub_form.get('note', '') }}" placeholder="note" aria-label="Note">
+      <button type="submit">Log submission</button>
+      <span class="dim">Pick a recruiter from your network, or type a name, not both.</span>
+    </form>
+  </details>
+</div>
