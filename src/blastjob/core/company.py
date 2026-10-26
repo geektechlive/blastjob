@@ -22,11 +22,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from blastjob.core.paths import canonical
+
+if TYPE_CHECKING:
+    from blastjob.models.config import BlastJobConfig
 
 log = logging.getLogger(__name__)
 
@@ -181,9 +184,11 @@ class RekeyResult:
 
     updated: int = 0
     conflicts: int = 0
+    skipped_leased: int = 0  # target_companies only: a live scan lease
+    merged: int = 0  # company_events only: folded into an existing duplicate
 
 
-def rekey_companies(conn: sqlite3.Connection) -> dict[str, RekeyResult]:
+def rekey_companies(conn: sqlite3.Connection, cfg: BlastJobConfig) -> dict[str, RekeyResult]:
     """One-time, hand-run pass to re-key rows stored under an older (narrower)
     `company_key` normalization. Recomputes `company_key` from each row's
     stored display name and updates only the rows whose key actually changed.
@@ -202,7 +207,40 @@ def rekey_companies(conn: sqlite3.Connection) -> dict[str, RekeyResult]:
     `updated`. `company_exclusions` (key is the PK) and `comp_signals` (see
     `_REKEY_QUERIES`) are re-keyed the same way.
 
-    Returns a `RekeyResult(updated, conflicts)` per table name."""
+    The target-watch tables follow (`target_store.rekey_targets`): a target moves with its
+    events, whose fingerprints are recomputed (they include the key) so a rescan dedupes; a
+    new key that is already a target is a conflict and leaves both as they were; a duplicate
+    event is merged (the twin keeps its own dismissal), not a conflict; a target with a live
+    scan lease is skipped (`skipped_leased`); events of a removed target are re-keyed from
+    their old key unless the new key is a live target (a conflict).
+
+    The pass holds the run lock (so it cannot overlap a daily run or a cockpit pass;
+    `RunLockHeld` propagates), installs `cfg`'s aliases, refuses an already-open transaction
+    (`ValueError`) and runs in ONE transaction: any error
+    rolls every table back. See docs/how-it-works/same-role.md.
+
+    Returns a `RekeyResult` per table name (`target_companies`, `company_events` included)."""
+    from blastjob import config as cfg_mod
+    from blastjob.core import run_lock
+
+    if conn.in_transaction:
+        raise ValueError("rekey_companies needs a connection with no open transaction")
+    with run_lock.hold(cfg_mod.data_dir(cfg), "company re-key"):
+        cfg_mod.apply_runtime_settings(cfg)
+        conn.execute("BEGIN IMMEDIATE")  # savepoints below must nest, not commit
+        try:
+            results = _rekey_all(conn)
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
+    return results
+
+
+def _rekey_all(conn: sqlite3.Connection) -> dict[str, RekeyResult]:
+    """Every table pass, uncommitted."""
+    from blastjob.core import target_store
+
     specs = [
         (
             table,
@@ -212,7 +250,17 @@ def rekey_companies(conn: sqlite3.Connection) -> dict[str, RekeyResult]:
         for table, col in _REKEY_TABLES
     ]
     specs.extend(_REKEY_QUERIES)
-    return {table: _rekey(conn, select, update) for table, select, update in specs}
+    results = {table: _rekey(conn, select, update, commit=False) for table, select, update in specs}
+    t = target_store.rekey_targets(conn)
+    results["target_companies"] = RekeyResult(
+        updated=t.targets_updated,
+        conflicts=t.targets_conflicts,
+        skipped_leased=t.targets_skipped_leased,
+    )
+    results["company_events"] = RekeyResult(
+        updated=t.events_updated, conflicts=t.events_conflicts, merged=t.events_merged
+    )
+    return results
 
 
 def rekey_company_exclusions(conn: sqlite3.Connection) -> RekeyResult:
@@ -231,7 +279,9 @@ def rekey_company_exclusions(conn: sqlite3.Connection) -> RekeyResult:
     return result
 
 
-def _rekey(conn: sqlite3.Connection, select_sql: str, update_sql: str) -> RekeyResult:
+def _rekey(
+    conn: sqlite3.Connection, select_sql: str, update_sql: str, *, commit: bool = True
+) -> RekeyResult:
     updated = conflicts = 0
     for row in conn.execute(select_sql).fetchall():
         new_key = company_key(row["name"] or "")
@@ -242,7 +292,8 @@ def _rekey(conn: sqlite3.Connection, select_sql: str, update_sql: str) -> RekeyR
             updated += 1
         except sqlite3.IntegrityError:
             conflicts += 1
-    conn.commit()
+    if commit:
+        conn.commit()
     return RekeyResult(updated=updated, conflicts=conflicts)
 
 

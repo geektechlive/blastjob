@@ -291,6 +291,7 @@ def record_scan(
     inserted = 0
     try:
         for e in events:
+            span = e.source_span[:SPAN_STORE_CHARS]  # fingerprint what is stored (same-role.md)
             cur = conn.execute(
                 "INSERT OR IGNORE INTO company_events (company_key, event_type, source_url, "
                 "page_title, source_span, published_on, source_basis, identity_basis, "
@@ -300,11 +301,11 @@ def record_scan(
                     e.event_type,
                     canonical_url(e.source_url),
                     e.page_title,
-                    e.source_span[:SPAN_STORE_CHARS],
+                    span,
                     e.published_on,
                     e.source_basis,
                     e.identity_basis,
-                    fingerprint(key, e.event_type, e.source_span),
+                    fingerprint(key, e.event_type, span),
                     when,
                 ),
             )
@@ -384,3 +385,115 @@ def mark_notified(
         "UPDATE company_events SET notified_at=? WHERE id=?", [(when, int(i)) for i in event_ids]
     )
     conn.commit()
+
+
+# ------------------------------------------------------------------------- re-keying
+
+
+@dataclass(frozen=True)
+class TargetRekey:
+    """What one target-table re-key pass did (`core/company.rekey_companies`)."""
+
+    targets_updated: int = 0
+    targets_conflicts: int = 0
+    targets_skipped_leased: int = 0
+    events_updated: int = 0
+    events_merged: int = 0
+    events_conflicts: int = 0
+
+
+def _earliest(a: str | None, b: str | None) -> str:
+    """The earlier non-empty of two timestamps; '' when both are empty."""
+    return min((v for v in (a, b) if v), default="")
+
+
+def _move_events(conn: sqlite3.Connection, old: str, new: str) -> tuple[int, int]:
+    """Give every event of `old` the key `new` and the fingerprint that key implies. An event
+    whose new fingerprint already exists is merged into that row (the earliest `notified_at`
+    wins; the twin keeps its own `dismissed_at`) and its own row is deleted.
+    Returns (moved, merged)."""
+    moved = merged = 0
+    for ev in conn.execute("SELECT * FROM company_events WHERE company_key=?", (old,)).fetchall():
+        fp = fingerprint(new, ev["event_type"], ev["source_span"])
+        twin = conn.execute(
+            "SELECT id, notified_at, dismissed_at FROM company_events WHERE fingerprint=? "
+            "AND id<>?",
+            (fp, ev["id"]),
+        ).fetchone()
+        if twin is None:
+            conn.execute(
+                "UPDATE company_events SET company_key=?, fingerprint=? WHERE id=?",
+                (new, fp, ev["id"]),
+            )
+            moved += 1
+            continue
+        conn.execute(
+            "UPDATE company_events SET notified_at=? WHERE id=?",
+            (_earliest(twin["notified_at"], ev["notified_at"]), twin["id"]),
+        )
+        conn.execute("DELETE FROM company_events WHERE id=?", (ev["id"],))
+        merged += 1
+    return moved, merged
+
+
+def _lease_is_live(row: sqlite3.Row, now: dt.datetime) -> bool:
+    claimed = row["scan_claimed_at"] or ""
+    return bool(claimed) and claimed > _stamp(now - dt.timedelta(minutes=LEASE_MINUTES))
+
+
+def rekey_targets(conn: sqlite3.Connection, *, now: dt.datetime | None = None) -> TargetRekey:
+    """Re-key `target_companies` and `company_events` after the key rules or aliases changed.
+
+    Never commits: `rekey_companies` runs it inside its one transaction. Each target moves
+    under its own SAVEPOINT with its events, so a conflict (the new key is already a target)
+    leaves the target and all its events where they were. A target with a live lease is
+    skipped. Events whose target was removed are re-keyed from their old key alone.
+    docs/how-it-works/same-role.md."""
+    when = now or dt.datetime.now()
+    out = {"tu": 0, "tc": 0, "tl": 0, "eu": 0, "em": 0, "ec": 0}
+    for row in conn.execute("SELECT * FROM target_companies").fetchall():
+        old, new = row["company_key"], company_key(row["company"])
+        if new == old:
+            continue
+        if _lease_is_live(row, when):
+            out["tl"] += 1
+            continue
+        conn.execute("SAVEPOINT rekey_target")
+        try:
+            conn.execute(
+                "UPDATE target_companies SET company_key=? WHERE company_key=?", (new, old)
+            )
+            moved, merged = _move_events(conn, old, new)
+        except sqlite3.IntegrityError:
+            conn.execute("ROLLBACK TO rekey_target")
+            out["tc"] += 1
+        else:
+            out["tu"] += 1
+            out["eu"] += moved
+            out["em"] += merged
+        # RELEASE only here, never in a `finally`: after SQLite rolled the savepoint back on
+        # its own, it would raise and mask the real error.
+        conn.execute("RELEASE rekey_target")
+    live = {r["company_key"] for r in conn.execute("SELECT company_key FROM target_companies")}
+    orphans = conn.execute(
+        "SELECT DISTINCT company_key FROM company_events "
+        "WHERE company_key NOT IN (SELECT company_key FROM target_companies)"
+    ).fetchall()
+    for orphan in orphans:
+        old = orphan["company_key"]
+        new = company_key(
+            old
+        )  # old is a stored key, re-normalized (docs/how-it-works/same-role.md)
+        if not new or new == old:
+            continue
+        if new in live:
+            # Hidden by removing the target; moving them under a live target would show and
+            # announce them again.
+            out["ec"] += conn.execute(
+                "SELECT COUNT(*) FROM company_events WHERE company_key=?", (old,)
+            ).fetchone()[0]
+            continue
+        moved, merged = _move_events(conn, old, new)
+        out["eu"] += moved
+        out["em"] += merged
+    return TargetRekey(out["tu"], out["tc"], out["tl"], out["eu"], out["em"], out["ec"])

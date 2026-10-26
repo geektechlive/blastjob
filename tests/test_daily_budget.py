@@ -145,6 +145,8 @@ async def test_the_calls_line_never_makes_a_quiet_day_send(db, monkeypatch, cloc
     conn.commit()
     _yesterdays_calls(conn)
     _stub(monkeypatch)
+    # Not the weekly heartbeat day, which sends on purpose (this test failed every Monday).
+    monkeypatch.setattr(daily, "HEARTBEAT_WEEKDAY", (dt.date.today().weekday() + 1) % 7)
     sent: list[str] = []
 
     res = await daily.run_daily(cfg, conn, send=lambda t: _collect(sent, t), today=dt.date.today())

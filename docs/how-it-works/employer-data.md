@@ -190,7 +190,7 @@ You keep a list of target companies on the **Targets** page (`web/routes_targets
 
 **Failure is never "no news".** A search error, a timeout, a model error, an unparseable reply, or any page read failing while no event was found (a page we could not read may have held the news) marks the scan `failed: <reason>`, bumps `scan_failures`, and leaves `last_scan_ok_at` alone. The page says "Scan failed" and the digest counts failed scans. Only zero search results, or pages that did not pass the checks, is a real "no news found". A scan's events, status and released lease are written in one transaction (`target_store.record_scan`).
 
-**Dedupe.** The key is a fingerprint of company, event type and the normalized span (`UNIQUE`), so the same sentence found again, in another run or at another URL, is stored once, and one page can hold several events. The stored URL is canonical: lowercase host, no fragment, tracking parameters removed.
+**Dedupe.** The key is a fingerprint of company, event type and the normalized span, cut to the 600 characters that are stored (`UNIQUE`), so the same sentence found again, in another run or at another URL, is stored once, and one page can hold several events. The stored URL is canonical: lowercase host, no fragment, tracking parameters removed.
 
 **Dry run.** `blastjob-daily --dry-run` still searches, reads and classifies, but takes no lease and writes no event, status or `notified_at`.
 

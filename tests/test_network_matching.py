@@ -32,9 +32,14 @@ _REC_HEADER = "First Name,Last Name,Company,Job Title,Text,Creation Date,Status"
 
 
 @pytest.fixture
-def conn():
-    cfg = BlastJobConfig()
-    cfg.paths.data_dir = tempfile.mkdtemp()
+def cfg():
+    c = BlastJobConfig()
+    c.paths.data_dir = tempfile.mkdtemp()
+    return c
+
+
+@pytest.fixture
+def conn(cfg):
     c = dbc.init_db(cfg)
     yield c
     c.close()
@@ -230,7 +235,7 @@ def test_company_key_division_strip_stays_narrow(name, expected):
     assert co.company_key(name) == expected
 
 
-def test_rekey_companies_moves_exclusions_and_job_comp_signals_too(conn):
+def test_rekey_companies_moves_exclusions_and_job_comp_signals_too(conn, cfg):
     """An exclusion left on the old key would silently lapse (matching reads
     exclusions by key), and comp signals are read by key as well."""
     name = "Tailspin Marketing Group - Global Division"
@@ -252,7 +257,7 @@ def test_rekey_companies_moves_exclusions_and_job_comp_signals_too(conn):
     )
     conn.commit()
 
-    result = co.rekey_companies(conn)
+    result = co.rekey_companies(conn, cfg)
 
     assert result["company_exclusions"] == co.RekeyResult(updated=1, conflicts=0)
     assert result["comp_signals"] == co.RekeyResult(updated=1, conflicts=0)
@@ -262,7 +267,7 @@ def test_rekey_companies_moves_exclusions_and_job_comp_signals_too(conn):
     assert signals == {"tailspin marketing group", "acme"}  # a job-less signal is left alone
 
 
-def test_rekey_companies_reports_an_exclusion_collision(conn):
+def test_rekey_companies_reports_an_exclusion_collision(conn, cfg):
     for key, company in (
         ("tailspin marketing group global division", "Tailspin Marketing Group - Global Division"),
         ("tailspin marketing group", "Tailspin Marketing Group"),
@@ -274,13 +279,13 @@ def test_rekey_companies_reports_an_exclusion_collision(conn):
         )
     conn.commit()
 
-    result = co.rekey_companies(conn)
+    result = co.rekey_companies(conn, cfg)
 
     assert result["company_exclusions"] == co.RekeyResult(updated=0, conflicts=1)
     assert conn.execute("SELECT COUNT(*) FROM company_exclusions").fetchone()[0] == 2
 
 
-def test_rekey_companies_moves_a_division_key_and_reports_the_conflict(conn):
+def test_rekey_companies_moves_a_division_key_and_reports_the_conflict(conn, cfg):
     conn.execute(
         "INSERT INTO company_follows (company, company_key, followed_at) VALUES (?,?,?)",
         (
@@ -296,7 +301,7 @@ def test_rekey_companies_moves_a_division_key_and_reports_the_conflict(conn):
     co.upsert_profile(conn, co.CompanyProfile(company="Tailspin Marketing Group"))
     conn.commit()
 
-    result = co.rekey_companies(conn)
+    result = co.rekey_companies(conn, cfg)
 
     assert result["company_follows"] == co.RekeyResult(updated=1, conflicts=0)
     follow = conn.execute("SELECT company_key FROM company_follows").fetchone()
@@ -307,12 +312,12 @@ def test_rekey_companies_moves_a_division_key_and_reports_the_conflict(conn):
     assert keys == {"tailspin marketing group", "tailspin marketing group global division"}
 
 
-def test_rekey_companies_updates_a_row_stored_under_the_old_narrower_key(conn):
+def test_rekey_companies_updates_a_row_stored_under_the_old_narrower_key(conn, cfg):
     """Simulates data imported before this fix: the row's stored company_key
     reflects the OLD (narrower) normalization even though `company_key()` now
     computes something else for the same display name -- here because an
     alias table entry resolves "Fabrikam International plc" to "fabrikam"."""
-    co.set_company_aliases({"Fabrikam International plc": "Fabrikam"})
+    cfg.discovery.company_aliases = {"Fabrikam International plc": "Fabrikam"}
     co.upsert_profile(conn, co.CompanyProfile(company="Fabrikam International plc"))
     conn.execute(
         "UPDATE company_profiles SET company_key='fabrikam international plc' "
@@ -320,7 +325,7 @@ def test_rekey_companies_updates_a_row_stored_under_the_old_narrower_key(conn):
     )
     conn.commit()
 
-    result = co.rekey_companies(conn)
+    result = co.rekey_companies(conn, cfg)
 
     assert result["company_profiles"].updated == 1
     assert result["company_profiles"].conflicts == 0
@@ -330,7 +335,7 @@ def test_rekey_companies_updates_a_row_stored_under_the_old_narrower_key(conn):
     assert row["company_key"] == "fabrikam"
 
 
-def test_rekey_companies_reports_collisions_without_raising_or_losing_rows(conn):
+def test_rekey_companies_reports_collisions_without_raising_or_losing_rows(conn, cfg):
     """company_follows.company_key is UNIQUE -- widening the normalization can
     legitimately collapse two previously-distinct keys onto one (a stray
     "Vance's" row alongside a "Vances" row). The pass must report that as a
@@ -345,7 +350,7 @@ def test_rekey_companies_reports_collisions_without_raising_or_losing_rows(conn)
     )
     conn.commit()
 
-    result = co.rekey_companies(conn)
+    result = co.rekey_companies(conn, cfg)
 
     assert result["company_follows"].conflicts == 1
     rows = conn.execute("SELECT company FROM company_follows").fetchall()
