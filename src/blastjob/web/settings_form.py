@@ -28,6 +28,8 @@ from blastjob.models.config import (
     CONCURRENCY_MIN,
     DAILY_DEADLINE_MAX_MINUTES,
     DAILY_DEADLINE_MIN_MINUTES,
+    QUIET_AFTER_DAYS_MAX,
+    QUIET_AFTER_DAYS_MIN,
     RECRUITER_LOOKBACK_DAYS_MAX,
     RECRUITER_LOOKBACK_DAYS_MIN,
     RECRUITER_TOUCH_DAYS_MAX,
@@ -169,6 +171,7 @@ def _search(cfg: BlastJobConfig, form: Form) -> None:
 
 def _service(cfg: BlastJobConfig, form: Form) -> None:
     cfg.notify.mode = form.get("notify_mode", cfg.notify.mode)  # type: ignore[assignment]
+    _notify_cadence(cfg, form)
     cfg.web.host = form.get("web_host", "").strip()
     cfg.web.port = _num(form, "web_port", int)
     cfg.web.public_url = form.get("web_public_url", cfg.web.public_url).strip()
@@ -211,10 +214,36 @@ def _notify_recruiter(current: NotifyConfig, form: Form) -> NotifyConfig:
     try:
         return NotifyConfig(**values)
     except ValidationError as e:
+        loc = e.errors()[0]["loc"]
+        if loc and loc[0] == "pace_weekday":
+            raise FormError(_PACE_ERROR) from e
+        if loc and loc[0] == "quiet_after_days":
+            raise FormError(_QUIET_ERROR) from e
         raise FormError(
             "Recruiter reminder lookback: at least as many days as the touch-again reminder"
         ) from e
 
+
+def _notify_cadence(cfg: BlastJobConfig, form: Form) -> None:
+    """The quiet-application threshold and the pace weekday; absent fields keep their value."""
+    raw = form.get("notify_quiet_after_days")
+    if raw is not None:
+        try:
+            days = int(raw)
+        except ValueError as e:
+            raise FormError(_QUIET_ERROR) from e
+        if not QUIET_AFTER_DAYS_MIN <= days <= QUIET_AFTER_DAYS_MAX:
+            raise FormError(_QUIET_ERROR)
+        cfg.notify.quiet_after_days = days
+    weekday = form.get("notify_pace_weekday", cfg.notify.pace_weekday)
+    if weekday not in _PACE_WEEKDAYS:
+        raise FormError(_PACE_ERROR)
+    cfg.notify.pace_weekday = weekday  # type: ignore[assignment]
+
+
+_PACE_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun", "off")
+_PACE_ERROR = "Weekly pace line: choose mon to sun, or off"
+_QUIET_ERROR = f"Quiet days: whole days from {QUIET_AFTER_DAYS_MIN} to {QUIET_AFTER_DAYS_MAX}"
 
 # (LimitsConfig field, form field, label, unit, min, max). Each field reports its own error.
 _LIMIT_FIELDS = (

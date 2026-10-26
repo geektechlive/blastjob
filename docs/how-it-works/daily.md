@@ -77,9 +77,10 @@ The digest is built by `build_digest`. Sections appear only when they have somet
 - **Closed postings.** One line naming up to five kept jobs whose posting closed this run.
 - **Replies.** One entry per surfaced reply: who, about what, a one-line snippet and a cockpit link.
 - **Target news.** Events found for your target companies since the last digest (see [below](#target-news)).
-- **Follow-ups due.** Applied-stage jobs with a follow-up due, most overdue first.
+- **Follow-ups due.** Applied-stage jobs with a follow-up due, most overdue first (see [below](#quiet-applications)).
 - **Asks to follow up.** Waiting outreach asks whose follow-up date has come, right after Follow-ups due (see [below](#asks-to-follow-up)).
 - **Recruiters to touch.** Recruiters you have spoken with whose last touch is old, right after Asks to follow up (see [below](#recruiters-to-touch)).
+- **Last week.** The weekly pace line (see [below](#weekly-pace-line)).
 - **Source errors.** One line per failing source or step, cut to 160 characters.
 - **Notes.** Things worth a human's attention that are not failures: a snapshot the stale-marking guard refused to act on, or an employer-description summary. Cut to 200 characters each.
 - **Weekly heartbeat.** On Mondays (`HEARTBEAT_WEEKDAY`): active and kept counts, plus the last seven days' runs, fetched, scored, new roles and average duration.
@@ -107,7 +108,20 @@ An outreach ask (`outreach_asks`, migration 65; see [network](network.md#outreac
 
 The rendered list carries `(contact id, last touch)` pairs, and after `send` returned each row gets `recruiter_reminded_for` set to exactly that date. It is not compare-and-set: a touch logged while the digest was being sent has a newer last touch, which no longer equals the stamp, so the next cycle re-arms on its own. A new ask or message re-arms the reminder the same way. A failed send stamps nothing, whether the sender raised at once or a Discord message of several parts failed on a later part; a dry run stamps nothing. A day with only a due recruiter still sends.
 
-**Quiet days send nothing.** With no roles, Dream list, errors, follow-ups, asks to follow up, recruiters to touch, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
+### Quiet applications
+
+`web/stage_lists.followup_due` decides the Follow-ups due block, the Applied page flags and the job page reason, so the three always agree. It is unstamped by design: a due job repeats daily while it stays due. An explicit `next_action_due` always wins: due once it has arrived, and nothing before. Without one:
+
+- A `screen` or `interview` job is due once it has been quiet for `notify.quiet_after_days` (default 21, 7 to 90): "no update in N days: follow up, or mark it ghosted".
+- An `applied` job keeps its 7-day reason ("applied N days ago, no update logged"). At or past the quiet threshold the reason adds ", or mark it ghosted".
+- Quiet is measured from the later of `jobs.stage_changed_at` and the newest `application_events.at` (the `latest_event_at` the Applied rows carry). Backdated events older than the stage change do not reset it, a same-day or future date is not quiet, and a malformed date is skipped.
+- Silence is not proof, so nothing is ever marked ghosted automatically; choosing ghosted on the job page writes the `ghosted` event. The order is unchanged (`followups_due`).
+
+### Weekly pace line
+
+On the first run on or after `notify.pace_weekday` (default `mon`, or `off`) the digest carries one line for the previous full ISO week, Monday to Sunday (`daily_pace.py`): `applied` events, `asked_on` dates in `outreach_asks` and events whose kind is in `channel_counts.REPLIED_EVENT_KINDS`. Those are events, not distinct applications, and the line says "reply events". Plain counts: no targets and no rates. The stamp is the reported ISO year-week in `digest_stamps` (migration 69, `name='pace'`), written after a send that carried the line, so a delayed run still reports the right week and no week is reported twice. A failed send and a dry run stamp nothing; with `notify.mode` set to `off` the stamp is written after the no-op send, like the other blocks. The line is something to say only on its weekday: a later run in the week adds it to a digest that goes out anyway but never sends one for it alone.
+
+**Quiet days send nothing.** With no roles, Dream list, errors, follow-ups, asks to follow up, recruiters to touch, the pace line on its day, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
 
 ## Delivery
 

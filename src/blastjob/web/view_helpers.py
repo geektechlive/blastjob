@@ -88,7 +88,7 @@ def app_status_context(
         return {"followup_reason": "", "apply_confirm": ""}
     cands = sr.possible_same_role(c, job_id, deps.radius(), deps.load_config().discovery)
     return {
-        "followup_reason": sl.followup_reason(job),
+        "followup_reason": sl.followup_reason(job, c),
         "apply_confirm": srv.apply_confirm(cands),
     }
 

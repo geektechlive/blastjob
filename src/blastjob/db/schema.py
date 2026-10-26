@@ -735,4 +735,16 @@ MIGRATIONS: list[tuple[int, str]] = [
     (66, "ALTER TABLE network_contacts ADD COLUMN recruiter_status TEXT DEFAULT NULL;"),
     (67, "ALTER TABLE network_contacts ADD COLUMN recruiter_status_reason TEXT DEFAULT '';"),
     (68, "ALTER TABLE network_contacts ADD COLUMN recruiter_reminded_for TEXT DEFAULT '';"),
+    # 69: what a SENT digest already said once per period (#99). name='pace' holds the
+    # ISO year-week the weekly pace line last reported, so a delayed run reports the right week
+    # and a week is never reported twice.
+    (
+        69,
+        """
+        CREATE TABLE IF NOT EXISTS digest_stamps (
+            name  TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        );
+        """,
+    ),
 ]

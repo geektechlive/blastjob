@@ -79,7 +79,7 @@ def make_followup_work(
                     return None
 
             job = dict(row)
-            reason = stage_lists.followup_reason(row)
+            reason = stage_lists.followup_reason(row, conn)
             directory = _resolve_dir(artifact_dir, cfg, run)
 
             who = f" addressed to {contact['name']}" if contact is not None else ""

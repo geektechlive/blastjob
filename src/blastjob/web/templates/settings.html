@@ -121,6 +121,18 @@
     <input type="number" name="notify_recruiter_lookback_days" value="{{ cfg.notify.recruiter_lookback_days }}" min="90" max="1095">
     <small>A recruiter you only spoke with is reminded about while your last touch is no older than this. One you marked active is always eligible. This keeps years-old message history from flooding the digest.</small>
   </label>
+  <label>Quiet application, days
+    <input type="number" name="notify_quiet_after_days" value="{{ cfg.notify.quiet_after_days }}" min="7" max="90">
+    <small>A screen or interview with no next step due shows under Follow-ups due after this many quiet days, with a prompt to follow up or mark it ghosted. Nothing is ever marked ghosted for you.</small>
+  </label>
+  <label>Weekly pace line
+    <select name="notify_pace_weekday">
+      {% for day in ["mon", "tue", "wed", "thu", "fri", "sat", "sun", "off"] %}
+      <option value="{{ day }}" {% if cfg.notify.pace_weekday == day %}selected{% endif %}>{{ day }}</option>
+      {% endfor %}
+    </select>
+    <small>The digest on or after this weekday counts last week's applications, outreach asks and reply events (Monday to Sunday). Plain counts, no targets. off hides it.</small>
+  </label>
   <label>Cockpit address
     <input type="text" name="web_host" value="{{ cfg.web.host }}"{% if not is_local %} readonly{% endif %}>
     {% if not is_local %}<small>Read-only from this device. Change it on the computer running blastjob.</small>{% endif %}

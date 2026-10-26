@@ -147,10 +147,13 @@ def build_digest(
     stopped: str = "",
     ask_followups: Sequence[sqlite3.Row] = (),
     recruiter_touches: Sequence[Reminder] = (),
+    pace: str = "",
+    pace_is_news: bool = False,
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
-    a job missing from it links its own URL."""
+    a job missing from it links its own URL. `pace` is the weekly pace line; it rides on any
+    digest that is sent, but breaks a quiet day's silence only when `pace_is_news` (its day)."""
     links = apply_links or {}
     closed = closed_postings or []
     replied = replies or []
@@ -167,6 +170,7 @@ def build_digest(
         or replied
         or noted
         or stopped
+        or (pace and pace_is_news)
     )
     if quiet and not (target_news or target_failed):
         return ""
@@ -206,16 +210,17 @@ def build_digest(
         lines.append("")
         lines.append("**Follow-ups due**")
         for f in followups:
-            lines.append(
-                f"• {f['company']} — {f['title']}: {f['followup_reason']} "
-                f"<{base_url}/jobs/{f['id']}>"
-            )
+            who = f"{_plain_name(f['company'])} — {_plain_name(f['title'])}"
+            lines.append(f"• {who}: {f['followup_reason']} <{base_url}/jobs/{f['id']}>")
     if ask_followups:
         lines.append("")
         lines += format_ask_block(ask_followups, base_url)
     if recruiter_touches:
         lines.append("")
         lines += format_recruiter_block(recruiter_touches, base_url)
+    if pace:
+        lines.append("")
+        lines.append(pace)
     if errors:
         lines.append("")
         lines.append("**Source errors**")

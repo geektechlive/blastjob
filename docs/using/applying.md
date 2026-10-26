@@ -29,7 +29,7 @@ On the job's page you can set any status directly: Applied, Screen, Interview, O
 
 Under **Application status**, pick a date in **Follow up on** and click **Set reminder**. When the date arrives, the role shows a flag on its row, and the **Applied** page says "N follow-ups due" with a **show** link that filters to them.
 
-You also get a nudge without setting anything. An applied role with no update and no reminder gets flagged after 7 days ("applied 9 days ago, no update logged"). If the posting closes while you are in the process, the flag asks you to confirm where things stand. Roles in offer or closed stages are not nudged.
+You also get a nudge without setting anything. An applied role with no update and no reminder gets flagged after 7 days ("applied 9 days ago, no update logged"). If the posting closes while you are in the process, the flag asks you to confirm where things stand. A role at screen or interview with no next step set and no update for 21 days (the Quiet application days setting) is flagged too, and so is an applied role that quiet; the flag suggests following up or marking it ghosted. You decide: nothing is marked ghosted for you. Roles in offer or closed stages are not nudged.
 
 To write the message, click **Draft follow-up** on the job's page. The draft streams into a panel, is saved to a file (the path is shown), and shows an **Open in mail** link that opens your mail app with the text filled in. Read it, edit it and send it yourself.
 

@@ -374,6 +374,9 @@ RECRUITER_TOUCH_DAYS_MIN = 14
 RECRUITER_TOUCH_DAYS_MAX = 120
 RECRUITER_LOOKBACK_DAYS_MIN = 90
 RECRUITER_LOOKBACK_DAYS_MAX = 1095
+QUIET_AFTER_DAYS_DEFAULT = 21
+QUIET_AFTER_DAYS_MIN = 7
+QUIET_AFTER_DAYS_MAX = 90
 
 
 class NotifyConfig(BaseModel):
@@ -393,6 +396,15 @@ class NotifyConfig(BaseModel):
     recruiter_lookback_days: int = Field(
         default=365, ge=RECRUITER_LOOKBACK_DAYS_MIN, le=RECRUITER_LOOKBACK_DAYS_MAX
     )
+
+    # A screen or interview with no next step due is nudged (follow up, or mark it ghosted)
+    # once it has been quiet this many days; an applied job's reason gains the ghosted hint
+    # at the same point (docs/how-it-works/daily.md).
+    quiet_after_days: int = Field(
+        default=QUIET_AFTER_DAYS_DEFAULT, ge=QUIET_AFTER_DAYS_MIN, le=QUIET_AFTER_DAYS_MAX
+    )
+    # The weekday the digest carries last week's pace line (applications, asks, reply events).
+    pace_weekday: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun", "off"] = "mon"
 
     @model_validator(mode="after")
     def _lookback_covers_touch_days(self) -> "NotifyConfig":

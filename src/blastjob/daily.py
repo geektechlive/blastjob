@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from blastjob import config as cfg_mod
-from blastjob import daily_dream, daily_targets, daily_tools
+from blastjob import daily_dream, daily_pace, daily_targets, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
 from blastjob.core import closure, outreach_asks, recruiter_status, run_lock
@@ -375,7 +375,9 @@ async def _announce(
     jobs = pending_jobs(conn)
     dream_jobs = daily_dream.weekly_jobs(cfg, conn, today or dt.date.today())
     target_news = daily_targets.pending_news(conn)
-    fups = followups_due(conn)
+    day = today or dt.date.today()
+    fups = followups_due(conn, day, cfg.notify.quiet_after_days)
+    pace = daily_pace.pace_report(conn, cfg.notify.pace_weekday, day)
     ask_fups = outreach_asks.rendered_due_followups(conn, today or dt.date.today())
     touches = recruiter_status.due_reminders(
         conn,
@@ -408,6 +410,8 @@ async def _announce(
             stopped=res.stopped_note,
             ask_followups=ask_fups,
             recruiter_touches=touches,
+            pace=pace.line if pace else "",
+            pace_is_news=bool(pace and pace.on_day),
         )
 
     res.digest = digest()
@@ -442,6 +446,10 @@ async def _announce(
     )
     # And the recruiters it listed: each gets the last-touch date it was rendered with.
     recruiter_status.mark_reminded(conn, [(t.contact_id, t.last_touch) for t in touches])
+    # The pace line rode on the sent digest, so its week is reported (a raising send never
+    # reaches this point).
+    if pace is not None:
+        daily_pace.stamp(conn, pace.label)
     res.sent = True
     mark_run_sent(conn, run_id)
     return res

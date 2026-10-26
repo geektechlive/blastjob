@@ -375,7 +375,7 @@ def create_app(
             row = service.job_detail(c, job_id)
             if row is None:
                 return HTMLResponse("Not found", status_code=404)
-            followup_reason = sl.followup_reason(row)
+            followup_reason = sl.followup_reason(row, c)
             warm_paths = net.warm_paths(c, job_id)
             # annotate_network_one returns a dict (the row plus network badges),
             # so it needs its own name rather than rebinding the sqlite3.Row.

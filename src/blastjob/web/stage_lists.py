@@ -17,12 +17,24 @@ disagree with the page under it.
 from __future__ import annotations
 
 import datetime
+import json
+import logging
 import sqlite3
 from typing import Any
 
+from pydantic import ValidationError
+
+from blastjob.models.config import (
+    QUIET_AFTER_DAYS_DEFAULT,
+    QUIET_AFTER_DAYS_MAX,
+    QUIET_AFTER_DAYS_MIN,
+    NotifyConfig,
+)
 from blastjob.web import stages as st
 from blastjob.web.apply_link import best_apply_link
 from blastjob.web.service import _COLS, cluster_overrides, collapse_clusters
+
+log = logging.getLogger(__name__)
 
 # Pay-dominant ordering, one click away on Surfaced and Matches.
 _SORT_COMP_FIRST = (
@@ -188,10 +200,71 @@ def shortlist_jobs(conn: sqlite3.Connection) -> list[dict]:
     return _stage_list(conn, st.SHORTLIST, _SORT_SHORTLIST)
 
 
-def followup_due(row: Any, today: datetime.date) -> str:
+_WARNED_QUIET_VALUES: set[str] = set()
+
+
+def stored_quiet_after_days(conn: sqlite3.Connection) -> int:
+    """`notify.quiet_after_days` as stored, validated by `NotifyConfig`'s own bounds. Anything
+    unset, malformed or out of range falls back to the default (with a warning), so a bad stored
+    value never reaches the comparison or crashes a page. Read straight from the settings table
+    so a page, the job page and the digest agree without each caller threading the config."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key='notify.quiet_after_days'"
+        ).fetchone()
+    except sqlite3.Error:
+        return QUIET_AFTER_DAYS_DEFAULT
+    if row is None:
+        return QUIET_AFTER_DAYS_DEFAULT
+    try:
+        return NotifyConfig(quiet_after_days=json.loads(row[0])).quiet_after_days
+    except (ValueError, TypeError, ValidationError):
+        if row[0] not in _WARNED_QUIET_VALUES:  # once per distinct bad value, not per render
+            _WARNED_QUIET_VALUES.add(row[0])
+            log.warning(
+                "notify.quiet_after_days is not a whole number of days from %d to %d; using %d",
+                QUIET_AFTER_DAYS_MIN,
+                QUIET_AFTER_DAYS_MAX,
+                QUIET_AFTER_DAYS_DEFAULT,
+            )
+        return QUIET_AFTER_DAYS_DEFAULT
+
+
+def _date_of(text: Any) -> datetime.date | None:
+    """The calendar day of an ISO date or datetime string, or None when it is not one."""
+    try:
+        return datetime.date.fromisoformat(str(text or "").strip()[:10])
+    except ValueError:
+        return None
+
+
+def quiet_days(row: Any, today: datetime.date) -> int | None:
+    """Days since the later of the last stage change and the newest application event, or
+    None when neither date is usable. Malformed dates are skipped; a future anchor is 0 or
+    less, so it never reads as quiet."""
+    keys = row.keys()
+    dates = [
+        d
+        for d in (
+            _date_of(row["stage_changed_at"]) if "stage_changed_at" in keys else None,
+            _date_of(row["latest_event_at"]) if "latest_event_at" in keys else None,
+        )
+        if d is not None
+    ]
+    return (today - max(dates)).days if dates else None
+
+
+def followup_due(
+    row: Any,
+    today: datetime.date,
+    quiet_after_days: int = QUIET_AFTER_DAYS_DEFAULT,
+) -> str:
     """Reason a kept job is due for a follow-up, or "" if it isn't. An explicit
     next_action_due that has arrived always counts; otherwise an "applied" job
-    that's gone quiet past the stale threshold auto-nudges."""
+    that's gone quiet past the stale threshold auto-nudges, and a screen or interview
+    quiet for `quiet_after_days` does too. Quiet is measured from the later of the stage
+    change and the newest event (`quiet_days`). At or past the quiet threshold the reason
+    also offers marking the job ghosted; it never does that itself."""
     if row["application_state"] not in st.LIVE_STATES:
         return ""
     # Applied, and the posting has since closed: worth a nudge at once, since
@@ -207,19 +280,40 @@ def followup_due(row: Any, today: datetime.date) -> str:
         except ValueError:
             pass
         return ""
+    quiet = quiet_days(row, today)
     if row["application_state"] == "applied":
         try:
             days = (today - datetime.date.fromisoformat((row["applied_at"] or "").strip())).days
         except ValueError:
             return ""
-        if days >= FOLLOWUP_STALE_DAYS:
-            return f"applied {days} days ago, no update logged"
+        if days < FOLLOWUP_STALE_DAYS:
+            return ""
+        reason = f"applied {days} days ago, no update logged"
+        if quiet is not None and quiet >= quiet_after_days:
+            reason += ", or mark it ghosted"
+        return reason
+    if quiet is not None and quiet >= quiet_after_days:
+        return f"no update in {quiet} days: follow up, or mark it ghosted"
     return ""
 
 
-def followup_reason(row: Any) -> str:
-    """The follow-up nudge for one job row today, or "" if none."""
-    return followup_due(row, datetime.date.today())
+def followup_reason(
+    row: Any,
+    conn: sqlite3.Connection | None = None,
+    today: datetime.date | None = None,
+) -> str:
+    """The follow-up nudge for one job row, or "" if none. With `conn`, the job's newest
+    application event and the stored quiet threshold are read, so the job page says what
+    the Applied list and the digest say."""
+    day = today or datetime.date.today()
+    if conn is None:
+        return followup_due(row, day)
+    from blastjob.core import events
+
+    values = dict(row)
+    latest = events.latest_event(conn, [int(row["id"])]).get(int(row["id"]))
+    values["latest_event_at"] = latest["at"] if latest is not None else ""
+    return followup_due(values, day, stored_quiet_after_days(conn))
 
 
 def _followup_date(job: dict) -> str:
@@ -227,14 +321,19 @@ def _followup_date(job: dict) -> str:
     return due or (job.get("applied_at") or "").strip() or _NO_DATE
 
 
-def applied_jobs(conn: sqlite3.Connection, today: datetime.date | None = None) -> list[dict]:
+def applied_jobs(
+    conn: sqlite3.Connection,
+    today: datetime.date | None = None,
+    quiet_after_days: int | None = None,
+) -> list[dict]:
     """In a hiring process: furthest stage first (offer > interview > screen >
     applied), then follow-ups that are due, most overdue first. Each row carries
-    `followup_reason`."""
+    `followup_reason`. `quiet_after_days` defaults to the stored setting."""
     day = today or datetime.date.today()
+    quiet = stored_quiet_after_days(conn) if quiet_after_days is None else quiet_after_days
     jobs = _with_latest_event(conn, _stage_list(conn, st.APPLIED, f"{_SORT_FIT_FIRST}, id"))
     for j in jobs:
-        j["followup_reason"] = followup_due(j, day)
+        j["followup_reason"] = followup_due(j, day, quiet)
     return sorted(
         jobs,
         key=lambda j: (
@@ -253,6 +352,7 @@ def _with_latest_event(conn: sqlite3.Connection, jobs: list[dict]) -> list[dict]
     latest = events.latest_event(conn, [j["id"] for j in jobs])
     for j in jobs:
         ev = latest.get(j["id"])
+        j["latest_event_at"] = ev["at"] if ev is not None else ""
         j["latest_event"] = (
             {
                 "label": events.KIND_LABELS.get(ev["kind"], ev["kind"]),
@@ -269,9 +369,13 @@ def closed_jobs(conn: sqlite3.Connection) -> list[dict]:
     return _stage_list(conn, st.CLOSED, _SORT_CLOSED)
 
 
-def followups_due(conn: sqlite3.Connection) -> list[dict]:
+def followups_due(
+    conn: sqlite3.Connection,
+    today: datetime.date | None = None,
+    quiet_after_days: int | None = None,
+) -> list[dict]:
     """Applied-stage jobs due a follow-up, most overdue first."""
-    due = [j for j in applied_jobs(conn) if j["followup_reason"]]
+    due = [j for j in applied_jobs(conn, today, quiet_after_days) if j["followup_reason"]]
     return sorted(due, key=_followup_date)
 
 

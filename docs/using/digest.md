@@ -41,7 +41,9 @@ Dream list. Once a week, on the search-firm weekday (`discovery.search_firm_week
 
 Model calls. When a digest goes out anyway, its last line says how many model calls the day before made, scheduled and clicked, with an estimated cost. A call whose cost was not reported is counted but left out of the cost, and the line says so. This line never makes a quiet day send. If the daily run reached its call limit, the digest says it stopped there and which steps did not run. The limit is in [settings](../operations/settings-and-secrets.md), and the cockpit's Running now page shows the day's calls ([web](../how-it-works/web.md#running-now)).
 
-Follow-ups due. Under "Follow-ups due", the applied roles that need a nudge, with the reason. See [applying](applying.md#follow-ups).
+Follow-ups due. Under "Follow-ups due", the applied roles that need a nudge, with the reason. A screen or interview with no update for 21 days (setting `notify.quiet_after_days`, 7 to 90) is listed too, and an applied role quiet that long is also offered "mark it ghosted". blastjob never marks anything ghosted for you. See [applying](applying.md#follow-ups).
+
+Last week. Once a week, on the first digest on or after the day set in `notify.pace_weekday` (Monday unless you changed it; `off` hides it), a "Last week" line counts the previous Monday to Sunday: applications, outreach asks and reply events. These are plain counts with no targets. It is shown once per week, and on a quiet day only the chosen weekday sends it.
 
 Asks to follow up. Under "Asks to follow up", the people you asked for an intro, a referral or advice whose follow-up date has come and who have not answered, most overdue first, at most 10 a day. Each is announced once for its follow-up date; change the date on the job page and it comes back. A day with only a due ask still sends.
 
