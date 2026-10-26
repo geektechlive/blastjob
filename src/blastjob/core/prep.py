@@ -261,6 +261,21 @@ def mark_unverified_numbers(body: str, trusted: str) -> tuple[str, int]:
     return _NUMERIC.sub(_mark, body), count
 
 
+def unverified_figures(body: str, trusted: str) -> list[str]:
+    """The figures in `body` that are not whole figures in `trusted`, in order of first
+    appearance and listed once each. The same whole-token rule as `mark_unverified_numbers`
+    (money, percentages, magnitudes, headcounts, years), for text that is only reviewed,
+    not rewritten, such as a saved interview story."""
+    known = _trusted_numbers(trusted)
+    seen: dict[str, str] = {}
+    for m in _NUMERIC.finditer(body):
+        token = m.group(0)
+        key = _normalize_number(token)
+        if key not in known:
+            seen.setdefault(key, token)
+    return list(seen.values())
+
+
 def _trim(s: str) -> str:
     """Strip trailing zeros from a decimal rendering without eating an integer's
     own trailing zeros: '2.50' -> '2.5', '2.00' -> '2', '200' -> '200'."""

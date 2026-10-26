@@ -20,6 +20,8 @@ Start with the install guide, then the cockpit tour.
   and see dated news there, with who you know.
 - [Interview debrief](using/interview-debrief.md): turn an interview transcript into your talk
   share, longest answers and numbers to double-check.
+- [Interview stories](using/stories.md): keep your STAR stories in one place and see which
+  numbers are not in your work history.
 - [Tailoring a packet](using/tailoring.md): build a resume, cover letter and prep pack,
   then read the verification verdict.
 - [Applying and following up](using/applying.md): mark a job applied, follow up, and
@@ -66,6 +68,8 @@ Read the overview first; every other page assumes it.
   jobs, company profiles, comp signals and people.
 - [Interview debrief](how-it-works/debrief.md): the transcript formats, the in-memory hold
   and how each figure is computed.
+- [Story bank](how-it-works/stories.md): saved interview stories, the version check and the
+  number check.
 - [Your network](how-it-works/network.md): the LinkedIn export import and warm paths.
 - [The daily run](how-it-works/daily.md): what runs each morning and how the digest is
   delivered.

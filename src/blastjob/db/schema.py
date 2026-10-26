@@ -767,4 +767,27 @@ MIGRATIONS: list[tuple[int, str]] = [
             ON recruiter_submissions(job_id);
         """,
     ),
+    # 71: the story bank (#101, ADR 0064). Interview stories the owner writes and keeps. Storage
+    # only: nothing in the prep pack reads them. `version` is an integer compare-and-set counter,
+    # bumped by every edit; an edit or delete made from an older version is refused.
+    (
+        71,
+        """
+        CREATE TABLE IF NOT EXISTS stories (
+            id         INTEGER PRIMARY KEY,
+            title      TEXT NOT NULL CHECK (length(title) <= 80),
+            employer   TEXT NOT NULL DEFAULT '' CHECK (length(employer) <= 80),
+            year       INTEGER,
+            situation  TEXT NOT NULL DEFAULT '' CHECK (length(situation) <= 1500),
+            task       TEXT NOT NULL DEFAULT '' CHECK (length(task) <= 1500),
+            action     TEXT NOT NULL DEFAULT '' CHECK (length(action) <= 1500),
+            result     TEXT NOT NULL DEFAULT '' CHECK (length(result) <= 1500),
+            tags       TEXT NOT NULL DEFAULT '' CHECK (length(tags) <= 200),
+            version    INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_stories_order ON stories(updated_at DESC, id DESC);
+        """,
+    ),
 ]

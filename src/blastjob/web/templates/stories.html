@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Stories &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Stories &mdash; your interview stories</h1>
+<p class="dim">Write each story once, in your own words, and keep it here. Nothing on this page
+is sent anywhere or used when blastjob writes a prep pack or a packet; it is a place to keep
+and rehearse them. Under each story, blastjob lists any number that is not in your work
+history, so you can check it before you say it in an interview. That is a prompt to check, not
+a block: saving never waits on it.</p>
+
+{% if error is defined and error %}
+  <div class="error"><p>{{ error }}</p></div>
+{% endif %}
+
+{% macro fields(f, prefix) %}
+  <label>Title (80 characters at most)
+    <input type="text" name="title" maxlength="80" value="{{ f.title if f else '' }}" required>
+  </label>
+  <label>Employer (optional, 80 characters at most)
+    <input type="text" name="employer" maxlength="80" value="{{ f.employer if f else '' }}">
+  </label>
+  <label>Year (optional, four digits)
+    <input type="text" name="year" inputmode="numeric" maxlength="4" value="{{ f.year if f and f.year is not none else '' }}">
+  </label>
+  <label>Situation
+    <textarea name="situation" rows="3" maxlength="1500">{{ f.situation if f else '' }}</textarea>
+  </label>
+  <label>Task
+    <textarea name="task" rows="3" maxlength="1500">{{ f.task if f else '' }}</textarea>
+  </label>
+  <label>Action
+    <textarea name="action" rows="4" maxlength="1500">{{ f.action if f else '' }}</textarea>
+  </label>
+  <label>Result
+    <textarea name="result" rows="3" maxlength="1500">{{ f.result if f else '' }}</textarea>
+  </label>
+  <label>Tags (optional, comma separated, 200 characters at most)
+    <input type="text" name="tags" maxlength="200" value="{{ f.tags if f else '' }}">
+  </label>
+{% endmacro %}
+
+<form class="settings-form" method="post" action="/stories">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <h2>Add a story</h2>
+  {{ fields(draft if (draft is defined and draft and draft_id is not defined) else none, 'new') }}
+  <button type="submit">Save story</button>
+</form>
+
+{% if stories %}
+  {% for s in stories %}
+  <article class="detail-block" id="story-{{ s.id }}">
+    <h2>{{ s.title }}</h2>
+    <p class="dim">
+      {% if s.employer %}{{ s.employer }}{% endif %}{% if s.employer and s.year %}, {% endif %}{% if s.year %}{{ s.year }}{% endif %}
+      {% if s.tags %}{% if s.employer or s.year %} &middot; {% endif %}Tags: {{ s.tags }}{% endif %}
+    </p>
+    {% for label, key in [('Situation', 'situation'), ('Task', 'task'), ('Action', 'action'), ('Result', 'result')] %}
+      {% if s[key] %}<p><strong>{{ label }}.</strong> {{ s[key] }}</p>{% endif %}
+    {% endfor %}
+    {% if not figures_checked %}
+      <p class="warn">Couldn't check figures: the work history file couldn't be read.</p>
+    {% elif s.unverified %}
+      <p class="warn">Not in your work history: {{ s.unverified|join(', ') }}</p>
+    {% endif %}
+    <details{% if draft_id is defined and draft_id == s.id %} open{% endif %}>
+      <summary>Edit</summary>
+      <form class="settings-form" method="post" action="/stories/{{ s.id }}">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <input type="hidden" name="version" value="{{ s.version }}">
+        {{ fields(draft if (draft is defined and draft and draft_id is defined and draft_id == s.id) else s, 'edit') }}
+        <button type="submit">Save changes</button>
+      </form>
+    </details>
+    <form method="post" action="/stories/{{ s.id }}/delete" class="inline">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="version" value="{{ s.version }}">
+      <button type="submit">Delete</button>
+    </form>
+  </article>
+  {% endfor %}
+{% else %}
+  <p class="dim">No stories yet.</p>
+{% endif %}
+{% endblock %}
