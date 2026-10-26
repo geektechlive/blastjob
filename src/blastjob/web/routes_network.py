@@ -29,6 +29,7 @@ from blastjob.core import target_store as ts
 from blastjob.core.paths import locate
 from blastjob.discovery import follow_seeds as fs
 from blastjob.web import people, service
+from blastjob.web.asks_view import ask_context
 from blastjob.web.deps import Deps
 from blastjob.web.runtime import RUNTIME
 from blastjob.web.security import require_csrf
@@ -66,6 +67,7 @@ def _render_contacts(deps: Deps, request, c: sqlite3.Connection, job_id: int, er
         job=service.job_detail(c, job_id),
         contacts=people.contacts_for_job(c, job_id),
         people_error=error,
+        **ask_context(c, job_id),
     )
 
 

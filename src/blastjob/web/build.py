@@ -19,7 +19,7 @@ import sqlite3
 from pathlib import Path
 
 from blastjob import config as cfg_mod
-from blastjob.core import filing_lock, packet_filing
+from blastjob.core import filing_lock, network_views, outreach_asks, packet_filing
 from blastjob.core.packet_verify import PacketNotQuarantinedError
 from blastjob.core.paths import canonical
 from blastjob.db import client as dbc
@@ -45,7 +45,44 @@ natural clause (no flattery), and shape the ask to them: a recruiter gets a cris
 fit summary and availability; a hiring manager gets a peer-level note about the \
 mandate and a request for a short conversation. ~150 words, LinkedIn-message \
 length: specific interest in the role, 2-3 strengths grounded in the candidate's \
-work history, a courteous call to connect. Output only the message body."""
+work history, a courteous call to connect. If a Request line is supplied, make that the \
+ask. State no relationship with the recipient beyond the facts listed. Output only the \
+message body."""
+
+_INTENTS = {
+    "intro": "introduce the candidate to the hiring manager for this role",
+    "referral": "refer the candidate for this role",
+    "recruiter": "talk with the candidate about their search and the roles they place",
+    "advice": "give the candidate advice on their search or this role (no job is requested)",
+}
+
+
+FIELD_CAP = 120
+WHY_CAP = 300
+
+
+def _one_line(value: object, cap: int = FIELD_CAP) -> str:
+    """An export or contact field as one capped line, so its text cannot start a new prompt
+    line (a forged "Request:" line)."""
+    return " ".join(str(value or "").split())[:cap]
+
+
+def network_recipient_block(person: dict, company: str, kind: str) -> str:
+    """The recipient block for a person from the candidate's own network export. Facts from
+    the export only (no invented relationship text), plus the ask's intent."""
+    lines = [
+        "\n\nRecipient (from the candidate's LinkedIn connections export; "
+        "the candidate verifies before sending):",
+        f"Name: {_one_line(person['name'])}",
+        f"Position: {_one_line(person['position'])}",
+        f"Company: {_one_line(company)}",
+    ]
+    if person.get("recommended_me"):
+        lines.append("This person wrote the candidate a LinkedIn recommendation.")
+    if person.get("last_message_at"):
+        lines.append(f"Last messaged on LinkedIn: {_one_line(person['last_message_at'])}")
+    lines.append(f"Request: ask them to {_INTENTS[kind]}.")
+    return "\n".join(lines) + "\n"
 
 
 def recipient_block(contact: sqlite3.Row | None) -> str:
@@ -53,9 +90,9 @@ def recipient_block(contact: sqlite3.Row | None) -> str:
         return ""
     return (
         "\n\nRecipient (verified by the candidate):\n"
-        f"Name: {contact['name']}\nTitle: {contact['title']}\n"
-        f"Relationship to the role: {contact['role'].replace('_', ' ')}\n"
-        f"Why them: {contact['why']}\n"
+        f"Name: {_one_line(contact['name'])}\nTitle: {_one_line(contact['title'])}\n"
+        f"Relationship to the role: {_one_line(contact['role'].replace('_', ' '))}\n"
+        f"Why them: {_one_line(contact['why'], WHY_CAP)}\n"
     )
 
 
@@ -187,7 +224,27 @@ def make_tailor_work(job_id: int, load_config=cfg_mod.load_config):
     return work
 
 
-def make_outreach_work(job_id: int, load_config=cfg_mod.load_config, contact_id: int | None = None):
+def _network_block(
+    conn: sqlite3.Connection, job: sqlite3.Row, nid: int, kind: str
+) -> tuple[str, str]:
+    """(recipient block, name) for a network contact; raises AskError unless the person is on
+    this job's current warm path (the same validator `log_ask` uses)."""
+    outreach_asks.validate_recipient(
+        conn, job_id=int(job["id"]), network_contact_id=nid, contact_id=None
+    )
+    person = next(
+        p for p in network_views.warm_paths_for_job(conn, int(job["id"])) if p["id"] == nid
+    )
+    return network_recipient_block(person, job["company"] or "", kind), person["name"]
+
+
+def make_outreach_work(
+    job_id: int,
+    load_config=cfg_mod.load_config,
+    contact_id: int | None = None,
+    network_contact_id: int | None = None,
+    kind: str = "",
+):
     async def work(run: Run):
         from blastjob.web import people
 
@@ -198,15 +255,27 @@ def make_outreach_work(job_id: int, load_config=cfg_mod.load_config, contact_id:
             if job is None:
                 run.emit("error", "job not found")
                 return None
+            if contact_id and network_contact_id:
+                run.emit("error", "name one person, not two")
+                return None
             recipient = people.contact(conn, contact_id) if contact_id else None
             if contact_id and (recipient is None or int(recipient["job_id"]) != int(job["id"])):
                 run.emit("error", "contact not found for this job")
                 return None
+            block = recipient_block(recipient)
+            name = recipient["name"] if recipient is not None else ""
+            if network_contact_id:
+                try:
+                    outreach_asks.validate_kind(kind)
+                    block, name = _network_block(conn, job, network_contact_id, kind)
+                except outreach_asks.AskError as e:
+                    run.emit("error", str(e))
+                    return None
             wh_path = cfg_mod.data_dir(cfg) / "work_history.md"
             wh = wh_path.read_text(encoding="utf-8") if wh_path.exists() else ""
 
-            if recipient is not None:
-                run.emit("log", f"Drafting a note addressed to {recipient['name']}...")
+            if name:
+                run.emit("log", f"Drafting a note addressed to {name}...")
             else:
                 run.emit("log", "Drafting an unaddressed outreach email...")
             system = [caching.cached_text(OUTREACH_SYSTEM)]
@@ -214,7 +283,7 @@ def make_outreach_work(job_id: int, load_config=cfg_mod.load_config, contact_id:
                 caching.cached_text(wh),
                 caching.plain_text(
                     f"Role: {job['title']}\nCompany: {job['company']}\n\n"
-                    f"Job description:\n{(job['raw_jd'] or '')[:2000]}" + recipient_block(recipient)
+                    f"Job description:\n{(job['raw_jd'] or '')[:2000]}" + block
                 ),
             ]
             text = ""
@@ -225,15 +294,17 @@ def make_outreach_work(job_id: int, load_config=cfg_mod.load_config, contact_id:
                 async for chunk in stream.text_stream:
                     text += chunk
                     run.emit("output", chunk)
-            if recipient is not None:
-                run.emit(
-                    "log", f"Draft ready — addressed to {recipient['name']}; verify before sending."
-                )
+            if name:
+                run.emit("log", f"Draft ready — addressed to {name}; verify before sending.")
             else:
                 run.emit(
                     "log", "Draft ready (unaddressed — add a verified recipient before sending)."
                 )
-            return {"email": text, "contact_id": contact_id}
+            return {
+                "email": text,
+                "contact_id": contact_id,
+                "network_contact_id": network_contact_id,
+            }
         finally:
             conn.close()
 

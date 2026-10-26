@@ -16,6 +16,29 @@
     }
   });
 
+  // data-alert-error on a form: a 400 from the server is a validation message in plain text
+  // (htmx swaps nothing on 4xx), so show it instead of letting the click look ignored.
+  document.addEventListener("htmx:responseError", function (e) {
+    var xhr = e.detail && e.detail.xhr;
+    var el = e.target && e.target.closest ? e.target.closest("[data-alert-error]") : null;
+    if (el && xhr && xhr.status === 400) { window.alert(xhr.responseText); }
+  });
+
+  // data-ask-form on a Log ask form: after a saved ask, take a fresh one-use request token
+  // (the server treats a repeated token as a double submit) and close the form.
+  document.addEventListener("htmx:afterRequest", function (e) {
+    var form = e.target && e.target.matches && e.target.matches("[data-ask-form]") ? e.target : null;
+    if (!form || !e.detail.successful) { return; }
+    var token = form.querySelector("[name=request_token]");
+    if (token && window.crypto && crypto.randomUUID) {
+      token.value = crypto.randomUUID().replace(/-/g, "");
+    }
+    var note = form.querySelector("[name=note]");
+    if (note) { note.value = ""; }
+    var box = form.closest("details");
+    if (box) { box.open = false; }
+  });
+
   // A run panel (templates/_build_panel.html, _followup_panel.html): stream the
   // run's events into it. Panels arrive both in full pages and as htmx swaps, so
   // this runs from htmx.onLoad; data-wired stops a panel being wired twice.

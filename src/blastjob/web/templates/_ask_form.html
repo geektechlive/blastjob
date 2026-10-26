@@ -1,0 +1,20 @@
+{# One person's "Log ask" form (#97). Set `ask_field` (network_contact_id or contact_id) and
+   `ask_rid` before including. The request token is one-use, so a double submit is one row. #}
+<details class="ask-form">
+  <summary>Log ask</summary>
+  <form hx-post="/jobs/{{ job.id }}/asks" hx-target="#asks" hx-swap="outerHTML"
+        data-alert-error data-ask-form>
+    <input type="hidden" name="{{ ask_field }}" value="{{ ask_rid }}">
+    <input type="hidden" name="request_token" value="{{ new_request_token() }}">
+    <select name="kind" aria-label="Kind of ask">
+      {% for k in ask_kinds %}<option value="{{ k }}">{{ ask_kind_labels[k] }}</option>{% endfor %}
+    </select>
+    <select name="channel" aria-label="Channel">
+      {% for ch in ask_channels %}<option value="{{ ch }}">{{ ch.replace('_', ' ') }}</option>{% endfor %}
+    </select>
+    <input type="date" name="asked_on" value="{{ ask_today }}" max="{{ ask_today }}" aria-label="Asked on">
+    <input type="text" name="note" maxlength="300" placeholder="note" aria-label="Note">
+    <button type="submit">Log ask</button>
+    <span class="dim">Follow-up defaults to a week out.</span>
+  </form>
+</details>

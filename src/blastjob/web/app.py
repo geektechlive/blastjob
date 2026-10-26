@@ -32,14 +32,15 @@ from blastjob.llm.cost import CostTracker, describe_cost
 from blastjob.models.config import BlastJobConfig, DiscoveryConfig
 from blastjob.models.job import ARCHIVE_REASON_LABELS, ARCHIVE_REASONS, ReviewState
 from blastjob.models.tracking import APPLICATION_CHANNELS, STATUSES
-from blastjob.web import employer_jd as web_employer_jd
 from blastjob.web import (
+    asks_view,
     fitscore,
     packet_view,
     packets,
     people,
     progress,
     routes_activity,
+    routes_asks,
     routes_boards,
     routes_debrief,
     routes_network,
@@ -52,6 +53,7 @@ from blastjob.web import (
     routes_targets,
     service,
 )
+from blastjob.web import employer_jd as web_employer_jd
 from blastjob.web import manual_job as mj
 from blastjob.web import routes_employer_link as employer_link
 from blastjob.web import same_role as srv
@@ -106,6 +108,8 @@ templates.env.globals["is_jd_snippet"] = dbc.is_jd_snippet
 templates.env.globals["jd_provenance"] = web_employer_jd.jd_provenance
 templates.env.globals["jd_provenance_url"] = web_employer_jd.jd_provenance_url
 templates.env.globals["ejd_refusal"] = web_employer_jd.refusal
+# One-use token per outreach-ask form (web/asks_view.py): a double submit is one row.
+templates.env.globals["new_request_token"] = asks_view.new_request_token
 # Row actions depend on the stage a job is in (one rule, web/stages.py).
 templates.env.globals["clock"] = debrief.fmt_clock
 templates.env.globals["stage_of"] = st.stage_of
@@ -326,6 +330,7 @@ def create_app(
     mj.register(app, conn, load_config, render)
     routes_stages.register(app, deps)
     routes_network.register(app, deps)
+    routes_asks.register(app, deps)
     routes_targets.register(app, deps)
     routes_debrief.register(app, deps)
     routes_boards.register(app, deps, save_config)
@@ -389,6 +394,7 @@ def create_app(
                 comp_kinds=co.COMP_KINDS,
                 warm_paths=warm_paths,
                 warm_people=nv.warm_paths_for_job(c, job_id),
+                **asks_view.ask_context(c, job_id),
                 packet=packet,
                 groundedness=fitscore.load_fit_score(
                     packet["dir"] if packet else None,

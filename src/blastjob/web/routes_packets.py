@@ -328,16 +328,48 @@ def register(app: FastAPI, deps: Deps) -> None:
         request: Request,
         job_id: int,
         contact_id: int | None = Form(None),
+        network_contact_id: int | None = Form(None),
+        kind: str = Form(""),
         _: None = Depends(require_csrf),
     ):
+        from blastjob.core import outreach_asks
         from blastjob.web.build import make_outreach_work
 
+        # At most one recipient id; neither means the unaddressed draft.
+        if contact_id is not None and network_contact_id is not None:
+            return HTMLResponse("Name one person, not two.", status_code=400)
+        key = f"{job_id}:{contact_id or ''}"
+        if kind and network_contact_id is None:
+            try:
+                outreach_asks.validate_kind(kind)  # a given kind is always validated
+            except outreach_asks.AskError as e:
+                return HTMLResponse(str(e), status_code=400)
+        if network_contact_id is not None:
+            # Fail before starting a run: the person must be on this job's warm path and the
+            # kind must be a known ask (the same checks `log_ask` makes).
+            c = deps.conn()
+            try:
+                outreach_asks.validate_kind(kind)
+                outreach_asks.validate_recipient(
+                    c, job_id=job_id, network_contact_id=network_contact_id, contact_id=None
+                )
+            except outreach_asks.AskError as e:
+                return HTMLResponse(str(e), status_code=400)
+            finally:
+                c.close()
+            key = f"{job_id}:n{network_contact_id}:{kind}"
         run = RUNTIME.start(
             "outreach",
-            make_outreach_work(job_id, deps.load_config, contact_id=contact_id),
-            key=f"{job_id}:{contact_id or ''}",
+            make_outreach_work(
+                job_id,
+                deps.load_config,
+                contact_id=contact_id,
+                network_contact_id=network_contact_id,
+                kind=kind,
+            ),
+            key=key,
         )
-        heading = "Outreach draft" + (" (addressed)" if contact_id else "")
+        heading = "Outreach draft" + (" (addressed)" if contact_id or network_contact_id else "")
         return deps.render(request, "_build_panel.html", run=run, heading=heading)
 
     @app.post("/jobs/{job_id}/prep", response_class=HTMLResponse)

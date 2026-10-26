@@ -694,4 +694,38 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_model_calls_started ON model_calls(started_at);
         """,
     ),
+    # 65: one row per outreach ask (#97, ADR 0061). A record, not an application stage. Exactly
+    # one recipient: a network contact or a per-job contact. job_id NULL = an ask not about one
+    # job (a job-less ask needs a network contact, enforced in core/outreach_asks.py).
+    # follow_up_notified_on holds the follow_up_on value a SENT digest already announced, so
+    # moving the date re-arms the reminder. request_token makes a double submit one row.
+    (
+        65,
+        """
+        CREATE TABLE IF NOT EXISTS outreach_asks (
+            id                    INTEGER PRIMARY KEY,
+            job_id                INTEGER REFERENCES jobs(id),
+            network_contact_id    INTEGER REFERENCES network_contacts(id),
+            contact_id            INTEGER REFERENCES contacts(id),
+            recipient_name        TEXT NOT NULL,
+            kind                  TEXT NOT NULL
+                CHECK (kind IN ('intro','referral','recruiter','advice')),
+            channel               TEXT NOT NULL
+                CHECK (channel IN ('email','linkedin','phone','in_person','other')),
+            asked_on              TEXT NOT NULL,
+            status                TEXT NOT NULL DEFAULT 'waiting'
+                CHECK (status IN ('waiting','replied','helped','declined','no_reply')),
+            follow_up_on          TEXT DEFAULT '',
+            follow_up_notified_on TEXT DEFAULT '',
+            note                  TEXT DEFAULT '' CHECK (length(note) <= 300),
+            request_token         TEXT UNIQUE,
+            created_at            TEXT NOT NULL,
+            updated_at            TEXT NOT NULL,
+            CHECK ((network_contact_id IS NULL) <> (contact_id IS NULL)),
+            CHECK (contact_id IS NULL OR job_id IS NOT NULL)
+        );
+        CREATE INDEX IF NOT EXISTS idx_outreach_asks_due ON outreach_asks(status, follow_up_on);
+        CREATE INDEX IF NOT EXISTS idx_outreach_asks_job ON outreach_asks(job_id);
+        """,
+    ),
 ]

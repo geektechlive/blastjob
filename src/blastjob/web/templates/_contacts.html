@@ -10,6 +10,8 @@
           {% set cu = c.url | safe_url %}{% if cu %}<a class="ext" href="{{ cu }}" target="_blank" rel="noopener noreferrer">{{ c.name }}</a>{% else %}{{ c.name }}{% endif %}
           {% if c.title %}<span class="dim">&mdash; {{ c.title }}</span>{% endif %}
           {% if c.contacted_at %}<span class="badge state">contacted {{ c.contacted_at[:10] }}</span>{% endif %}
+          {% set last = ask_latest_contact.get(c.id) if ask_latest_contact is defined else none %}
+          {% if last %}<span class="badge state">asked {{ last.asked_on }} ({{ last.status.replace('_', ' ') }})</span>{% endif %}
         </div>
         {% if c.why %}<p class="contact-why">{{ c.why }}</p>{% endif %}
         <div class="contact-actions">
@@ -21,6 +23,7 @@
             <button hx-post="/contacts/{{ c.id }}/contacted" hx-vals='{"undo": 1}' hx-target="#contacts" hx-swap="outerHTML">Undo</button>
           {% endif %}
         </div>
+        {% if ask_kinds is defined %}{% with ask_field='contact_id', ask_rid=c.id %}{% include "_ask_form.html" %}{% endwith %}{% endif %}
       </li>
     {% endfor %}
     </ul>

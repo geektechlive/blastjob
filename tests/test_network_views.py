@@ -146,6 +146,7 @@ def test_warm_paths_for_job_returns_expected_fields(conn):
 
     assert result == [
         {
+            "id": result[0]["id"],  # the network contact id, for logging an ask (#97)
             "name": "Vera VP",
             "position": "VP Engineering",
             "seniority": "exec",

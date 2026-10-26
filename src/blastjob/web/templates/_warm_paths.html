@@ -13,6 +13,18 @@
       {% if p.seniority %}<span class="badge">{{ p.seniority }}</span>{% endif %}
       {% if p.recommended_me %}<span class="badge comp">recommended you</span>{% endif %}
       {% if p.last_message_at %}<span class="dim">last spoke {{ p.last_message_at }}</span>{% endif %}
+      {% set last = ask_latest_net.get(p.id) if ask_latest_net is defined else none %}
+      {% if last %}<span class="badge state">asked {{ last.asked_on }} ({{ last.status.replace('_', ' ') }})</span>{% endif %}
+      {% if ask_kinds is defined %}
+      <form class="ask-draft" hx-post="/jobs/{{ job.id }}/outreach" hx-target="#action-panel" hx-swap="innerHTML">
+        <input type="hidden" name="network_contact_id" value="{{ p.id }}">
+        <select name="kind" aria-label="Kind of note">
+          {% for k in ask_kinds %}<option value="{{ k }}">{{ ask_kind_labels[k] }}</option>{% endfor %}
+        </select>
+        <button type="submit">Draft note</button>
+      </form>
+      {% with ask_field='network_contact_id', ask_rid=p.id %}{% include "_ask_form.html" %}{% endwith %}
+      {% endif %}
     </li>
     {% endfor %}
   </ul>

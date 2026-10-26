@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
+from blastjob.core.outreach_asks import KIND_LABELS
 from blastjob.core.target_store import BASIS_LABELS, EVENT_LABELS
 from blastjob.daily_dream import MAX_DREAM_JOBS, rendered_dream_jobs
 from blastjob.llm.cost import describe_cost
@@ -32,6 +33,7 @@ MAX_DIGEST_JOBS = 25
 MAX_CLOSED_NAMES = 5
 MAX_TARGET_NEWS = 8
 MAX_TARGET_SPAN_CHARS = 160
+MAX_ASK_NAME_CHARS = 60
 # Page text is untrusted: no markdown, links, mentions or mass-ping syntax get through.
 _UNSAFE_SPAN_CHARS = re.compile(r"[<>@*_`\[\]()|~\\#]")
 
@@ -142,6 +144,7 @@ def build_digest(
     target_failed: int = 0,
     dream_jobs: Sequence[sqlite3.Row] = (),
     stopped: str = "",
+    ask_followups: Sequence[sqlite3.Row] = (),
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
@@ -155,6 +158,7 @@ def build_digest(
         or dream_jobs
         or errors
         or followups
+        or ask_followups
         or heartbeat
         or closed
         or replied
@@ -203,6 +207,9 @@ def build_digest(
                 f"• {f['company']} — {f['title']}: {f['followup_reason']} "
                 f"<{base_url}/jobs/{f['id']}>"
             )
+    if ask_followups:
+        lines.append("")
+        lines += format_ask_block(ask_followups, base_url)
     if errors:
         lines.append("")
         lines.append("**Source errors**")
@@ -234,6 +241,30 @@ def format_dream_block(
     if len(jobs) > MAX_DREAM_JOBS:
         lines.append(f"…and {len(jobs) - MAX_DREAM_JOBS} more: <{base_url}/all>")
     return lines
+
+
+def _plain_name(text: str) -> str:
+    """A person or employer name from a feed or an import, defanged for Discord."""
+    return _plain_span(text or "")[:MAX_ASK_NAME_CHARS]
+
+
+def format_ask_line(row: sqlite3.Row, base_url: str) -> str:
+    n = int(row["days_overdue"] or 0)
+    overdue = f"{n} day{'s' if n != 1 else ''} overdue"
+    who = _plain_name(row["recipient_name"])
+    label = KIND_LABELS.get(row["kind"], row["kind"])
+    if row["job_id"] is None:
+        where = _plain_name(row["network_company"] or "")
+        who += f" ({where})" if where else ""
+        return f"• {who} · {label} · {overdue} · cockpit <{base_url}/network>"
+    role = f"{_plain_name(row['title'])} at {_plain_name(row['company'])}"
+    return f"• {who} · {label} · {role} · {overdue} · cockpit <{base_url}/jobs/{row['job_id']}>"
+
+
+def format_ask_block(rows: Sequence[sqlite3.Row], base_url: str) -> list[str]:
+    """The "Asks to follow up" section (#97): waiting outreach asks whose follow-up date has
+    come. `rows` is `outreach_asks.rendered_due_followups`, the same list that gets stamped."""
+    return ["**Asks to follow up**", *(format_ask_line(r, base_url) for r in rows)]
 
 
 def rendered_target_news(news: Sequence[TargetNewsItem]) -> list[TargetNewsItem]:

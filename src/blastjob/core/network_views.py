@@ -115,6 +115,7 @@ def warm_paths_for_job(conn: sqlite3.Connection, job_id: int) -> list[dict]:
     rows = net.warm_paths(conn, job_id)
     return [
         {
+            "id": int(r["id"]),
             "name": r["full_name"],
             "position": r["position"],
             "seniority": _effective_tier(r),

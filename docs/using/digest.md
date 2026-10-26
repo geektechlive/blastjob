@@ -43,6 +43,8 @@ Model calls. When a digest goes out anyway, its last line says how many model ca
 
 Follow-ups due. Under "Follow-ups due", the applied roles that need a nudge, with the reason. See [applying](applying.md#follow-ups).
 
+Asks to follow up. Under "Asks to follow up", the people you asked for an intro, a referral or advice whose follow-up date has come and who have not answered, most overdue first, at most 10 a day. Each is announced once for its follow-up date; change the date on the job page and it comes back. A day with only a due ask still sends.
+
 Source errors and notes. Under "Source errors", a source that failed this run. Under "Notes", things worth knowing, such as a board that returned suspiciously few jobs and so was not used to mark postings stale.
 
 Monday heartbeat. On Mondays an italic line confirms the run is alive and gives seven-day totals.

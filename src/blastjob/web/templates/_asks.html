@@ -1,0 +1,29 @@
+{# Outreach asks for this job (#97): who was asked, when, what they said, when to follow up.
+   A record only; nothing is sent from here. The div always renders so a first ask has a target. #}
+<div id="asks" class="detail-block asks">
+  {% if asks or ask_error %}<h3>Asks <span class="col-count">{{ asks|length }}</span></h3>{% endif %}
+  {% if ask_error %}<p class="dim">{{ ask_error }}</p>{% endif %}
+  {% if asks %}
+  <ul class="facts">
+    {% for a in asks %}
+    <li id="ask-{{ a.id }}">
+      <b>{{ a.recipient_name }}</b>
+      <span class="badge">{{ ask_kind_labels[a.kind] }}</span>
+      <span class="dim">by {{ a.channel.replace('_', ' ') }}, asked {{ a.asked_on }}</span>
+      <span class="badge state">{{ a.status.replace('_', ' ') }}</span>
+      {% if a.follow_up_on %}<span class="dim">follow up {{ a.follow_up_on }}</span>{% endif %}
+      {% if a.note %}<p class="contact-why">{{ a.note }}</p>{% endif %}
+      <form hx-post="/asks/{{ a.id }}" hx-target="#asks" hx-swap="outerHTML"
+            data-alert-error>
+        <select name="status" aria-label="Status">
+          {% for s in ask_statuses %}<option value="{{ s }}" {% if s == a.status %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>{% endfor %}
+        </select>
+        <input type="date" name="follow_up_on" value="{{ a.follow_up_on }}" min="{{ a.asked_on }}" aria-label="Follow up on">
+        <input type="text" name="note" value="{{ a.note }}" maxlength="300" placeholder="note" aria-label="Note">
+        <button type="submit">Save</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>

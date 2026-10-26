@@ -39,7 +39,7 @@ from blastjob import config as cfg_mod
 from blastjob import daily_dream, daily_targets, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
-from blastjob.core import closure, run_lock
+from blastjob.core import closure, outreach_asks, run_lock
 from blastjob.core import target_store as target_store
 from blastjob.core.closure_links import is_authoritative
 from blastjob.core.pause import PAUSE_FILE
@@ -376,6 +376,7 @@ async def _announce(
     dream_jobs = daily_dream.weekly_jobs(cfg, conn, today or dt.date.today())
     target_news = daily_targets.pending_news(conn)
     fups = followups_due(conn)
+    ask_fups = outreach_asks.rendered_due_followups(conn, today or dt.date.today())
     warm_ids = warm_job_ids(conn, jobs)
     links = apply_links_for(conn, [*jobs, *dream_jobs])
     res.new_jobs = len(jobs)
@@ -399,6 +400,7 @@ async def _announce(
             target_failed=res.target_failed,
             dream_jobs=dream_jobs,
             stopped=res.stopped_note,
+            ask_followups=ask_fups,
         )
 
     res.digest = digest()
@@ -427,6 +429,10 @@ async def _announce(
     )
     # Same rule for target news: only the events the sent digest rendered.
     target_store.mark_notified(conn, [n.id for n in rendered_target_news(target_news)])
+    # And the outreach asks it listed: compare-and-set on the date seen at selection.
+    outreach_asks.mark_followups_notified(
+        conn, [(int(r["id"]), r["follow_up_on"]) for r in ask_fups]
+    )
     res.sent = True
     mark_run_sent(conn, run_id)
     return res

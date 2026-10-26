@@ -61,6 +61,19 @@ Three more views are built from the same rows by `network_views`, none of which 
 
 `network.is_recruiter` matches recruiter, talent acquisition, talent partner, executive search, headhunter and staffing titles.
 
+## Outreach asks
+
+A job page lists the people you know at the company (`network_views.warm_paths_for_job`) and the people found for it (`contacts`). Each gets a **Log ask** form that records an ask in `outreach_asks` (`core/outreach_asks.py`, routes in `web/routes_asks.py`). An ask is a record, not an application stage, and logging one sends nothing.
+
+- **Fields.** Kind (intro, referral, recruiter, advice), channel, date asked (today by default, never in the future), a note of at most 300 characters, and a follow-up date that defaults to a week after the ask. A follow-up date before the ask date is rejected; a backfilled ask whose whole timeline is past is fine. Status is waiting, replied, helped, declined or no reply; a closing status clears the follow-up date.
+- **One recipient.** Exactly one of a network contact or a job contact. `validate_recipient` is the single check, used by logging and by the draft route: a network contact tied to a job must be on that job's current warm path, a job contact must belong to the job. The route answers 400 when both ids are sent, even the same number.
+- **Not about one job.** `job_id` may be empty for a network contact and kind recruiter or advice. The recruiter desk will use this.
+- **Double submit.** Each form carries a one-use `request_token`; a replay returns the existing row and writes nothing.
+- **Contacts.** Logging an ask to a job contact also sets `contacts.contacted_at` if it was blank.
+- **Newest ask.** A person's latest ask is by date asked, then id, so an older ask entered later is not shown as the newest.
+- **Reminders.** A due ask appears once in the daily digest ([daily](daily.md#asks-to-follow-up)).
+- **Draft.** `POST /jobs/{id}/outreach` also takes `network_contact_id` and a required `kind`. The recipient block says the facts come from the LinkedIn connections export and holds name, position, company, and whether the person recommended you and when you last messaged, nothing else, plus a Request line for the kind of ask. The page is draft-only like every other draft.
+
 ## Enrichment
 
 A regex cannot read "AVP Strategic Sales (Enterprise, Client Sales)", which is a senior sales person, and for a referral the function matters more than the tier. The optional enrichment pass (the **Read the titles** button on the network page, `/network/enrich`, `network_enrich.run_enrichment`) has a model classify titles: tier, function, recruiter kind, whether the title plausibly owns budget or headcount, and a suggested canonical company name.

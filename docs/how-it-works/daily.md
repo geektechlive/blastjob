@@ -78,6 +78,7 @@ The digest is built by `build_digest`. Sections appear only when they have somet
 - **Replies.** One entry per surfaced reply: who, about what, a one-line snippet and a cockpit link.
 - **Target news.** Events found for your target companies since the last digest (see [below](#target-news)).
 - **Follow-ups due.** Applied-stage jobs with a follow-up due, most overdue first.
+- **Asks to follow up.** Waiting outreach asks whose follow-up date has come, right after Follow-ups due (see [below](#asks-to-follow-up)).
 - **Source errors.** One line per failing source or step, cut to 160 characters.
 - **Notes.** Things worth a human's attention that are not failures: a snapshot the stale-marking guard refused to act on, or an employer-description summary. Cut to 200 characters each.
 - **Weekly heartbeat.** On Mondays (`HEARTBEAT_WEEKDAY`): active and kept counts, plus the last seven days' runs, fetched, scored, new roles and average duration.
@@ -95,7 +96,11 @@ The block is built from `company_events` rows that are not dismissed and have `n
 
 Delivery state is `jobs.dream_notified_at` (migration 60), separate from `notified_at`. The renderer's slice (`rendered_dream_jobs`) is exactly what gets stamped, and only after `send` returned, so a failed send stamps nothing and overflow leads the next week. The send is one call to the sender; if Discord accepts early chunks of a long message and fails a later one, the whole section is re-sent, so a duplicate is possible and accepted, as for the job digest. A dry run stamps nothing. A day with only a Dream list is not a quiet day. Dream roles that are remote or near are not `dream_far` and stay in the daily list with their badge.
 
-**Quiet days send nothing.** With no roles, Dream list, errors, follow-ups, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
+### Asks to follow up
+
+An outreach ask (`outreach_asks`, migration 65; see [network](network.md#outreach-asks)) is due when `status` is `waiting`, `follow_up_on` is set and not after today, and `follow_up_notified_on` differs from `follow_up_on`. `outreach_asks.rendered_due_followups` returns at most 10, most overdue first, then job score (NULL last), then id. That one list is both rendered and stamped: after `send` returned, each row gets `follow_up_notified_on = follow_up_on` by compare-and-set on the date seen at selection, so a date moved in between stays armed. A failed send and a dry run stamp nothing. Moving the follow-up date re-arms the reminder; a waiting ask with no date is never due. A line names the person, the kind, the role and company with days overdue, and links the job page; an ask not about one job shows the person's company from the network data and links `/network`. Names and titles are defanged for Discord. A day with only a due ask still sends.
+
+**Quiet days send nothing.** With no roles, Dream list, errors, follow-ups, asks to follow up, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
 
 ## Delivery
 
