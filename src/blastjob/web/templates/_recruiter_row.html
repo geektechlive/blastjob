@@ -1,0 +1,61 @@
+{# One recruiter desk row (#98). Expects `r` (a recruiter_status.status_desk row) plus the options
+   from web/recruiter_view.py. Every form swaps this row, so a change shows at once. Nothing here
+   sends anything: a note records that you wrote or spoke. #}
+<tr id="recruiter-{{ r.id }}">
+  <td>
+    {% set u = r.url | safe_url %}
+    {% if u %}<a class="ext" href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ r.name }}</a>
+    {% else %}{{ r.name }}{% endif %}
+    <div class="dim">{{ r.position }}</div>
+  </td>
+  <td>{{ r.company }}
+    {% if r.has_live_jobs %}<span class="badge comp">hiring now</span>{% endif %}
+  </td>
+  <td><span class="badge">{{ r.group.replace('_', ' ') }}</span></td>
+  <td>
+    <span class="badge state">{{ r.status_label }}</span>
+    <div class="dim">{% if r.status_source == 'set' %}set by you{% else %}automatic{% endif %}</div>
+    {% if r.status_reason %}<div class="dim">{{ r.status_reason }}</div>{% endif %}
+  </td>
+  <td class="num">
+    {% if r.last_touch %}{{ r.last_touch }} <span class="dim">{{ r.touch_source }}</span>{% else %}—{% endif %}
+  </td>
+  <td class="num">{{ r.last_message_at or '—' }}</td>
+  <td class="dim num">{{ '%.0f' % r.warmth_score }}</td>
+  <td>
+    {% with cid=r.id, override=r.override, ctx='desk' %}{% include "_recruiter_control.html" %}{% endwith %}
+    <details class="ask-form">
+      <summary>Status and notes</summary>
+      <form hx-post="/network/contacts/{{ r.id }}/recruiter-status" hx-target="#recruiter-{{ r.id }}"
+            hx-swap="outerHTML" data-alert-error>
+        <select name="status" aria-label="Recruiter status">
+          {% for s in status_choices %}<option value="{{ s }}" {% if (s == 'auto' and r.status_source == 'auto') or (s == r.status and r.status_source == 'set') %}selected{% endif %}>{{ status_labels[s] }}</option>{% endfor %}
+        </select>
+        <input type="text" name="reason" value="{{ r.status_reason }}" maxlength="{{ reason_max }}" placeholder="reason (needed for do not contact)" aria-label="Reason">
+        <button type="submit">Set status</button>
+      </form>
+      <form hx-post="/network/contacts/{{ r.id }}/asks" hx-target="#recruiter-{{ r.id }}"
+            hx-swap="outerHTML" data-alert-error data-ask-form>
+        <input type="hidden" name="request_token" value="{{ new_request_token() }}">
+        <select name="channel" aria-label="Channel">
+          {% for ch in ask_channels %}<option value="{{ ch }}">{{ ch.replace('_', ' ') }}</option>{% endfor %}
+        </select>
+        <input type="date" name="asked_on" value="{{ ask_today }}" max="{{ ask_today }}" aria-label="Asked on">
+        <input type="text" name="note" maxlength="300" placeholder="note" aria-label="Note">
+        <button type="submit">Log note</button>
+        <span class="dim">Follow-up defaults to a week out.</span>
+      </form>
+      {% for a in r.asks %}
+      <form hx-post="/asks/{{ a.id }}" hx-target="#recruiter-{{ r.id }}" hx-swap="outerHTML" data-alert-error>
+        <span class="dim">{{ a.asked_on }} by {{ a.channel.replace('_', ' ') }}</span>
+        <select name="status" aria-label="Note status">
+          {% for s in ask_statuses %}<option value="{{ s }}" {% if s == a.status %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>{% endfor %}
+        </select>
+        <input type="date" name="follow_up_on" value="{{ a.follow_up_on }}" min="{{ a.asked_on }}" aria-label="Follow up on">
+        <input type="text" name="note" value="{{ a.note }}" maxlength="300" placeholder="note" aria-label="Note">
+        <button type="submit">Save</button>
+      </form>
+      {% endfor %}
+    </details>
+  </td>
+</tr>

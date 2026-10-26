@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from blastjob.core.outreach_asks import KIND_LABELS
+from blastjob.core.recruiter_status import Reminder
 from blastjob.core.target_store import BASIS_LABELS, EVENT_LABELS
 from blastjob.daily_dream import MAX_DREAM_JOBS, rendered_dream_jobs
 from blastjob.llm.cost import describe_cost
@@ -145,6 +146,7 @@ def build_digest(
     dream_jobs: Sequence[sqlite3.Row] = (),
     stopped: str = "",
     ask_followups: Sequence[sqlite3.Row] = (),
+    recruiter_touches: Sequence[Reminder] = (),
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
@@ -159,6 +161,7 @@ def build_digest(
         or errors
         or followups
         or ask_followups
+        or recruiter_touches
         or heartbeat
         or closed
         or replied
@@ -210,6 +213,9 @@ def build_digest(
     if ask_followups:
         lines.append("")
         lines += format_ask_block(ask_followups, base_url)
+    if recruiter_touches:
+        lines.append("")
+        lines += format_recruiter_block(recruiter_touches, base_url)
     if errors:
         lines.append("")
         lines.append("**Source errors**")
@@ -265,6 +271,21 @@ def format_ask_block(rows: Sequence[sqlite3.Row], base_url: str) -> list[str]:
     """The "Asks to follow up" section (#97): waiting outreach asks whose follow-up date has
     come. `rows` is `outreach_asks.rendered_due_followups`, the same list that gets stamped."""
     return ["**Asks to follow up**", *(format_ask_line(r, base_url) for r in rows)]
+
+
+def format_recruiter_line(r: Reminder, base_url: str) -> str:
+    who = _plain_name(r.name)
+    firm = _plain_name(r.company)
+    where = f" ({firm})" if firm else ""
+    n = r.days_since
+    age = f"{n} day{'s' if n != 1 else ''} since last touch"
+    return f"• {who}{where} · {age} · cockpit <{base_url}/network>"
+
+
+def format_recruiter_block(rows: Sequence[Reminder], base_url: str) -> list[str]:
+    """The "Recruiters to touch" section (#98): recruiters you have spoken with whose last touch
+    is old. `rows` is `recruiter_status.due_reminders`, the same list that gets stamped."""
+    return ["**Recruiters to touch**", *(format_recruiter_line(r, base_url) for r in rows)]
 
 
 def rendered_target_news(news: Sequence[TargetNewsItem]) -> list[TargetNewsItem]:

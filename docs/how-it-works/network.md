@@ -61,13 +61,22 @@ Three more views are built from the same rows by `network_views`, none of which 
 
 `network.is_recruiter` matches recruiter, talent acquisition, talent partner, executive search, headhunter and staffing titles.
 
+## Recruiter status
+
+Each recruiter-desk row shows a relationship status and a last touch (`core/recruiter_status.py`, columns from migrations 66 to 68 on `network_contacts`).
+
+- **Status.** One of not contacted, reached out, spoke, active or do not contact. A status you set (`POST /network/contacts/{id}/recruiter-status`, `recruiter_status`) always wins; "automatic" clears it. Without one, the status comes from interaction facts only, never from how an ask ended: `spoke` when they answered any ask (replied, helped or declined) or the LinkedIn data shows messages; `reached_out` when asks exist but none was answered and there are no messages; `not_contacted` otherwise. An old answered ask therefore keeps `spoke` even when a newer ask is still waiting. The automatic status never yields active or do not contact; only you set those. Do not contact needs a reason of at most 120 characters (`recruiter_status_reason`); the reason is dropped when you choose another status.
+- **Last touch.** The later of the newest `asked_on` over the contact's asks (dates validated by [outreach asks](#outreach-asks): ISO, never in the future) and the date part of `last_message_at`. The row says whether it came from "ask" or "LinkedIn message"; a tie reads as the ask. A recruiter with neither has no last touch.
+- **Notes.** `POST /network/contacts/{id}/asks` logs a job-less ask of kind recruiter (channel, date, note) through the same `log_ask`, which now also rejects a job-less recruiter note to anyone who is not an effective recruiter. A job-less ask's status, follow-up date and note are changed from the desk row too. Both routes answer 404 for a contact who is not an effective recruiter, and sit behind the CSRF, Origin and Host checks.
+- **Reminder.** A `spoke` or `active` recruiter is announced in the digest when the last touch is old enough ([daily](daily.md#recruiters-to-touch)). Nothing is sent to the recruiter.
+
 ## Outreach asks
 
 A job page lists the people you know at the company (`network_views.warm_paths_for_job`) and the people found for it (`contacts`). Each gets a **Log ask** form that records an ask in `outreach_asks` (`core/outreach_asks.py`, routes in `web/routes_asks.py`). An ask is a record, not an application stage, and logging one sends nothing.
 
 - **Fields.** Kind (intro, referral, recruiter, advice), channel, date asked (today by default, never in the future), a note of at most 300 characters, and a follow-up date that defaults to a week after the ask. A follow-up date before the ask date is rejected; a backfilled ask whose whole timeline is past is fine. Status is waiting, replied, helped, declined or no reply; a closing status clears the follow-up date.
 - **One recipient.** Exactly one of a network contact or a job contact. `validate_recipient` is the single check, used by logging and by the draft route: a network contact tied to a job must be on that job's current warm path, a job contact must belong to the job. The route answers 400 when both ids are sent, even the same number.
-- **Not about one job.** `job_id` may be empty for a network contact and kind recruiter or advice. The recruiter desk will use this.
+- **Not about one job.** `job_id` may be empty for a network contact and kind recruiter or advice. The recruiter desk uses this for [notes to a recruiter](#recruiter-status).
 - **Double submit.** Each form carries a one-use `request_token`; a replay returns the existing row and writes nothing.
 - **Contacts.** Logging an ask to a job contact also sets `contacts.contacted_at` if it was blank.
 - **Newest ask.** A person's latest ask is by date asked, then id, so an older ask entered later is not shown as the newest.

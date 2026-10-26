@@ -44,6 +44,35 @@ def add_network(
     return int(cur.lastrowid)
 
 
+def add_recruiter(
+    conn: sqlite3.Connection,
+    name: str,
+    company: str = "Northwind Search",
+    *,
+    messages: int = 0,
+    last_message_at: str = "",
+    override: str | None = None,
+) -> int:
+    """A network contact the recruiter desk lists (the title rule marks it `is_recruiter`)."""
+    cur = conn.execute(
+        "INSERT INTO network_contacts (full_name, company, company_key, position, url, seniority,"
+        " is_recruiter, message_count, last_message_at, recruiter_override)"
+        " VALUES (?, ?, ?, 'Recruiter', ?, 'ic', 1, ?, ?, ?)",
+        (
+            name,
+            company,
+            company_key(company),
+            f"https://example.com/in/{name.replace(' ', '').lower()}",
+            messages,
+            last_message_at,
+            override,
+        ),
+    )
+    conn.commit()
+    assert cur.lastrowid is not None
+    return int(cur.lastrowid)
+
+
 def add_contact(conn: sqlite3.Connection, job_id: int, name: str = "Pat Roe") -> int:
     cur = conn.execute(
         "INSERT INTO contacts (job_id, name, title, role, url, why, created_at) "

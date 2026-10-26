@@ -9,7 +9,7 @@ import pytest
 
 from blastjob.core import outreach_asks as oa
 from blastjob.db import client as dbc
-from tests.asks_fixture import add_contact, add_job, add_network, make_cfg
+from tests.asks_fixture import add_contact, add_job, add_network, add_recruiter, make_cfg
 
 TODAY = dt.date(2026, 10, 26)
 
@@ -37,10 +37,11 @@ def _raw_insert(conn: sqlite3.Connection, **over: object) -> None:
     conn.execute(f"INSERT INTO outreach_asks ({cols}) VALUES ({marks})", list(row.values()))
 
 
-def test_migration_is_65(conn):
+def test_outreach_asks_table_arrived_in_migration_65(conn):
     from blastjob.db.schema import MIGRATIONS
 
-    assert MIGRATIONS[-1][0] == 65
+    [sql] = [s for v, s in MIGRATIONS if v == 65]
+    assert "CREATE TABLE IF NOT EXISTS outreach_asks" in sql
 
 
 def test_check_rejects_zero_recipients(conn):
@@ -152,7 +153,9 @@ def test_jobless_ask_needs_network_contact_and_recruiter_or_advice(conn):
         _log(conn, contact_id=c, kind="advice")  # job-less with a per-job contact
     with pytest.raises(oa.AskError):
         _log(conn, network_contact_id=n, kind="intro")  # job-less intro
-    assert _log(conn, network_contact_id=n, kind="recruiter")
+    assert _log(conn, network_contact_id=n, kind="advice")
+    recruiter = add_recruiter(conn, "Ria Fox")
+    assert _log(conn, network_contact_id=recruiter, kind="recruiter")
 
 
 def test_contact_ask_sets_blank_contacted_at_and_keeps_existing(conn):

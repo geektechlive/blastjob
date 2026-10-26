@@ -1,32 +1,20 @@
 {# Recruiter desk. Most of these ties are cold, so last-spoke is shown rather than
    hidden behind the ranking -- a 2024 conversation is a different ask than an
-   August one, and pretending otherwise would write the wrong note. #}
+   August one, and pretending otherwise would write the wrong note. Each row is
+   _recruiter_row.html: status, last touch, and the forms that change them (#98). #}
 <div id="recruiters" class="detail-block"{% if oob %} hx-swap-oob="outerHTML"{% endif %}>
   <h3>Recruiter desk <span class="col-count">{{ recruiters|length }}</span></h3>
   {% if not recruiters %}
     <p class="dim">No recruiters in the imported network yet.</p>
   {% else %}
   <table class="net-table">
-    <tr><th>Who</th><th>Where</th><th>Side</th><th>Last spoke</th><th></th><th>Label</th></tr>
+    <tr><th>Who</th><th>Where</th><th>Side</th><th>Status</th><th>Last touch</th><th>Last spoke</th><th></th><th>Label</th></tr>
     {% for r in recruiters %}
-    <tr>
-      <td>
-        {% set u = r.url | safe_url %}
-        {% if u %}<a class="ext" href="{{ u }}" target="_blank" rel="noopener noreferrer">{{ r.name }}</a>
-        {% else %}{{ r.name }}{% endif %}
-        <div class="dim">{{ r.position }}</div>
-      </td>
-      <td>{{ r.company }}
-        {% if r.has_live_jobs %}<span class="badge comp">hiring now</span>{% endif %}
-      </td>
-      <td><span class="badge">{{ r.group.replace('_', ' ') }}</span></td>
-      <td class="num">{{ r.last_message_at or '—' }}</td>
-      <td class="dim num">{{ '%.0f' % r.warmth_score }}</td>
-      <td>{% with cid=r.id, override=r.override, ctx='desk' %}{% include "_recruiter_control.html" %}{% endwith %}</td>
-    </tr>
+    {% include "_recruiter_row.html" %}
     {% endfor %}
   </table>
   {% endif %}
   <p class="dim">Missing someone, or wrong side? Find them under "Mark a recruiter" below.
-  Your label here wins over the title rule and the title reader.</p>
+  Your label here wins over the title rule and the title reader. The status comes from your
+  asks and your LinkedIn messages unless you set it; the last touch is the later of the two.</p>
 </div>

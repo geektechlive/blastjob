@@ -28,7 +28,7 @@ from blastjob.core import network_views as nv
 from blastjob.core import target_store as ts
 from blastjob.core.paths import locate
 from blastjob.discovery import follow_seeds as fs
-from blastjob.web import people, service
+from blastjob.web import people, recruiter_view, service
 from blastjob.web.asks_view import ask_context
 from blastjob.web.deps import Deps
 from blastjob.web.runtime import RUNTIME
@@ -97,7 +97,7 @@ def register(app: FastAPI, deps: Deps) -> None:
     async def network_recruiters(request: Request):
         c = deps.conn()
         try:
-            return deps.render(request, "_recruiters.html", recruiters=nv.recruiter_desk(c))
+            return deps.render(request, "_recruiters.html", **recruiter_view.desk_context(c))
         finally:
             c.close()
 
@@ -143,10 +143,10 @@ def register(app: FastAPI, deps: Deps) -> None:
                     "_contact_search.html",
                     q=query,
                     results=nv.search_contacts(c, query),
-                    recruiters=nv.recruiter_desk(c),
                     oob=True,
+                    **recruiter_view.desk_context(c),
                 )
-            return deps.render(request, "_recruiters.html", recruiters=nv.recruiter_desk(c))
+            return deps.render(request, "_recruiters.html", **recruiter_view.desk_context(c))
         finally:
             c.close()
 

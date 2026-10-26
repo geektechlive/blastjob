@@ -39,7 +39,7 @@ from blastjob import config as cfg_mod
 from blastjob import daily_dream, daily_targets, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
-from blastjob.core import closure, outreach_asks, run_lock
+from blastjob.core import closure, outreach_asks, recruiter_status, run_lock
 from blastjob.core import target_store as target_store
 from blastjob.core.closure_links import is_authoritative
 from blastjob.core.pause import PAUSE_FILE
@@ -377,6 +377,12 @@ async def _announce(
     target_news = daily_targets.pending_news(conn)
     fups = followups_due(conn)
     ask_fups = outreach_asks.rendered_due_followups(conn, today or dt.date.today())
+    touches = recruiter_status.due_reminders(
+        conn,
+        today or dt.date.today(),
+        touch_days=cfg.notify.recruiter_touch_days,
+        lookback_days=cfg.notify.recruiter_lookback_days,
+    )
     warm_ids = warm_job_ids(conn, jobs)
     links = apply_links_for(conn, [*jobs, *dream_jobs])
     res.new_jobs = len(jobs)
@@ -401,6 +407,7 @@ async def _announce(
             dream_jobs=dream_jobs,
             stopped=res.stopped_note,
             ask_followups=ask_fups,
+            recruiter_touches=touches,
         )
 
     res.digest = digest()
@@ -433,6 +440,8 @@ async def _announce(
     outreach_asks.mark_followups_notified(
         conn, [(int(r["id"]), r["follow_up_on"]) for r in ask_fups]
     )
+    # And the recruiters it listed: each gets the last-touch date it was rendered with.
+    recruiter_status.mark_reminded(conn, [(t.contact_id, t.last_touch) for t in touches])
     res.sent = True
     mark_run_sent(conn, run_id)
     return res

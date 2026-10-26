@@ -202,7 +202,7 @@ def _desk_group(row) -> str:
     return "agency" if _is_agency_company(row["company"]) else "in_house"
 
 
-def recruiter_desk(conn: sqlite3.Connection) -> list[dict]:
+def recruiter_desk(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
     """Every recruiter connection, grouped exec_search, agency, in_house (then
     ranked by `warmth_score` within a group), each flagged when their own
     employer currently has a live posting.
@@ -213,7 +213,8 @@ def recruiter_desk(conn: sqlite3.Connection) -> list[dict]:
 
     Most of these ties are cold -- the highest lifetime message count is
     someone last touched over a year ago -- so warmth_score's recency
-    component is what keeps this from just being a volume leaderboard.
+    component is what keeps this from just being a volume leaderboard. `today` (an ISO date)
+    defaults to the real date.
     """
     rows = conn.execute(
         "SELECT id, full_name, url, company, company_key, position, seniority, enrich_tier, "
@@ -224,7 +225,7 @@ def recruiter_desk(conn: sqlite3.Connection) -> list[dict]:
     if not rows:
         return []
 
-    today = date.today().isoformat()
+    today = today or date.today().isoformat()
     live_keys = _live_job_company_keys(conn, (r["company_key"] for r in rows))
 
     desk = [

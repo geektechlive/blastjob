@@ -370,13 +370,36 @@ class WebConfig(BaseModel):
         return normalize_public_url(v)
 
 
+RECRUITER_TOUCH_DAYS_MIN = 14
+RECRUITER_TOUCH_DAYS_MAX = 120
+RECRUITER_LOOKBACK_DAYS_MIN = 90
+RECRUITER_LOOKBACK_DAYS_MAX = 1095
+
+
 class NotifyConfig(BaseModel):
     """Where the daily digest goes. `stdout` prints it (and the run log keeps
-    it); `discord` posts to a channel and needs the two env vars below."""
+    it); `discord` posts to a channel and needs the two env vars below.
+
+    `recruiter_touch_days`: a recruiter you spoke with is reminded about once their last touch
+    is this old. `recruiter_lookback_days`: a recruiter you only spoke with (not marked active)
+    is reminded about only while their last touch is no older than this."""
 
     mode: Literal["discord", "stdout", "off"] = "stdout"
     discord_token_env: str = "DISCORD_BOT_TOKEN"
     discord_channel_env: str = "DISCORD_CHANNEL_ID"
+    recruiter_touch_days: int = Field(
+        default=42, ge=RECRUITER_TOUCH_DAYS_MIN, le=RECRUITER_TOUCH_DAYS_MAX
+    )
+    recruiter_lookback_days: int = Field(
+        default=365, ge=RECRUITER_LOOKBACK_DAYS_MIN, le=RECRUITER_LOOKBACK_DAYS_MAX
+    )
+
+    @model_validator(mode="after")
+    def _lookback_covers_touch_days(self) -> "NotifyConfig":
+        """A lookback shorter than the touch age would make every spoke recruiter ineligible."""
+        if self.recruiter_lookback_days < self.recruiter_touch_days:
+            raise ValueError("recruiter_lookback_days must be at least recruiter_touch_days")
+        return self
 
 
 DAILY_DEADLINE_MIN_MINUTES = 5

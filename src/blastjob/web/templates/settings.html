@@ -113,6 +113,14 @@
     </select>
     <small>discord needs {{ cfg.notify.discord_token_env }} and {{ cfg.notify.discord_channel_env }} in your secrets file.</small>
   </label>
+  <label>Recruiter touch-again reminder (days)
+    <input type="number" name="notify_recruiter_touch_days" value="{{ cfg.notify.recruiter_touch_days }}" min="14" max="120">
+    <small>The digest lists a recruiter you have spoken with (or marked active) once your last touch is this many days old, at most 5 a day, each once per touch. A new ask or message starts the count again.</small>
+  </label>
+  <label>Recruiter reminder lookback (days)
+    <input type="number" name="notify_recruiter_lookback_days" value="{{ cfg.notify.recruiter_lookback_days }}" min="90" max="1095">
+    <small>A recruiter you only spoke with is reminded about while your last touch is no older than this. One you marked active is always eligible. This keeps years-old message history from flooding the digest.</small>
+  </label>
   <label>Cockpit address
     <input type="text" name="web_host" value="{{ cfg.web.host }}"{% if not is_local %} readonly{% endif %}>
     {% if not is_local %}<small>Read-only from this device. Change it on the computer running blastjob.</small>{% endif %}

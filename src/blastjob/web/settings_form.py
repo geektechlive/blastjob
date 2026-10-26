@@ -28,10 +28,15 @@ from blastjob.models.config import (
     CONCURRENCY_MIN,
     DAILY_DEADLINE_MAX_MINUTES,
     DAILY_DEADLINE_MIN_MINUTES,
+    RECRUITER_LOOKBACK_DAYS_MAX,
+    RECRUITER_LOOKBACK_DAYS_MIN,
+    RECRUITER_TOUCH_DAYS_MAX,
+    RECRUITER_TOUCH_DAYS_MIN,
     SDK_TIMEOUT_MAX,
     SDK_TIMEOUT_MIN,
     BlastJobConfig,
     LimitsConfig,
+    NotifyConfig,
     TargetBoard,
 )
 
@@ -168,6 +173,47 @@ def _service(cfg: BlastJobConfig, form: Form) -> None:
     cfg.web.port = _num(form, "web_port", int)
     cfg.web.public_url = form.get("web_public_url", cfg.web.public_url).strip()
     cfg.limits = _limits(cfg.limits, form)
+    cfg.notify = _notify_recruiter(cfg.notify, form)
+
+
+# (NotifyConfig field, label, min, max). Applied only when submitted, each reporting its own error.
+_RECRUITER_FIELDS = (
+    (
+        "recruiter_touch_days",
+        "Recruiter touch-again reminder",
+        RECRUITER_TOUCH_DAYS_MIN,
+        RECRUITER_TOUCH_DAYS_MAX,
+    ),
+    (
+        "recruiter_lookback_days",
+        "Recruiter reminder lookback",
+        RECRUITER_LOOKBACK_DAYS_MIN,
+        RECRUITER_LOOKBACK_DAYS_MAX,
+    ),
+)
+
+
+def _notify_recruiter(current: NotifyConfig, form: Form) -> NotifyConfig:
+    """The notify settings with each submitted `notify_<field>` recruiter number applied; a form
+    that omits them keeps the stored values."""
+    values = current.model_dump()
+    for field, label, low, high in _RECRUITER_FIELDS:
+        raw = form.get(f"notify_{field}")
+        if raw is None:
+            continue
+        try:
+            number = int(raw)
+        except ValueError as e:
+            raise FormError(f"{label}: whole days from {low} to {high}") from e
+        if not low <= number <= high:
+            raise FormError(f"{label}: whole days from {low} to {high}")
+        values[field] = number
+    try:
+        return NotifyConfig(**values)
+    except ValidationError as e:
+        raise FormError(
+            "Recruiter reminder lookback: at least as many days as the touch-again reminder"
+        ) from e
 
 
 # (LimitsConfig field, form field, label, unit, min, max). Each field reports its own error.

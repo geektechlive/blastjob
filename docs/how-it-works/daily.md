@@ -79,6 +79,7 @@ The digest is built by `build_digest`. Sections appear only when they have somet
 - **Target news.** Events found for your target companies since the last digest (see [below](#target-news)).
 - **Follow-ups due.** Applied-stage jobs with a follow-up due, most overdue first.
 - **Asks to follow up.** Waiting outreach asks whose follow-up date has come, right after Follow-ups due (see [below](#asks-to-follow-up)).
+- **Recruiters to touch.** Recruiters you have spoken with whose last touch is old, right after Asks to follow up (see [below](#recruiters-to-touch)).
 - **Source errors.** One line per failing source or step, cut to 160 characters.
 - **Notes.** Things worth a human's attention that are not failures: a snapshot the stale-marking guard refused to act on, or an employer-description summary. Cut to 200 characters each.
 - **Weekly heartbeat.** On Mondays (`HEARTBEAT_WEEKDAY`): active and kept counts, plus the last seven days' runs, fetched, scored, new roles and average duration.
@@ -100,7 +101,13 @@ Delivery state is `jobs.dream_notified_at` (migration 60), separate from `notifi
 
 An outreach ask (`outreach_asks`, migration 65; see [network](network.md#outreach-asks)) is due when `status` is `waiting`, `follow_up_on` is set and not after today, and `follow_up_notified_on` differs from `follow_up_on`. `outreach_asks.rendered_due_followups` returns at most 10, most overdue first, then job score (NULL last), then id. That one list is both rendered and stamped: after `send` returned, each row gets `follow_up_notified_on = follow_up_on` by compare-and-set on the date seen at selection, so a date moved in between stays armed. A failed send and a dry run stamp nothing. Moving the follow-up date re-arms the reminder; a waiting ask with no date is never due. A line names the person, the kind, the role and company with days overdue, and links the job page; an ask not about one job shows the person's company from the network data and links `/network`. Names and titles are defanged for Discord. A day with only a due ask still sends.
 
-**Quiet days send nothing.** With no roles, Dream list, errors, follow-ups, asks to follow up, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
+### Recruiters to touch
+
+`recruiter_status.due_reminders` (see [network](network.md#recruiter-status)) selects recruiters whose status, stored or automatic, is `spoke` or `active`, whose last touch is at least `notify.recruiter_touch_days` old (default 42, 14 to 120), and whose `recruiter_reminded_for` differs from that last-touch date. A `spoke` recruiter must also have a last touch within `notify.recruiter_lookback_days` (default 365, 90 to 1,095): the reminder covers recruiters touched in the last year, plus any you mark active at any age. This keeps the roughly 60 recruiters with old message history from flooding the first digest. Do not contact and not contacted are never included, nor is a recruiter with no last touch date. Warmest first, at most 5, each line naming the person, the firm and the days since the last touch with a link to `/network`. An unanswered ask is not a reminder here: its follow-up date belongs to [asks to follow up](#asks-to-follow-up).
+
+The rendered list carries `(contact id, last touch)` pairs, and after `send` returned each row gets `recruiter_reminded_for` set to exactly that date. It is not compare-and-set: a touch logged while the digest was being sent has a newer last touch, which no longer equals the stamp, so the next cycle re-arms on its own. A new ask or message re-arms the reminder the same way. A failed send stamps nothing, whether the sender raised at once or a Discord message of several parts failed on a later part; a dry run stamps nothing. A day with only a due recruiter still sends.
+
+**Quiet days send nothing.** With no roles, Dream list, errors, follow-ups, asks to follow up, recruiters to touch, notes, closures, replies, target news or heartbeat, the digest is empty and nothing is posted. The weekly heartbeat exists so that silence stays distinguishable from a dead job.
 
 ## Delivery
 
@@ -110,7 +117,7 @@ An outreach ask (`outreach_asks`, migration 65; see [network](network.md#outreac
 |---|---|
 | `stdout` (default) | Prints the digest. Under launchd it lands in the daily log. |
 | `discord` | Posts to a private channel through a bot. |
-| `off` | Sends nothing. |
+| `off` | Sends nothing. It still stamps what the digest would have carried, like the other blocks, so switching notifications back on does not dump a backlog. |
 
 A dry run never sends, whatever the mode. Only `discord` needs credentials, so a `stdout` or `off` install never fails over missing Discord keys. The bot token and channel id are read from the environment variables named by `notify.discord_token_env` and `notify.discord_channel_env` (defaults `DISCORD_BOT_TOKEN` and `DISCORD_CHANNEL_ID`), which come from the secrets file (see [settings and secrets](../operations/settings-and-secrets.md)). In `discord` mode a missing one stops the run with a clear error.
 

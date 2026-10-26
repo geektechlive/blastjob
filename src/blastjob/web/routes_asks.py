@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 
 from blastjob.core import outreach_asks as oa
-from blastjob.web import service
+from blastjob.web import recruiter_view, service
 from blastjob.web.asks_view import ask_context
 from blastjob.web.deps import Deps
 from blastjob.web.security import require_csrf
@@ -92,7 +92,14 @@ def register(app: FastAPI, deps: Deps) -> None:
             except oa.AskError as e:
                 return _bad(str(e))
             if ask["job_id"] is None:
-                return HTMLResponse("Saved.")
+                ctx = (
+                    recruiter_view.row_context(c, int(ask["network_contact_id"]))
+                    if ask["network_contact_id"] is not None
+                    else None
+                )
+                if ctx is None:
+                    return HTMLResponse("Saved.")
+                return deps.render(request, "_recruiter_row.html", **ctx)
             return render_asks(request, c, int(ask["job_id"]))
         finally:
             c.close()

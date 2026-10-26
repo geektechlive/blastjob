@@ -728,4 +728,11 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_outreach_asks_job ON outreach_asks(job_id);
         """,
     ),
+    # 66-68: recruiter status (#98, ADR 0062), one ALTER per version (see migration 3).
+    # recruiter_status NULL = automatic (derived from interaction facts, never stored); otherwise
+    # the owner's choice, checked in core/recruiter_status.py. recruiter_reminded_for holds the
+    # last-touch date a SENT digest already reminded about, so a newer touch re-arms it.
+    (66, "ALTER TABLE network_contacts ADD COLUMN recruiter_status TEXT DEFAULT NULL;"),
+    (67, "ALTER TABLE network_contacts ADD COLUMN recruiter_status_reason TEXT DEFAULT '';"),
+    (68, "ALTER TABLE network_contacts ADD COLUMN recruiter_reminded_for TEXT DEFAULT '';"),
 ]

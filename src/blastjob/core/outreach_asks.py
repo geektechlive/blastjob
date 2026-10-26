@@ -16,6 +16,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from blastjob.core import network as net
 from blastjob.core import network_views as nv
 
 KINDS = ("intro", "referral", "recruiter", "advice")
@@ -35,7 +36,7 @@ MAX_NOTE_CHARS = 300
 DEFAULT_FOLLOW_UP_DAYS = 7
 MAX_DIGEST_ASKS = 10
 
-_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 
 
 class AskError(ValueError):
@@ -122,6 +123,19 @@ def _network_recipient(
     return Recipient(row["full_name"], network_contact_id, None, row["company"] or "")
 
 
+def _is_recruiter(conn: sqlite3.Connection, network_contact_id: int | None) -> bool:
+    """Whether the network contact is an effective recruiter (the desk's own predicate)."""
+    if network_contact_id is None:
+        return False
+    return (
+        conn.execute(
+            f"SELECT 1 FROM network_contacts WHERE id=? AND {net.EFFECTIVE_RECRUITER_SQL}",
+            (network_contact_id,),
+        ).fetchone()
+        is not None
+    )
+
+
 def _clean_note(note: str) -> str:
     text = (note or "").strip()
     if len(text) > MAX_NOTE_CHARS:
@@ -132,9 +146,10 @@ def _clean_note(note: str) -> str:
 def _check_follow_up(follow_up_on: str, asked_on: dt.date) -> str:
     if not follow_up_on:
         return ""
-    if _iso(follow_up_on, "follow-up date") < asked_on:
+    follow = _iso(follow_up_on, "follow-up date")
+    if follow < asked_on:
         raise AskError("the follow-up date cannot be before the ask date")
-    return follow_up_on
+    return follow.isoformat()
 
 
 def _token_row(conn: sqlite3.Connection, token: str) -> sqlite3.Row | None:
@@ -191,6 +206,8 @@ def log_ask(
     )
     if job_id is None and kind not in JOBLESS_KINDS:
         raise AskError("an ask not tied to a job is a recruiter note or advice")
+    if job_id is None and kind == "recruiter" and not _is_recruiter(conn, network_contact_id):
+        raise AskError("a recruiter note needs a person on the recruiter desk")
     clean = _clean_note(note)
     if follow_up_on is None:
         follow_up_on = (asked + dt.timedelta(days=DEFAULT_FOLLOW_UP_DAYS)).isoformat()
@@ -208,7 +225,7 @@ def log_ask(
                 recipient.name,
                 kind,
                 channel,
-                asked_on,
+                asked.isoformat(),
                 follow,
                 clean,
                 request_token or None,

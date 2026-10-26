@@ -11,7 +11,7 @@ from blastjob.core import outreach_asks as oa
 from blastjob.daily_digest import build_digest
 from blastjob.db import client as dbc
 from blastjob.discovery.pipeline import DiscoveryResult
-from tests.asks_fixture import add_job, add_network, make_cfg
+from tests.asks_fixture import add_job, add_network, add_recruiter, make_cfg
 
 TUE = dt.date(2026, 10, 27)  # not the heartbeat Monday
 WED = dt.date(2026, 10, 28)
@@ -53,7 +53,7 @@ class Sink:
 
 
 def _due_ask(conn, name="Ann Lee", follow_up="2026-10-20", job=None, kind="advice"):
-    n = add_network(conn, name)
+    n = add_recruiter(conn, name, "Acme") if kind == "recruiter" else add_network(conn, name)
     return oa.log_ask(
         conn,
         job_id=job,
