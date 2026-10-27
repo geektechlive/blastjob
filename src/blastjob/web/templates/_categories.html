@@ -1,0 +1,76 @@
+{# The Category searches section of /targets (#91). Labels and terms are owner text: autoescaped. #}
+<section class="categories" id="categories">
+<h2>Category searches</h2>
+<p class="dim">Interests that are not one company, such as "Example robotics firms". Once a week
+the daily run searches Adzuna and the web for leadership roles matching each category's terms
+(three terms at most, one per line). A hit is a lead like any other job. A category marked
+<strong>dream</strong> also keeps roles that are far from home: they appear only in the weekly
+Dream list, never in the daily list, and only when the posting's place is actually known. Editing
+a category's terms or dream flag hides the jobs it found before until the next search finds
+them again; renaming it keeps them. Deleting a category keeps its jobs and removes the badge.</p>
+
+{% if category_error is defined and category_error %}
+  <div class="error"><p>{{ category_error }}</p></div>
+{% endif %}
+
+{% for c in categories %}
+  {% set editing = category_draft_id is defined and category_draft_id == c.id %}
+  <details class="category"{% if editing %} open{% endif %}>
+    <summary>
+      <strong>{{ c.label }}</strong>
+      {% if c.is_dream %}<span class="badge dream">dream</span>{% endif %}
+      {% if not c.enabled %}<span class="badge">off</span>{% endif %}
+      <span class="dim">{{ c.term_list|join(' · ') }}</span>
+    </summary>
+    <form class="settings-form" method="post" action="/targets/categories/{{ c.id }}">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="version" value="{{ c.version }}">
+      <label>Label
+        <input type="text" name="label" maxlength="60" required
+               value="{{ category_draft.label if editing else c.label }}">
+      </label>
+      <label>Search terms (one per line, three at most)
+        <textarea name="terms" rows="3" required>{{ category_draft.terms if editing else c.terms }}</textarea>
+      </label>
+      <label><input type="checkbox" name="is_dream"
+             {% if (category_draft.is_dream if editing else c.is_dream) %}checked{% endif %}>
+        Dream: keep matching roles even when they are far from home
+      </label>
+      <button type="submit">Save</button>
+    </form>
+    <form method="post" action="/targets/categories/{{ c.id }}/enabled" class="inline">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="version" value="{{ c.version }}">
+      <input type="hidden" name="enabled" value="{{ 0 if c.enabled else 1 }}">
+      <button type="submit">{{ 'Turn off' if c.enabled else 'Turn on' }}</button>
+    </form>
+    <form method="post" action="/targets/categories/{{ c.id }}/delete" class="inline">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="version" value="{{ c.version }}">
+      <button type="submit">Delete</button>
+    </form>
+  </details>
+{% else %}
+  <p class="dim">No category searches yet.</p>
+{% endfor %}
+
+{% if categories|length < max_categories %}
+<form class="settings-form" method="post" action="/targets/categories">
+  <input type="hidden" name="_token" value="{{ token }}">
+  <label>Category label
+    <input type="text" name="label" maxlength="60" required placeholder="Example robotics firms"
+           value="{{ category_draft.label if category_draft is defined and category_draft_id is not defined else '' }}">
+  </label>
+  <label>Search terms (one per line, three at most)
+    <textarea name="terms" rows="3" required placeholder="robotics startup">{{ category_draft.terms if category_draft is defined and category_draft_id is not defined else '' }}</textarea>
+  </label>
+  <label><input type="checkbox" name="is_dream"
+         {% if category_draft is defined and category_draft_id is not defined and category_draft.is_dream %}checked{% endif %}>
+    Dream: keep matching roles even when they are far from home
+  </label>
+  <button type="submit">Add category</button>
+</form>
+{% else %}
+  <p class="dim">You have {{ max_categories }} category searches, the most allowed.</p>
+{% endif %}
+</section>

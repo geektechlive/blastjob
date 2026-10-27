@@ -39,6 +39,8 @@ _BOARD_NAMES = {
     "ashby:": "Ashby",
     "dayforce:": "Dayforce",
 }
+# Sources that are neither a board nor an aggregator and get a plain label (limited trust).
+_SOURCE_LABELS = {"category-web": "web search result"}
 _AGGREGATOR_ORDER = ("linkedin", "indeed", "adzuna")
 _AGGREGATOR_LABELS = {"linkedin": "LinkedIn", "indeed": "Indeed", "adzuna": "Adzuna"}
 # Tiers: 0 own board posting, 1 board link, 2 page/manual link,
@@ -97,7 +99,7 @@ def _candidates(row: Any) -> list[tuple[int, str, str]]:
     elif source in _AGGREGATOR_ORDER:
         out.append((3 + _AGGREGATOR_ORDER.index(source), own, _AGGREGATOR_LABELS[source]))
     else:
-        out.append((_TIER_OTHER, own, source or "posting"))
+        out.append((_TIER_OTHER, own, _SOURCE_LABELS.get(source, source or "posting")))
     return out
 
 

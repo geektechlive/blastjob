@@ -98,6 +98,10 @@ async def run_steps(
             log.exception("discovery pipeline failed")
             res.errors["discovery"] = applog.redact(f"{type(e).__name__}: {e}")
 
+    # Category role searches (#91) run after discovery and before matching, so what they find
+    # is scored in the same run. Weekly, on the search-firm weekday only.
+    await category_step(cfg, conn, res, state, today=today)
+
     free_copy = None
     if _may_run(res, state, "employer-description copies"):
         # Free sibling copies land BEFORE matching, so a copied row is scored once, on
@@ -141,6 +145,45 @@ async def run_steps(
         with gateway.caller_scope("daily target scans"):
             await daily_targets.targets_step(cfg, conn, res, dry_run=dry_run, today=today)
     return state.hit or bool(res.skipped_steps)
+
+
+async def category_step(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    res: DailyResult,
+    state: gateway.DeadlineState,
+    *,
+    today: dt.date | None,
+) -> None:
+    """The weekly category searches. Silent unless today is the weekday and a category is
+    enabled, so an install without categories (or any other day) never reports a skipped step.
+    Makes no model call, but does use the network, so the deadline gates it. A crash is
+    reported like a source error and never sinks the run."""
+    from blastjob.discovery import category_search
+    from blastjob.discovery.searchfirms import due_today
+
+    if not due_today(today or dt.date.today(), cfg.discovery.search_firm_weekday):
+        return
+    if not category_search.load_categories(conn):
+        return
+    if not _may_run(res, state, "category searches"):
+        return
+    try:
+        cres = await category_search.run_category_searches(cfg, conn, today=today)
+    except Exception as e:
+        conn.rollback()
+        log.exception("category searches failed")
+        res.errors["category searches"] = applog.redact(f"{type(e).__name__}: {e}")
+        return
+    res.errors.update(cres.errors)
+    res.notes.update(cres.notes)
+    log.info(
+        "category searches: %d new job(s), %d hit(s), %d search(es), %d read(s)",
+        cres.saved,
+        cres.hits,
+        len(cres.queries),
+        len(cres.reads),
+    )
 
 
 async def _matching_step(

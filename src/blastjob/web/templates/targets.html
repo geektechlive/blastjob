@@ -18,6 +18,8 @@ packet. A scan that failed says so; it is never shown as no news.</p>
   <ul>{% for err in add_errors %}<li>{{ err }}</li>{% endfor %}</ul></div>
 {% endif %}
 
+{% include "_categories.html" %}
+
 <form class="settings-form" method="post" action="/targets/add">
   <input type="hidden" name="_token" value="{{ token }}">
   <label>Add target companies

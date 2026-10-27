@@ -92,7 +92,7 @@ Everything lives under `src/blastjob/`.
 - `src/blastjob/exporters/`: writes Markdown, PDF, DOCX and ATS plain text.
 - `src/blastjob/models/`: Pydantic models for config and settings, history, fit score, tracking, coverage, job and contact.
 - `src/blastjob/db/`: the SQLite schema, the migrations and the client. See [data model](data-model.md).
-- `src/blastjob/discovery/`: the source adapters (Greenhouse, Ashby, Lever, Workday, Dayforce, Adzuna, LinkedIn and Indeed alert email over IMAP, retained search firms, Apple), plus normalize, pipeline and the board resolver.
+- `src/blastjob/discovery/`: the source adapters (Greenhouse, Ashby, Lever, Workday, Dayforce, Adzuna, LinkedIn and Indeed alert email over IMAP, retained search firms, Apple), plus normalize, pipeline, the board resolver and the weekly category role searches.
 - `src/blastjob/matching/`: the geo filter, the scope prefilter, the LLM alignment scorer, the gate and the pipeline that runs them.
 - `src/blastjob/web/`: the FastAPI app, the HTMX templates, the background runtime, the tailor and outreach builds, prep, compare and settings. See [the web cockpit](web.md).
 - `src/blastjob/daily.py` (with `daily_digest.py` for the digest text, `daily_targets.py` for the target news step and `daily_dream.py` for the weekly Dream list) and `src/blastjob/notify/`: `blastjob-daily` (discover, score, close, digest). The launchd plist templates are in `launchd/`, the installer is `scripts/install-launchd.sh` and the runner is `scripts/run-daily.sh`. See [daily](daily.md).

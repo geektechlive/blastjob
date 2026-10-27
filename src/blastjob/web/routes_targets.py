@@ -17,6 +17,7 @@ from urllib.parse import quote
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from blastjob.core import category_store
 from blastjob.core import company as co
 from blastjob.core import network as net
 from blastjob.core import target_store as ts
@@ -67,9 +68,29 @@ def _back(value: str, fallback: str = "/targets") -> str:
     return value if _BACK_OK.fullmatch(value) else fallback
 
 
+def render_targets(
+    deps: Deps, request: Request, conn: sqlite3.Connection, status: int = 200, **extra: Any
+) -> HTMLResponse:
+    """The targets page with its category searches (#91); shared with `routes_categories`,
+    which re-renders it with an error and the owner's draft."""
+    response = deps.render(
+        request,
+        "targets.html",
+        targets=_target_rows(conn),
+        categories=[
+            {**dict(c), "term_list": category_store.terms_of(c)}
+            for c in category_store.list_categories(conn)
+        ],
+        max_categories=category_store.MAX_CATEGORIES,
+        **extra,
+    )
+    response.status_code = status
+    return response
+
+
 def register(app: FastAPI, deps: Deps) -> None:
     def _page(request: Request, conn: sqlite3.Connection, **extra: Any) -> HTMLResponse:
-        return deps.render(request, "targets.html", targets=_target_rows(conn), **extra)
+        return render_targets(deps, request, conn, **extra)
 
     @app.get("/targets", response_class=HTMLResponse)
     async def targets_page(request: Request):

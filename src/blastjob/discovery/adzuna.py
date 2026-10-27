@@ -113,12 +113,14 @@ class AdzunaAdapter:
                 "app_id": app_id,
                 "app_key": app_key,
                 "what": what,
-                "where": self.where,
-                "distance": self.distance_km,
                 "results_per_page": self.results_per_page,
                 "max_days_old": self.max_days_old,
                 "content-type": "application/json",
             }
+            # An empty place searches the whole country (a dream category, #91).
+            if self.where:
+                params["where"] = self.where
+                params["distance"] = self.distance_km
             # Only constrain salary when explicitly set — Adzuna's salary_min also
             # filters on PREDICTED pay, which would hide good undisclosed-comp roles.
             if self.salary_min > 0:

@@ -795,4 +795,34 @@ MIGRATIONS: list[tuple[int, str]] = [
     # 72: recruiter-mail triage (#83): the label reader's rows and watermark. SQL in its own
     # module to keep this file under the size limit.
     (72, TRIAGE_MIGRATION),
+    # 73: category role searches (#91, ADRs 0054, 0065, 0066). `terms` is up to 3 search phrases,
+    # one per line. `version` is the compare-and-set counter bumped by every edit;
+    # `terms_version` is bumped only when the terms or `is_dream` change, and a hit counts only
+    # while its stored `terms_version` equals the category's current one (a label edit keeps hits).
+    # A hit row says "this job was found by this category's search"; deleting either side
+    # removes it, and a job found by two categories has two rows.
+    (
+        73,
+        """
+        CREATE TABLE IF NOT EXISTS category_searches (
+            id            INTEGER PRIMARY KEY,
+            slug          TEXT NOT NULL UNIQUE,
+            label         TEXT NOT NULL CHECK (length(label) <= 60),
+            terms         TEXT NOT NULL,
+            is_dream      INTEGER NOT NULL DEFAULT 0,
+            enabled       INTEGER NOT NULL DEFAULT 1,
+            version       INTEGER NOT NULL DEFAULT 0,
+            terms_version INTEGER NOT NULL DEFAULT 0,
+            created_at    TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS category_hits (
+            job_id        INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+            category_id   INTEGER NOT NULL REFERENCES category_searches(id) ON DELETE CASCADE,
+            terms_version INTEGER NOT NULL DEFAULT 0,
+            first_seen    TEXT NOT NULL,
+            PRIMARY KEY (job_id, category_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_category_hits_category ON category_hits(category_id);
+        """,
+    ),
 ]

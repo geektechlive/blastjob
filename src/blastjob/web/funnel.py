@@ -65,7 +65,7 @@ _MAX_EXAMPLES = 12
 
 
 def _is_dream(row: sqlite3.Row, rule: DreamRule | None) -> bool:
-    return rule is not None and rule.applies(row["company"] or "", row["source"] or "")
+    return rule is not None and rule.applies(row["company"] or "", row["source"] or "", row["id"])
 
 
 def _geo_verdict(row: sqlite3.Row, cfg: BlastJobConfig):  # noqa: ANN202 - see matching.geo

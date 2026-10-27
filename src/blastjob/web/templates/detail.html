@@ -31,6 +31,7 @@
     {% if job.geo_remote %}<span class="badge geo">remote</span>
     {% elif job.geo_city %}<span class="badge geo">{{ job.geo_city }}, {{ job.geo_region }}{% if job.geo_distance_mi %} · {{ job.geo_distance_mi|round|int }}mi{% endif %}</span>{% endif %}
     {% if job.dream_badge is defined and job.dream_badge %}<span class="badge dream" title="a company on your dream list">{{ job.dream_badge }}</span>{% endif %}
+    {% for b in (job.category_badges if job.category_badges is defined else []) %}<span class="badge{{ ' dream' if b.dream else '' }}" title="found by a category search">{{ b.text }}</span>{% endfor %}
     <span class="badge state">{{ job.review_state }}</span>
     {% if job.reporting_label is defined and job.reporting_label %}<span class="badge reports-to" title="read from the description; not part of the fit score">{{ job.reporting_label }}</span>{% endif %}
     {% if job.review_state == 'archived' and job.archive_reason %}

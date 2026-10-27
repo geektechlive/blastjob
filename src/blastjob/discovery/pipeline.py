@@ -354,13 +354,19 @@ class _SaveCtx:
 
     def save(self, p: RawPosting, *, commit: bool) -> bool:
         """Upsert one posting; True when it was written."""
+        return self.save_job(p, commit=commit) > 0
+
+    def save_job(self, p: RawPosting, *, commit: bool) -> int:
+        """Upsert one posting; the job id, or 0 when it was not written (no id, or an
+        excluded company). The category searches (#91) need the id to attach their hit in
+        the same transaction."""
         from blastjob.db import client as dbc
 
         if not p.external_id:
-            return False
+            return 0
         if _is_excluded(p.company, self.excludes):
             self.result.skipped_excluded += 1
-            return False
+            return 0
         self.seen.add(p.external_id)
         # A multi-vendor adapter (alert emails) tags each posting with its
         # real origin ("linkedin"/"indeed"); store under that so the cockpit
@@ -372,7 +378,7 @@ class _SaveCtx:
             cols["cluster_id"] = cluster_id
         # A whole-card alert's "title" is the entire card text: it must not
         # overwrite a title that was parsed or repaired properly.
-        dbc.upsert_job(
+        job_id = dbc.upsert_job(
             self.conn,
             source=job_source,
             external_id=p.external_id,
@@ -381,7 +387,7 @@ class _SaveCtx:
             **cols,
         )
         self.result.inserted_or_updated += 1
-        return True
+        return job_id
 
 
 def _persist_batches(

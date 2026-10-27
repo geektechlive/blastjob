@@ -249,15 +249,25 @@ def build_digest(
     return "\n".join(lines)
 
 
+def _category_label(row: sqlite3.Row) -> str:
+    """The row's dream-category labels (#91), defanged for Discord; "" when it has none."""
+    try:
+        return _plain_name(row["category_label"] or "")
+    except IndexError:  # a row from a query that does not select the label
+        return ""
+
+
 def format_dream_block(
     jobs: list[sqlite3.Row], base_url: str, links: Mapping[int, ApplyLink]
 ) -> list[str]:
     """The weekly "Dream list" section (#90): far on-site roles at companies the owner named,
-    best fit first, capped at `MAX_DREAM_JOBS`."""
+    best fit first, capped at `MAX_DREAM_JOBS`. A role found by a dream category names it."""
     lines = ["**Dream list** (on-site, far from home)"]
     for row in rendered_dream_jobs(jobs):
         link = links.get(int(row["id"]))
-        lines.append(format_job_line(row, base_url, url=link.url if link else ""))
+        line = format_job_line(row, base_url, url=link.url if link else "")
+        label = _category_label(row)
+        lines.append(f"{line}\n   Dream: {label}" if label else line)
     if len(jobs) > MAX_DREAM_JOBS:
         lines.append(f"…and {len(jobs) - MAX_DREAM_JOBS} more: <{base_url}/all>")
     return lines

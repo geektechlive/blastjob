@@ -19,6 +19,7 @@ import datetime as dt
 import sqlite3
 from collections.abc import Iterable
 
+from blastjob.core import category_store
 from blastjob.core.company import company_key
 from blastjob.core.dream_rule import DreamRule
 from blastjob.core.target_store import dream_keys
@@ -43,12 +44,22 @@ CLUSTER_NOT_DECIDED = (
 )
 
 
+# The labels of the job's current dream categories (#91), for the weekly section's line.
+CATEGORY_LABEL = (
+    "(SELECT group_concat(c.label, ', ') FROM category_hits h "
+    "JOIN category_searches c ON c.id = h.category_id "
+    "WHERE h.job_id = j.id AND c.enabled=1 AND c.is_dream=1 "
+    "AND h.terms_version = c.terms_version)"
+)
+
+
 def pending_dream_jobs(
     conn: sqlite3.Connection, threshold: int, disc: DiscoveryConfig | None = None
 ) -> list[sqlite3.Row]:
     """Far dream roles the weekly section has not carried yet, best fit first."""
     rows = conn.execute(
-        f"SELECT {DIGEST_COLUMNS} FROM jobs j WHERE source_state='active' "
+        f"SELECT {DIGEST_COLUMNS}, {CATEGORY_LABEL} AS category_label FROM jobs j "
+        "WHERE source_state='active' "
         "AND dream_far=1 AND COALESCE(dream_notified_at,'')='' "
         "AND review_state IN ('surfaced','queued') AND alignment_score >= ? "
         f"AND {CLUSTER_NOT_DECIDED} "
@@ -57,9 +68,10 @@ def pending_dream_jobs(
     ).fetchall()
     if disc is not None:  # the geo-exception rule (core/dream_rule.py)
         rule = DreamRule.load(conn, disc)
-        return [r for r in rows if rule.applies(r["company"] or "", r["source"] or "")]
+        return [r for r in rows if rule.applies(r["company"] or "", r["source"] or "", r["id"])]
     dreams = dream_keys(conn)
-    return [r for r in rows if company_key(r["company"] or "") in dreams]
+    in_category = category_store.current_dream_job_ids(conn)
+    return [r for r in rows if company_key(r["company"] or "") in dreams or r["id"] in in_category]
 
 
 def weekly_jobs(cfg: BlastJobConfig, conn: sqlite3.Connection, today: dt.date) -> list[sqlite3.Row]:

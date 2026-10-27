@@ -17,7 +17,16 @@ from blastjob.web.app import create_app
 def _conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE jobs (id INTEGER PRIMARY KEY, company TEXT, raw_jd TEXT)")
+    conn.execute(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, company TEXT, raw_jd TEXT, geo_status TEXT)"
+    )
+    conn.execute(  # category badges (#91)
+        "CREATE TABLE category_searches (id INTEGER PRIMARY KEY, label TEXT, is_dream INTEGER,"
+        " enabled INTEGER, terms_version INTEGER)"
+    )
+    conn.execute(
+        "CREATE TABLE category_hits (job_id INTEGER, category_id INTEGER, terms_version INTEGER)"
+    )
     conn.execute("CREATE TABLE connections (company_key TEXT)")
     conn.execute("CREATE TABLE target_companies (company_key TEXT, tier TEXT)")  # dream badge
     return conn
@@ -26,8 +35,10 @@ def _conn() -> sqlite3.Connection:
 def test_annotate_network_adds_label_from_stored_jd(monkeypatch) -> None:
     monkeypatch.setattr(service.net, "warm_counts", lambda c, k: {})
     conn = _conn()
-    conn.execute("INSERT INTO jobs VALUES (1, 'Acme', 'The role reports to the CFO.')")
-    conn.execute("INSERT INTO jobs VALUES (2, 'Acme', 'Nothing said.')")
+    conn.execute(
+        "INSERT INTO jobs (id, company, raw_jd) VALUES (1, 'Acme', 'The role reports to the CFO.')"
+    )
+    conn.execute("INSERT INTO jobs (id, company, raw_jd) VALUES (2, 'Acme', 'Nothing said.')")
     rows = conn.execute("SELECT id, company FROM jobs ORDER BY id").fetchall()
 
     out = service.annotate_network(conn, rows, CandidateConfig())
@@ -39,7 +50,7 @@ def test_annotate_network_adds_label_from_stored_jd(monkeypatch) -> None:
 def test_annotate_network_prefers_row_jd_when_present(monkeypatch) -> None:
     monkeypatch.setattr(service.net, "warm_counts", lambda c, k: {})
     conn = _conn()
-    conn.execute("INSERT INTO jobs VALUES (1, 'Acme', 'stale')")
+    conn.execute("INSERT INTO jobs (id, company, raw_jd) VALUES (1, 'Acme', 'stale')")
     row = conn.execute("SELECT id, company, 'Reports to the CEO' AS raw_jd FROM jobs").fetchall()
 
     out = service.annotate_network(conn, row, CandidateConfig())

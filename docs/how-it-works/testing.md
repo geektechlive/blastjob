@@ -18,6 +18,7 @@ The guards, and the section that explains each:
 | `_no_real_page_fetches` | an employer page fetch or a Jina page search | [Page-fetch guard](#page-fetch-guard) |
 | `_no_real_packet_research` | Jina-backed packet research | [Packet-research guard](#packet-research-guard) |
 | `_no_real_target_watch` | Jina-backed target news scans | [Target-watch guard](#target-watch-guard) |
+| `_no_real_category_search` | Jina-backed category role searches | [Category-search guard](#category-search-guard) |
 | `_no_real_board_finder` | the dream-list board search | [Board-finder guard](#board-finder-guard) |
 | `isolated_secrets` | the real secrets file | [Secrets guard](#secrets-guard) |
 | `_no_real_config` | the real legacy config and data dir | [Config and data-dir guard](#config-and-data-dir-guard) |
@@ -72,6 +73,10 @@ This guard came with the change that made packet research read fetched pages (#5
 ## Target-watch guard
 
 No test may run the target news watch against the network. `core/target_watch.py` searches and reads pages through Jina when a key is set. `_no_real_target_watch` makes its `_jina_key` return an empty string and replaces `_search` and `_read` with functions that call `pytest.fail`, for the same reason as the packet-research guard. To test a scan, inject `search=` and `read=` fakes and patch the module's own `make_stream`, which `_STREAM_BINDINGS` also guards.
+
+## Category-search guard
+
+No test may run the weekly category search against the network. `discovery/category_search.py` searches and reads pages through Jina when a key is set. `_no_real_category_search` makes its `_jina_key` return an empty string and replaces `_search` and `_read` with functions that call `pytest.fail`, for the same reason as the target-watch guard. To test a run, inject `search=` and `read=` fakes and an `adzuna_factory=` returning a fake adapter (`tests/test_category_search.py`); the Adzuna adapter's own HTTP goes through `adzuna.get_json`, which the network guard also covers.
 
 ## Board-finder guard
 

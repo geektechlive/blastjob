@@ -408,7 +408,7 @@ async def _run_matching(
             cfg=cfg.discovery,
         )
         status, dist, passes, conditional = verdict
-        dream = rule.applies(r["company"] or "", r["source"] or "")
+        dream = rule.applies(r["company"] or "", r["source"] or "", jid)
         bypass = is_dream_bypass(verdict, dream=dream)
         _set_geo(conn, jid, status, dist, dream_far=bypass)
         # The gate repeats the location check, so a role the exception keeps must pass it too.

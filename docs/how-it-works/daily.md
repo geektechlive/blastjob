@@ -12,6 +12,7 @@ In order:
    **Run lock.** The run then takes the run lock for its whole life; if another run holds it, this one records `lock_held` and exits (see [One run at a time](#one-run-at-a-time-and-the-deadline)).
 2. **Backup.** A copy of the database is taken (`backup_db`, 14 kept; see [backups](../operations/data-and-backups.md#backups)). A failed backup is recorded as an error and the run goes on.
 3. **Discovery.** See [discovery](discovery.md).
+   **Category searches.** On the search-firm weekday only, and only when a category is enabled: the weekly role searches for the owner's categories, which run before matching so their finds are scored the same day. Errors and cap notes join the run's `errors` and `notes`; a run cut by the deadline names it in the skipped steps. See [category searches](discovery.md#category-searches).
 4. **Free employer-description copies.** Local only, before matching so a copied row is scored once on the full text. See [employer data](employer-data.md#in-the-daily-run).
 5. **Matching, only for jobs never scored** (`only_unscored=True`). Re-scoring every resolved posting each morning cost over an hour of model time for no new signal. `--no-score` skips this and the re-score in step 8. See [matching](matching.md).
 6. **Closure.** Runs after discovery and matching so it sees today's source state. A dry run runs it in shadow mode (see [closure](closure.md#shadow-mode)).
@@ -73,7 +74,7 @@ The digest is built by `build_digest`. Sections appear only when they have somet
   - Each line has the score, company, title, "(review)" for queued roles, location or "Remote", a comp badge, the posting link, then a cockpit link. The comp badge never calls a figure posted unless the employer posted it: it reads "posted", "inferred (from the posting)", "est." or "unverified", and "comp n/a" when there is none.
   - The posting link comes before the cockpit link because the digest is usually read on a phone, where the cockpit's `127.0.0.1` address is the wrong machine. The posting link is the cluster's best apply link (`apply_link.apply_links_for`; see [same role](same-role.md#one-application-per-role)), else the row's own URL.
   - The cockpit links use the base from `cockpit_base`: `web.public_url` when set, else `http://127.0.0.1:<web.port>`. `web.public_url` is checked against the same Host rule the cockpit enforces (loopback or a private IP address, never a DNS name); see [LAN access](../operations/lan-access.md#digest-links-on-a-phone).
-- **Dream list.** On the search-firm weekday only (see [below](#dream-list)): far on-site roles at dream companies.
+- **Dream list.** On the search-firm weekday only (see [below](#dream-list)): far on-site roles at dream companies, and far roles found by a dream category.
 - **Closed postings.** One line naming up to five kept jobs whose posting closed this run.
 - **Replies.** One entry per surfaced reply: who, about what, a one-line snippet and a cockpit link.
 - **Target news.** Events found for your target companies since the last digest (see [below](#target-news)).
@@ -97,6 +98,8 @@ The block is built from `company_events` rows that are not dismissed and have `n
 `daily_dream.weekly_jobs` returns the roles for the section, and none on any other weekday (`due_today` with `discovery.search_firm_weekday`; there is no setting of its own). `pending_dream_jobs` applies the same rules as `pending_jobs` (active at the source, `review_state` surfaced or queued, no kept or archived cluster member), plus `dream_far=1`, the same exception rule as matching (`DreamRule`: current dream membership, a configured board with an identity basis), a score at or above `alignment_threshold` and `dream_notified_at` empty. A role that was archived, went stale, was turned away by the comp gate or has a decided cluster is therefore never announced. Best score first, at most 15 (`MAX_DREAM_JOBS`) with an "and N more" line.
 
 Delivery state is `jobs.dream_notified_at` (migration 60), separate from `notified_at`. The renderer's slice (`rendered_dream_jobs`) is exactly what gets stamped, and only after `send` returned, so a failed send stamps nothing and overflow leads the next week. The send is one call to the sender; if Discord accepts early chunks of a long message and fails a later one, the whole section is re-sent, so a duplicate is possible and accepted, as for the job digest. A dry run stamps nothing. A day with only a Dream list is not a quiet day. Dream roles that are remote or near are not `dream_far` and stay in the daily list with their badge.
+
+A role in the section that a dream category found names the category under its line (`Dream: <label>`, defanged for Discord); `pending_dream_jobs` selects the label with a subquery over the current hits.
 
 ### Asks to follow up
 

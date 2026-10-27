@@ -9,7 +9,7 @@ import hashlib
 import sqlite3
 from collections.abc import Callable
 
-from blastjob.core import events
+from blastjob.core import category_store, events
 from blastjob.core import network as net
 from blastjob.core.company import company_key
 from blastjob.core.dream_rule import DreamRule
@@ -184,6 +184,7 @@ def annotate_network(
     labels = _reporting_labels(conn, out)
     dreams = dream_keys(conn)
     far = _dream_far_flags(conn, out) if dreams else {}
+    hits = category_store.current_hits(conn, (r["id"] for r in out if r.get("id") is not None))
     for r in out:
         key = company_key(r.get("company") or "")
         r["warm_count"] = counts.get(key, 0)
@@ -192,6 +193,19 @@ def annotate_network(
         r["dream_badge"] = dream_badge(
             key in dreams, bool(far.get(r.get("id") or -1)), _where_text(r)
         )
+        r["category_badges"] = category_badges(hits.get(r.get("id") or -1, []))
+    return out
+
+
+def category_badges(hits: list[category_store.Hit]) -> list[dict]:
+    """The category badges for a job's current hits (#91): `Dream: <label>` for a dream category
+    when the job's place is known, else `Category: <label>`. A dream hit on an unknown place is
+    never shown as a dream hit (it follows the ordinary rules). Labels are owner text; the
+    templates autoescape them."""
+    out = []
+    for h in hits:
+        dream = h.is_dream and h.geo_known
+        out.append({"text": f"{'Dream' if dream else 'Category'}: {h.label}", "dream": dream})
     return out
 
 
@@ -621,7 +635,9 @@ def all_active(conn: sqlite3.Connection, cfg: BlastJobConfig) -> list[dict]:
                 cfg.discovery.title_keep_terms,
                 cfg.discovery.title_drop_terms,
             )
-            if is_geo_reject(verdict, dream=rule.applies(r["company"] or "", r["source"] or "")):
+            if is_geo_reject(
+                verdict, dream=rule.applies(r["company"] or "", r["source"] or "", r["id"])
+            ):
                 disp, reason = "filtered", "outside commute area (not remote)"
             elif not keep:
                 disp, reason = "filtered", "different role type (not a leadership role)"

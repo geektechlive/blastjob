@@ -42,6 +42,7 @@ from blastjob.web import (
     routes_activity,
     routes_asks,
     routes_boards,
+    routes_categories,
     routes_debrief,
     routes_network,
     routes_outcomes,
@@ -340,6 +341,7 @@ def create_app(
     routes_recruiter_mail.register(app, deps)
     routes_targets.register(app, deps)
     routes_stories.register(app, deps)
+    routes_categories.register(app, deps)
     routes_debrief.register(app, deps)
     routes_boards.register(app, deps, save_config)
     routes_packets.register(app, deps)
