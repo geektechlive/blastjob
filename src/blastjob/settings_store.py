@@ -22,6 +22,7 @@ Contract:
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import tomllib
 import typing
@@ -34,9 +35,15 @@ from typing import Any
 import tomli_w
 from pydantic import BaseModel, ValidationError
 
+from blastjob.label_names import recruiter_label_problem
 from blastjob.models.config import BlastJobConfig
 
+log = logging.getLogger(__name__)
+
 META_PREFIX = "_meta."
+LABEL_KEY = "discovery.recruiter_label"
+# Stored label values already warned about, so a bad one warns once, not on every request.
+_warned_labels: set[str] = set()
 IMPORT_MARKER = "_meta.imported_from"
 BOOTSTRAP_KEYS = frozenset({"paths.data_dir"})
 
@@ -166,11 +173,44 @@ def effective(cfg: BlastJobConfig) -> dict[str, Any]:
 
 def validate(known: Mapping[str, Any]) -> BlastJobConfig:
     try:
-        return BlastJobConfig.model_validate(unflatten(known))
+        cfg = BlastJobConfig.model_validate(unflatten(known))
     except ValidationError as e:
         first = e.errors()[0]
         where = ".".join(str(p) for p in first["loc"]) or "settings"
         raise SettingsError(f"{where}: {first['msg']}") from e
+    d = cfg.discovery
+    if problem := recruiter_label_problem(
+        d.recruiter_label, d.personal_mail_mailbox, d.mail_mailbox
+    ):
+        raise SettingsError(f"{LABEL_KEY}: {problem}")
+    return cfg
+
+
+def _without_bad_label(known: dict[str, Any]) -> dict[str, Any]:
+    """`known` minus a stored recruiter label that fails the rules (a hand-edited row, or a
+    mailbox later changed to collide with it). The label then reads as off, with one warning
+    per process per value; the value itself is not logged. Saving is still refused
+    (`validate`), so a bad label can only arrive by editing the table."""
+    stored = known.get(LABEL_KEY)
+    if stored is None:
+        return known
+    problem = (
+        recruiter_label_problem(
+            stored,
+            str(known.get("discovery.personal_mail_mailbox", "")),
+            str(known.get("discovery.mail_mailbox", "INBOX")),
+        )
+        if isinstance(stored, str)
+        else "it is not text"
+    )
+    if problem is None:
+        return known
+    if repr(stored) not in _warned_labels:
+        _warned_labels.add(repr(stored))
+        log.warning(
+            "Ignoring the stored %s, so recruiter mail triage is off: %s", LABEL_KEY, problem
+        )
+    return {k: v for k, v in known.items() if k != LABEL_KEY}
 
 
 # --- rows --------------------------------------------------------------------
@@ -220,7 +260,7 @@ def load(conn: sqlite3.Connection, data_dir: Path) -> LoadedSettings:
     rows = read_rows(conn)
     known = {k: v for k, v in rows.items() if k in LEAVES and k not in BOOTSTRAP_KEYS}
     unknown = {k: v for k, v in rows.items() if k not in known}
-    cfg = validate(known)
+    cfg = validate(_without_bad_label(known))
     cfg.paths.data_dir = str(data_dir)
     rev = revision(conn)
     return LoadedSettings(cfg=cfg.with_revision(rev), unknown=unknown, revision=rev)

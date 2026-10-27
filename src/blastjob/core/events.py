@@ -43,7 +43,15 @@ EVENT_KINDS: tuple[str, ...] = (
     "note",
 )
 
-EVENT_SOURCES: tuple[str, ...] = ("manual", "state", "closure", "replies", "backfill", "same_role")
+EVENT_SOURCES: tuple[str, ...] = (
+    "manual",
+    "state",
+    "closure",
+    "replies",
+    "backfill",
+    "same_role",
+    "mail_label",
+)
 
 KIND_LABELS: dict[str, str] = {
     "applied": "Applied",

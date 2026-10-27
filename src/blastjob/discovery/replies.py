@@ -60,7 +60,6 @@ from __future__ import annotations
 import email
 import email.policy
 import email.utils
-import html as html_mod
 import imaplib
 import logging
 import os
@@ -69,6 +68,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
+from html.parser import HTMLParser
 
 from blastjob.core.company import company_key
 from blastjob.discovery import mailalerts as ma
@@ -92,8 +92,10 @@ _AUTOMATED_SENDER = re.compile(
     r"no.?reply|donotreply|notifications?@|mailer-daemon|postmaster|automated@", re.I
 )
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b.*?</\1>", re.I | re.S)
-_TAG_RE = re.compile(r"<[^>]+>")
+# Mail is untrusted: only this much of a body is ever examined, and before any pattern runs, so
+# a hostile 2 MB body cannot make a regex (or the markup parser) do quadratic work.
+MAX_SNIPPET_INPUT_CHARS = 20_000
+_SKIPPED_TAGS = frozenset({"script", "style"})
 # Where the reply stops and the quoted original begins. Mail clients mark this
 # boundary a handful of well-known ways; cutting at the first one keeps the
 # digest snippet to what the human actually wrote, instead of the user's own
@@ -101,7 +103,7 @@ _TAG_RE = re.compile(r"<[^>]+>")
 # the snippet is as long as it was before, never truncated wrongly.
 _QUOTED_TAIL_RE = re.compile(
     r"-{2,}\s*Original Message\s*-{2,}"
-    r"|\bFrom:\s.*?\bSent:\s"
+    r"|\bFrom:\s.{0,500}?\bSent:\s"
     r"|\bOn\b.{0,80}?\bwrote:"
     r"|\b_{5,}\b",
     re.I | re.S,
@@ -244,15 +246,48 @@ def match_job(sender: str, jobs: list[sqlite3.Row]) -> tuple[sqlite3.Row | None,
     return None, ""
 
 
+class _TextOnly(HTMLParser):
+    """The readable text of a mail body. `<script>` and `<style>` content is dropped whole (not
+    just its tags: Outlook ships a stylesheet ahead of the text); every other tag becomes a
+    space. Linear in the input, and entities are decoded."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._hidden = 0
+
+    def handle_starttag(self, tag: str, attrs: object) -> None:
+        if tag in _SKIPPED_TAGS:
+            self._hidden += 1
+        self.parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _SKIPPED_TAGS and self._hidden:
+            self._hidden -= 1
+        self.parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if not self._hidden:
+            self.parts.append(data)
+
+
+def _plain_text(text: str) -> str:
+    parser = _TextOnly()
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception:  # noqa: BLE001 -- odd markup must not stop a scan; use what was read
+        log.debug("snippet markup parse stopped early")
+    return "".join(parser.parts)
+
+
 def _snippet(text: str, limit: int = MAX_SNIPPET_CHARS) -> str:
     """First readable words of the reply, for the digest the user reads on
-    their phone. `<style>`/`<script>` bodies are dropped whole, not just their
-    tags: Outlook ships a stylesheet ahead of the text, so tag-stripping alone
-    opened a live snippet with "P {margin-top:0;...}". Entities are
-    decoded so quoted mail reads as "<user@...>" rather than "&lt;user@...&gt;"."""
-    plain = _SCRIPT_STYLE_RE.sub(" ", text or "")
-    plain = _TAG_RE.sub(" ", plain)
-    plain = html_mod.unescape(plain)
+    their phone. Only the first `MAX_SNIPPET_INPUT_CHARS` characters are looked at, and the
+    markup is stripped by a linear parser (`_plain_text`) so hostile input stays cheap.
+    Entities are decoded so quoted mail reads as "<user@...>" rather than
+    "&lt;user@...&gt;"."""
+    plain = _plain_text((text or "")[:MAX_SNIPPET_INPUT_CHARS])
     plain = _WS_RE.sub(" ", plain).strip()
     plain = _QUOTED_TAIL_RE.split(plain, maxsplit=1)[0].strip()
     return plain[:limit]

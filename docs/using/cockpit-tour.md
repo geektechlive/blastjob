@@ -24,7 +24,7 @@ Everything else is under **More**:
 
 - **Browse**: **Matches** (every undecided role scored 65 or higher, ranked), **All** (every active job and why it is where it is), and **Compare** (a side-by-side table).
 - **Track**: **Pipeline** (a board of your kept jobs by lane), **Funnel** (every job counted by the stage it sits in, plus sources that never produce a match), and **Packets** (every resume and cover letter bundle built).
-- **Research**: **Companies** (company workups, plus the companies you have excluded), **Targets** (companies you are watching, see [target companies](targets.md)), **Network** (your own LinkedIn export, matched to employers) and **Stories** (your saved interview stories, see [interview stories](stories.md)).
+- **Research**: **Companies** (company workups, plus the companies you have excluded), **Targets** (companies you are watching, see [target companies](targets.md)), **Network** (your own LinkedIn export, matched to employers), **Recruiter mail** (messages you filed under the one mail label you named in Settings, to link to a job or a recruiter or dismiss; see [recruiter mail](../how-it-works/discovery.md#recruiter-mail-from-one-label)) and **Stories** (your saved interview stories, see [interview stories](stories.md)).
 - **Setup**: **Work history**, **Ingest** (upload old resumes to build the work history) and **Settings**.
 
 On the right of the bar are four buttons:

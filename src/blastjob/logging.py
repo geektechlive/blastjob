@@ -30,6 +30,8 @@ _REDACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"\b(app_key|app_id|api_key|apikey|key|token|password|secret)=[^&\s\"']+", re.I),
         r"\1=[REDACTED]",
     ),
+    # An IMAP server or imaplib error that echoes the command: `LOGIN <user> <password>`.
+    (re.compile(r'\bLOGIN\s+(?:"[^"]*"|\S+)\s+(?:"[^"]*"|\S+)'), "LOGIN [REDACTED]"),
     (re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._\-+/=]{8,}", re.I), r"\1 [REDACTED]"),
 )
 

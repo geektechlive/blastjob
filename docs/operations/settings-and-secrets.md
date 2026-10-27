@@ -100,6 +100,8 @@ uv run blastjob setup set discovery.mail_password_env ALERT_IMAP_APP_PASSWORD
 
 Then add `ALERT_IMAP_USER=...` and `ALERT_IMAP_APP_PASSWORD=...` to the secrets file. The personal mailbox uses `discovery.personal_mail_imap_host`, `discovery.personal_mail_user_env` and `discovery.personal_mail_password_env`.
 
+`discovery.recruiter_label` names one label in the personal mailbox that you file recruiter mail under by hand. blastjob reads only that label, for the **Recruiter mail** page (see [discovery](../how-it-works/discovery.md#recruiter-mail-from-one-label)). Empty turns it off. It cannot be the inbox, a `[Gmail]` or `[Google Mail]` system folder, or a mailbox named in the mail settings, and it must be plain printable ASCII of at most 100 characters; the **Recruiter label** field on the Settings page and `setup set` both refuse anything else.
+
 The **Mail accounts** section of the Settings page edits the same fields and shows, for each mailbox, whether each variable is **set** or **missing**. It never shows a value. Its **Test connection** button logs in to the saved account to check the credentials and changes nothing.
 
 Naming rule: a mail user variable must end in `_IMAP_USER`, a password variable in `_IMAP_PASSWORD` or `_IMAP_APP_PASSWORD`, and a mail variable may not share a name with any other `_env` setting. This stops anyone who can reach the cockpit from pointing a mail login at the host of their choice with, say, your `ANTHROPIC_API_KEY` as the "password". The Settings page enforces the rule when you save. `setup set` checks only that the name is shaped like a variable, so use matching names there too. An older saved name that breaks the rule keeps working, and the [doctor](doctor.md) warns about it.

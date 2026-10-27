@@ -15,6 +15,7 @@ os.environ[DATA_DIR_ENV] = tempfile.mkdtemp(prefix="blastjob-test-data-")
 
 from blastjob.core import closure_links  # noqa: E402
 from blastjob.discovery.resolve import BoardHit  # noqa: E402
+from tests.label_fixture import mail_env  # noqa: E402, F401 -- shared fixture (#83)
 
 
 @pytest.fixture(autouse=True)

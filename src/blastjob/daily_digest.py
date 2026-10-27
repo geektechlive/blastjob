@@ -149,11 +149,14 @@ def build_digest(
     recruiter_touches: Sequence[Reminder] = (),
     pace: str = "",
     pace_is_news: bool = False,
+    triage_pending: int = 0,
 ) -> str:
     """The Discord message. Empty string means "nothing to say". `apply_links`
     (`web.apply_link.apply_links_for`) gives each job its cluster's best link;
     a job missing from it links its own URL. `pace` is the weekly pace line; it rides on any
-    digest that is sent, but breaks a quiet day's silence only when `pace_is_news` (its day)."""
+    digest that is sent, but breaks a quiet day's silence only when `pace_is_news` (its day).
+    `triage_pending` counts recruiter-mail messages waiting on the Recruiter mail page; it is
+    news by itself, and the line carries the count and a link, never a sender or subject."""
     links = apply_links or {}
     closed = closed_postings or []
     replied = replies or []
@@ -170,6 +173,7 @@ def build_digest(
         or replied
         or noted
         or stopped
+        or triage_pending
         or (pace and pace_is_news)
     )
     if quiet and not (target_news or target_failed):
@@ -203,6 +207,11 @@ def build_digest(
         lines.append("**Replies**")
         for r in replied:
             lines.append(format_reply_line(r, base_url))
+    if triage_pending:
+        lines.append("")
+        lines.append(
+            f"**Recruiter mail**: {triage_pending} new to triage <{base_url}/recruiter-mail>"
+        )
     if target_news or target_failed:
         lines.append("")
         lines += format_target_block(target_news, target_failed, base_url)

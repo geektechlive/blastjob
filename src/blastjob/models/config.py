@@ -216,6 +216,10 @@ class DiscoveryConfig(BaseModel):
     personal_mail_user_env: str = ""
     personal_mail_password_env: str = ""
     personal_mail_mailbox: str = ""
+    # One label (folder) in the personal mailbox that the owner files recruiter mail into by
+    # hand. The triage reader opens ONLY this one (docs/how-it-works/discovery.md). Empty = off.
+    # What it may name is checked in `label_names.py` on save and when settings load.
+    recruiter_label: str = ""
 
     # Weekly retained-search-firm monitor (senior roles only). Retained searches
     # rarely hit ATS boards or aggregators — the firm's own site (or a related placement

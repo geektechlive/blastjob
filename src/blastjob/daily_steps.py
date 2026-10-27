@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from blastjob import config as cfg_mod
-from blastjob import daily_employer_jd, daily_filing, daily_targets
+from blastjob import daily_employer_jd, daily_filing, daily_label, daily_targets
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
 from blastjob.core import closure, closure_links
@@ -135,6 +135,8 @@ async def run_steps(
     # The reply scan makes no model call and recruiters are the owner's top channel: it runs
     # after the cutoff too.
     await _replies_pass(cfg, conn, res, dry_run=dry_run)
+    # Same for the recruiter label (no model call): mail the owner filed by hand to triage.
+    await daily_label.label_pass(cfg, conn, res, dry_run=dry_run)
     if _may_run(res, state, "target scans"):
         with gateway.caller_scope("daily target scans"):
             await daily_targets.targets_step(cfg, conn, res, dry_run=dry_run, today=today)

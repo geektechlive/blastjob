@@ -217,9 +217,8 @@ def test_a_repeated_figure_is_listed_once():
 def test_the_migration_applies_to_an_existing_database(cfg):
     c = dbc.init_db(cfg)
     c.execute("DROP TABLE stories")
-    c.execute(
-        "DELETE FROM schema_migrations WHERE version=(SELECT MAX(version) FROM schema_migrations)"
-    )
+    # Migrations apply by "above the highest recorded", so drop 71 and everything after it.
+    c.execute("DELETE FROM schema_migrations WHERE version>=71")
     c.commit()
     dbc.migrate(c)
     cols = {r["name"] for r in c.execute("PRAGMA table_info(stories)")}

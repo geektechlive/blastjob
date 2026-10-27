@@ -24,6 +24,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from blastjob import config as cfg_mod
+from blastjob.label_names import recruiter_label_problem
 from blastjob.llm import providers
 from blastjob.models.config import BlastJobConfig
 from blastjob.settings_store import StaleSettings
@@ -140,9 +141,17 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
         d.personal_mail_user_env = personal_mail_user_env.strip()
         d.personal_mail_password_env = personal_mail_password_env.strip()
         d.personal_mail_mailbox = personal_mail_mailbox.strip()
+        form = {k: str(v) for k, v in (await request.form()).items()}
+        if "recruiter_label" in form:
+            # Absent = keep the stored label (older forms); empty = off. Read from the raw form
+            # because a declared optional Form field cannot tell the two apart.
+            d.recruiter_label = form["recruiter_label"].strip()
+        if problem := recruiter_label_problem(
+            d.recruiter_label, d.personal_mail_mailbox, d.mail_mailbox
+        ):
+            return _settings_page(request, current, mail_error=f"Recruiter label: {problem}")
         if blocked := lg.guarded_changes(request, current, cfg):
             return _settings_page(request, current, 403, mail_error=lg.refusal_message(blocked))
-        form = {k: str(v) for k, v in (await request.form()).items()}
         if (stale := _save(request, cfg, form)) is not None:
             return stale
         return RedirectResponse("/settings", status_code=303)

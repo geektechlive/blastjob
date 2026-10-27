@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Recruiter mail &mdash; blastjob{% endblock %}
+{% block content %}
+<h1 class="view-title">Recruiter mail: messages you filed to triage</h1>
+<p class="dim">blastjob reads only the one mail label you named in
+<a href="/settings">Settings</a>, never anything else in your mailbox, and never replies,
+moves, labels or flags a message. Link a message to a job you are working or to a recruiter in
+your network, or dismiss it. The sender badge checks the sending domain, not the person who
+wrote, and is advice only: it never hides a message. No link in a message is shown here; open
+the message in your own mail.</p>
+
+{% if error is defined and error %}
+  <div class="error"><p>{{ error }}</p></div>
+{% endif %}
+
+{% if not label %}
+  <p class="dim">Recruiter mail is off. Set a recruiter label under Settings, in the personal
+  mailbox block, to turn it on.</p>
+{% endif %}
+
+{% macro card(r, decided) %}
+  <article class="detail-block" id="mail-{{ r.id }}">
+    <h2>{{ r.subject or '(no subject)' }}</h2>
+    <p>
+      {{ r.sender_name or '(no name)' }}{% if r.sender_address %} &lt;{{ r.sender_address }}&gt;{% endif %}
+      <span class="badge {{ r.badge_class }}">{{ r.badge }}</span>
+      {% if r.is_known and r.auth_dmarc == 'pass' %}<span class="badge comp">Known sender</span>{% elif r.is_known %}<span class="badge src">Address matches a contact</span>{% else %}<span class="badge src">New sender</span>{% endif %}
+      {% if r.is_automated %}<span class="badge src">Automated</span>{% endif %}
+    </p>
+    <p class="dim">Received {{ r.received_at[:10] }}{% if r.received_estimated %} (time not given by the server){% endif %}{% if r.header_date %} &middot; its Date header says {{ r.header_date }}{% endif %}</p>
+    {% if r.snippet %}<p>{{ r.snippet }}</p>{% endif %}
+    {% if decided %}
+      <p class="dim">
+        {% if r.status == 'dismissed' %}Dismissed{% elif r.linked_job %}Linked to job: {{ r.linked_job }}{% elif r.linked_contact %}Linked to recruiter: {{ r.linked_contact }}{% else %}Linked{% endif %}
+        {{ r.decided_at[:10] }}
+      </p>
+    {% endif %}
+    {% if decided %}<details><summary>Change</summary>{% endif %}
+    <form method="post" action="/recruiter-mail/{{ r.id }}/decide" class="inline">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="version" value="{{ r.version }}">
+      <input type="hidden" name="action" value="job">
+      {% if decided %}<input type="hidden" name="change" value="1">{% endif %}
+      <label>Link to a job
+        <select name="target_id" required>
+          <option value="">Choose a job</option>
+          {% for j in job_choices %}<option value="{{ j.id }}">{{ j.company }} - {{ j.title }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Link to job</button>
+    </form>
+    <form method="post" action="/recruiter-mail/{{ r.id }}/decide" class="inline">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="version" value="{{ r.version }}">
+      <input type="hidden" name="action" value="contact">
+      {% if decided %}<input type="hidden" name="change" value="1">{% endif %}
+      <label>Link to a recruiter
+        <select name="target_id" required>
+          <option value="">Choose a recruiter</option>
+          {% for c in r.contact_choices %}<option value="{{ c.id }}">{{ c.name }}{% if c.company %} ({{ c.company }}){% endif %}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Link to recruiter</button>
+    </form>
+    <form method="post" action="/recruiter-mail/{{ r.id }}/decide" class="inline">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <input type="hidden" name="version" value="{{ r.version }}">
+      <input type="hidden" name="action" value="dismiss">
+      {% if decided %}<input type="hidden" name="change" value="1">{% endif %}
+      <button type="submit">Dismiss</button>
+    </form>
+    {% if decided %}</details>{% endif %}
+  </article>
+{% endmacro %}
+
+{% if label %}
+<h2>To triage <span class="col-count">{{ new_rows|length }}</span></h2>
+{% for r in new_rows %}{{ card(r, false) }}{% else %}
+  <p class="dim">Nothing waiting. Mail you file under your label shows up here after the next daily run.</p>
+{% endfor %}
+
+<h2>Decided in the last 60 days <span class="col-count">{{ decided_rows|length }}</span></h2>
+{% for r in decided_rows %}{{ card(r, true) }}{% else %}
+  <p class="dim">Nothing decided yet.</p>
+{% endfor %}
+{% endif %}
+{% endblock %}

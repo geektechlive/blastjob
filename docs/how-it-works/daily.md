@@ -108,6 +108,10 @@ An outreach ask (`outreach_asks`, migration 65; see [network](network.md#outreac
 
 The rendered list carries `(contact id, last touch)` pairs, and after `send` returned each row gets `recruiter_reminded_for` set to exactly that date. It is not compare-and-set: a touch logged while the digest was being sent has a newer last touch, which no longer equals the stamp, so the next cycle re-arms on its own. A new ask or message re-arms the reminder the same way. A failed send stamps nothing, whether the sender raised at once or a Discord message of several parts failed on a later part; a dry run stamps nothing. A day with only a due recruiter still sends.
 
+### Recruiter mail
+
+`mail_triage.pending_ids` selects messages with `status='new'` and no `notified_at` (see [discovery](discovery.md#recruiter-mail-from-one-label)). The digest carries one line, the count and a link to `/recruiter-mail`: no sender name or subject, because they are untrusted text and the channel is shared. After `send` returned, the rows that were counted get `notified_at` by compare-and-set (`WHERE notified_at IS NULL`); a failed send and a dry run stamp nothing, and a row decided before the digest is not counted. The count is news by itself: a day whose only item is recruiter mail still sends. A label missing on the server shows as a note, and a failed read as a source error. A message the reader gave up on after three failed runs shows as a note ("1 recruiter-label message couldn't be read; open it in your mail"), stamped after the send like the count.
+
 ### Quiet applications
 
 `web/stage_lists.followup_due` decides the Follow-ups due block, the Applied page flags and the job page reason, so the three always agree. It is unstamped by design: a due job repeats daily while it stays due. An explicit `next_action_due` always wins: due once it has arrived, and nothing before. Without one:

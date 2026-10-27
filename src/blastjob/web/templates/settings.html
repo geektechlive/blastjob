@@ -255,6 +255,10 @@
     <label>Mailbox
       <input type="text" name="personal_mail_mailbox" value="{{ cfg.discovery.personal_mail_mailbox }}" placeholder="{{ cfg.discovery.mail_mailbox }}">
     </label>
+    <label>Recruiter label
+      <input type="text" name="recruiter_label" value="{{ cfg.discovery.recruiter_label }}" maxlength="100" placeholder="empty = off">
+      <small>A label you made in this mailbox. blastjob reads only mail you file under it, for the Recruiter mail page. It cannot be the inbox, a system folder or a mailbox named above.</small>
+    </label>
 
     <button type="submit" class="btn-save">Save mail settings</button>
   </form>

@@ -13,6 +13,7 @@
 | `state` | `service.set_application_state`, in the same transaction as the state change |
 | `closure` | `closure.close_transition`, `closure.sweep_filled` and `closure.reopen_transition` |
 | `replies` | the recruiter-reply scanner; `ref` is the Message-ID |
+| `mail_label` | linking a message on the Recruiter mail page to a job; `ref` is `label:<uidvalidity>:<uid>` and the event is removed again if the link changes (see [discovery](discovery.md#recruiter-mail-from-one-label)) |
 | `backfill` | the history backfill (see [Backfill](#backfill)) |
 | `same_role` | `same_role.reconcile_applications`: a `note` on the surviving application and one on each duplicate it retires, in the merge's transaction (see [same-role](same-role.md)) |
 | `manual` | you, from the job page |

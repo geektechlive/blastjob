@@ -39,7 +39,7 @@ from blastjob import config as cfg_mod
 from blastjob import daily_dream, daily_pace, daily_targets, daily_tools
 from blastjob import logging as applog
 from blastjob import secrets as secrets_mod
-from blastjob.core import closure, outreach_asks, recruiter_status, run_lock
+from blastjob.core import closure, mail_triage, outreach_asks, recruiter_status, run_lock
 from blastjob.core import target_store as target_store
 from blastjob.core.closure_links import is_authoritative
 from blastjob.core.pause import PAUSE_FILE
@@ -385,6 +385,11 @@ async def _announce(
         touch_days=cfg.notify.recruiter_touch_days,
         lookback_days=cfg.notify.recruiter_lookback_days,
     )
+    triage_ids = mail_triage.pending_ids(conn)
+    unread_ids = mail_triage.unreadable_pending(conn)
+    notes = dict(res.notes)
+    if unread_ids:
+        notes["recruiter_mail_unread"] = mail_triage.unreadable_note(len(unread_ids))
     warm_ids = warm_job_ids(conn, jobs)
     links = apply_links_for(conn, [*jobs, *dream_jobs])
     res.new_jobs = len(jobs)
@@ -402,7 +407,7 @@ async def _announce(
             warm_ids=warm_ids,
             closed_postings=res.closed_postings,
             replies=res.replies,
-            notes=res.notes,
+            notes=notes,
             apply_links=links,
             target_news=target_news,
             target_failed=res.target_failed,
@@ -412,6 +417,7 @@ async def _announce(
             recruiter_touches=touches,
             pace=pace.line if pace else "",
             pace_is_news=bool(pace and pace.on_day),
+            triage_pending=len(triage_ids),
         )
 
     res.digest = digest()
@@ -450,6 +456,9 @@ async def _announce(
     # reaches this point).
     if pace is not None:
         daily_pace.stamp(conn, pace.label)
+    # The recruiter-mail rows it counted: compare-and-set, so a row stamped meanwhile keeps it.
+    mail_triage.mark_notified(conn, triage_ids)
+    mail_triage.mark_unreadable_notified(conn, unread_ids)
     res.sent = True
     mark_run_sent(conn, run_id)
     return res

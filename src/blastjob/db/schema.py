@@ -7,6 +7,8 @@ job-discovery pipeline.
 
 from __future__ import annotations
 
+from blastjob.db.schema_triage import TRIAGE_MIGRATION
+
 # Each entry is (version, sql). Applied in order; `schema_migrations` records
 # which have run. Never edit a shipped migration — append a new one.
 MIGRATIONS: list[tuple[int, str]] = [
@@ -790,4 +792,7 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_stories_order ON stories(updated_at DESC, id DESC);
         """,
     ),
+    # 72: recruiter-mail triage (#83): the label reader's rows and watermark. SQL in its own
+    # module to keep this file under the size limit.
+    (72, TRIAGE_MIGRATION),
 ]

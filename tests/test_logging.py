@@ -143,3 +143,15 @@ def test_a_leaked_url_is_redacted_on_its_way_to_disk(isolated_log):
     written = isolated_log.read_text(encoding="utf-8")
     assert "ondiskleak" not in written
     assert "[REDACTED]" in written
+
+
+def test_redact_strips_an_echoed_imap_login_line():
+    from blastjob.logging import redact
+
+    for echoed in (
+        "LOGIN owner@example.com hunter2abcd failed",
+        'b\'LOGIN "owner@example.com" "abcd efgh ijkl mnop"\'',
+    ):
+        out = redact(echoed)
+        assert "hunter2" not in out and "abcd" not in out and "owner@example.com" not in out
+    assert redact("login failed for the account") == "login failed for the account"
