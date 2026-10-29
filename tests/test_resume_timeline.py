@@ -552,34 +552,34 @@ def test_no_timeline_finding_is_fatal():
 
 TWO_PROMO_HISTORY = _history(
     (
-        "Director of IT Operations",
+        "Director of Plant Systems",
         "Contoso Health",
-        "Nov 2020 - Dec 2023",
+        "Mar 2022 - Jun 2025",
         [
-            "Promoted from Infrastructure Manager (Jan 2017 - Oct 2020) to Director of IT "
-            "Operations (Nov 2020 - Dec 2023).",
+            "Promoted from Systems Supervisor (Apr 2018 - Feb 2022) to Director of Plant "
+            "Systems (Mar 2022 - Jun 2025).",
             "Ran it.",
         ],
     ),
     (
-        "Infrastructure Manager",
+        "Systems Supervisor",
         "Contoso Health",
-        "Jan 2017 - Oct 2020",
-        ["Ran the floor.", "Promoted to Director of IT Operations in Nov 2020."],
+        "Apr 2018 - Feb 2022",
+        ["Ran the floor.", "Promoted to Director of Plant Systems in Mar 2022."],
     ),
 )
 
 
 def _two_promo_resume(director_first: str) -> str:
     return _resume(
-        ("Director of IT Operations", "Contoso Health", "Nov 2020 - Dec 2023", [director_first]),
-        ("Infrastructure Manager", "Contoso Health", "Jan 2017 - Oct 2020", ["Ran the floor."]),
+        ("Director of Plant Systems", "Contoso Health", "Mar 2022 - Jun 2025", [director_first]),
+        ("Systems Supervisor", "Contoso Health", "Apr 2018 - Feb 2022", ["Ran the floor."]),
     )
 
 
 def test_a_promotion_bullet_under_the_earlier_heading_maps_to_the_title_promoted_to():
     resume = _two_promo_resume(
-        "Promoted from Infrastructure Manager to Director of IT Operations in Nov 2020."
+        "Promoted from Systems Supervisor to Director of Plant Systems in Mar 2022."
     )
     found = check_resume(resume, TWO_PROMO_HISTORY, today=TODAY)
     assert not _codes(found, "promotion_line_dropped")
@@ -589,14 +589,14 @@ def test_a_dropped_line_is_reported_once_for_the_role_promoted_into():
     resume = _two_promo_resume("Ran it.")
     found = _codes(check_resume(resume, TWO_PROMO_HISTORY, today=TODAY), "promotion_line_dropped")
     assert len(found) == 1
-    assert "Director of IT Operations" in found[0].message
+    assert "Director of Plant Systems" in found[0].message
 
 
 def test_a_promotion_line_is_exempt_from_result_after_role_end():
     resume = _two_promo_resume(
-        "Promoted from Infrastructure Manager to Director of IT Operations in Nov 2020."
+        "Promoted from Systems Supervisor to Director of Plant Systems in Mar 2022."
     )
-    resume = resume.replace("Ran the floor.", "Promoted to Director of IT Operations in Nov 2020.")
+    resume = resume.replace("Ran the floor.", "Promoted to Director of Plant Systems in Mar 2022.")
     found = check_resume(resume, TWO_PROMO_HISTORY, today=TODAY)
     assert not _codes(found, "result_after_role_end")
     assert not _codes(check_history(TWO_PROMO_HISTORY, today=TODAY), "result_after_role_end")
@@ -605,7 +605,7 @@ def test_a_promotion_line_is_exempt_from_result_after_role_end():
 @pytest.mark.parametrize(
     "bullet",
     [
-        "Presented three-year practice plans to cross-functional principal leadership.",
+        "Presented three-year service plans to the regional partner group.",
         "Wrote three-year technology roadmaps for the board.",
         "Built 5-year capital budgets and forecasts.",
     ],
@@ -632,9 +632,9 @@ Technology executive with a long record.
 
 EXPERIENCE:
 
-DIRECTOR OF IT OPERATIONS:
+DIRECTOR OF PLANT SYSTEMS:
 Contoso Health | Springfield, OH | Jan 2019 - Dec 2021
-- Promoted from Operations Manager to Director of IT Operations in Jan 2019.
+- Promoted from Operations Manager to Director of Plant Systems in Jan 2019.
 - Across both roles, built the platform within five years. Led 22 staff across
 systems, database, service desk, DevOps, and application support.
 
@@ -648,7 +648,7 @@ BS Business, Example University
 """
 
 REAL_ATS_HISTORY = _history(
-    ("Director of IT Operations", "Contoso Health", "Jan 2019 - Dec 2021", ["Ran it."]),
+    ("Director of Plant Systems", "Contoso Health", "Jan 2019 - Dec 2021", ["Ran it."]),
     ("Operations Manager", "Contoso Health", "Jan 2016 - Dec 2018", ["Ran sites."]),
 )
 
@@ -680,11 +680,11 @@ def test_the_real_exporter_output_is_what_the_parser_reads(tmp_path):
 
     markdown = _resume(
         (
-            "Director of IT Operations",
+            "Director of Plant Systems",
             "Contoso Health",
             "Jan 2019 - Dec 2021",
             [
-                "Promoted from Operations Manager to Director of IT Operations in Jan 2019.",
+                "Promoted from Operations Manager to Director of Plant Systems in Jan 2019.",
                 "Built the platform within five years, then led 22 staff across systems, "
                 "database, service desk, DevOps, and application support for the company.",
             ],
@@ -697,7 +697,7 @@ def test_the_real_exporter_output_is_what_the_parser_reads(tmp_path):
         ),
     )
     exported = ats.write(markdown, tmp_path, stem="r").read_text(encoding="ascii")
-    assert "DIRECTOR OF IT OPERATIONS:" in exported  # the shape under test
+    assert "DIRECTOR OF PLANT SYSTEMS:" in exported  # the shape under test
     found = check_resume(exported, REAL_ATS_HISTORY, today=TODAY)
     assert not _codes(found, "timeline_not_checked")
     assert _codes(found, "duration_exceeds_role")
