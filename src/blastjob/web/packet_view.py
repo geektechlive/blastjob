@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from blastjob.core.resume_timeline_checks import TIMELINE_CODES
 from blastjob.web.sidecars import find_sidecars, mismatch_note
 
 # Human labels for `Artifact` codes, as they should read in the cockpit.
@@ -86,6 +87,8 @@ class PacketReportView:
     fatal_count: int = 0
     major_count: int = 0
     minor_count: int = 0
+    # Every finding from the timeline checks (#105), any severity, for the banner.
+    timeline: tuple[FindingView, ...] = ()
     source_path: str = ""
     # Which checks ran, which crashed, which sat out. A packet whose checks
     # did not run is NOT a clean packet -- see `core/packet_report.PacketReport`.
@@ -219,6 +222,7 @@ def load_packet_report(
             fatal=tuple(fatal),
             major=tuple(major),
             minor=tuple(minor),
+            timeline=tuple(f for f in (*fatal, *major, *minor) if f.code in TIMELINE_CODES),
             fatal_count=len(fatal),
             major_count=len(major),
             minor_count=len(minor),

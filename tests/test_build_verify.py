@@ -150,6 +150,7 @@ def test_every_checker_crashing_never_looks_like_a_clean_packet(tmp_path, monkey
 
     for mod, attr in (
         (packet_verify.resume_format, "check_structure"),
+        (packet_verify.resume_timeline_checks, "check_resume"),
         (packet_verify.packet_gate, "check_arithmetic"),
         (packet_verify.prose_check, "check_prose"),
     ):

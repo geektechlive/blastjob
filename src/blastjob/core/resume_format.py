@@ -216,7 +216,7 @@ def _history_ranges(work_history_md: str) -> dict[str, list[DateRange]]:
     for parts, date_text in history_headings(work_history_md):
         if len(parts) < 2 or not parts[1]:
             continue
-        name = re.sub(r"\s*\([^)]*\)\s*$", "", parts[1]).strip()
+        name = re.sub(r"\s*\([^)]{0,80}\)\s*$", "", parts[1]).strip()
         rng = parse_range(date_text)
         if name and rng:
             ranges.setdefault(company_key(name), []).append(rng)

@@ -25,4 +25,25 @@ groundedness judgment is generated from. Saves here write directly to
   >{{ view.content }}</textarea>
   <button type="submit" class="btn-save">Save</button>
 </form>
+
+{% if notes %}
+<section id="date-notes">
+  <h2>Date consistency notes</h2>
+  {% if not notes.ran %}
+    <p class="dim">The date check did not run, so nothing here was checked. That is not an
+      all-clear.</p>
+  {% elif notes.findings %}
+    <p class="dim">Read-only. These flag wording that may not fit a role's dates; nothing is
+      edited for you. A packet built from this history can repeat the same wording.</p>
+    <ul>
+      {% for f in notes.findings %}
+      <li>{{ f.message }}{% if f.line %} <span class="dim">(line {{ f.line }})</span>{% endif %}
+        {% if f.evidence %}<br><span class="dim">&ldquo;{{ f.evidence }}&rdquo;</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="dim">No date problems found in the roles that could be checked.</p>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

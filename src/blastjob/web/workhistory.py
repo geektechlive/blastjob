@@ -23,14 +23,19 @@ generated document, so a silent revert is the worst failure mode it can have.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from blastjob import config as cfg_mod
+from blastjob.core import resume_timeline_checks
+from blastjob.core.packet_report import Finding
 from blastjob.models.config import BlastJobConfig
+
+log = logging.getLogger(__name__)
 
 FILENAME = "work_history.md"
 BACKUP_FILE_MODE = 0o600  # backups hold a person's history: owner-only
@@ -168,3 +173,29 @@ def save_work_history(
     os.replace(tmp, path)
 
     return read_work_history(cfg)
+
+
+@dataclass(frozen=True)
+class DateNotes:
+    """What the read-only date check says about the content being displayed.
+
+    `ran` False means the check crashed: the page says so instead of showing an
+    empty list that would read as an all-clear."""
+
+    findings: tuple[Finding, ...] = ()
+    ran: bool = True
+
+
+def date_notes(content: str, today: date | None = None) -> DateNotes | None:
+    """Date-consistency notes (#105) for `content`, never raising.
+
+    Computed from the text on screen, not from disk: a rejected save re-renders
+    what the user typed, and the notes must describe that. None for a blank body."""
+    if not content.strip():
+        return None
+    try:
+        found = resume_timeline_checks.check_history(content, today or date.today())
+    except Exception:  # noqa: BLE001 - a broken check must not lock the user out of the editor
+        log.exception("work-history date check failed")
+        return DateNotes(ran=False)
+    return DateNotes(findings=tuple(found))

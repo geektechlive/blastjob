@@ -320,6 +320,7 @@ async def run_build(
             on_text(f"\nPacket check: {verdict.state.value}.\n")
             for reason in verdict.reasons:
                 on_text(f"  - {reason}\n")
+        on_text(packet_verify.timeline_notice(packet_report))
 
     # A quarantined artifact's documents leave the folder. "Not ready" next to a
     # working download link is a badge, not a gate. Scoped to the artifact that

@@ -20,7 +20,14 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
-from blastjob.core import docx_text, packet_gate, prose_check, quarantine, resume_format
+from blastjob.core import (
+    docx_text,
+    packet_gate,
+    prose_check,
+    quarantine,
+    resume_format,
+    resume_timeline_checks,
+)
 from blastjob.core.cover_letter_score import CoverLetterScore
 from blastjob.core.packet_report import (
     Artifact,
@@ -125,6 +132,15 @@ def verify_packet(
                 work_history_md=work_history_md,
                 today=datetime.now().date(),
                 docx_lines=docx_lines,
+            ),
+        ),
+        # Its own check, not part of resume_structure: a crash in this newer regex code
+        # must not turn the FATAL banned-character and employer-date checks into a
+        # "checker_failed" that hides them. Markdown and ATS text both parse (#105).
+        (
+            "resume_timeline",
+            lambda: resume_timeline_checks.check_resume(
+                resume_md, work_history_md, today=datetime.now().date()
             ),
         ),
         (
@@ -252,6 +268,20 @@ def verify_packet(
         checks_failed=tuple(failed),
         checks_skipped=tuple(skipped),
     )
+
+
+def timeline_notice(report: PacketReport) -> str:
+    """The "Check before sending" lines for a build or refine log; "" when there are none.
+
+    Timeline findings (#105) never change `sendable`, so the build output is the
+    other place they must show up: they are advisory, and an advisory nobody sees
+    is not one."""
+    found = [f for f in report.findings if f.code in resume_timeline_checks.TIMELINE_CODES]
+    if not found:
+        return ""
+    lines = ["\nCheck before sending: claims that may not fit their role dates."]
+    lines.extend(f"  - {f.message}" for f in found)
+    return "\n".join(lines) + "\n"
 
 
 def quarantine_stems(verdict, *, resume_stem: str, cover_stem: str) -> list[str]:

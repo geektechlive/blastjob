@@ -69,7 +69,7 @@ reuses it (see [Build claims](#build-claims)). In order:
     (`coverage_run.coverage_gaps_for`, one model call per distinct job description and work-history text, cached
     in `<data_dir>/coverage_cache/`; editing the history misses the cache), written to `{role-slug}.coverage_gaps.md`.
 12. **Verify, gate and hold.** The deterministic checks read the exported `.docx`, which is
-    why export comes first. Held documents move to `quarantine/`. See
+    why export comes first (the [timeline checks](#timeline-checks) read the resume text). Held documents move to `quarantine/`. See
     [Packet verification](../truth-guarantees.md#packet-verification).
 13. **Metadata**: `{role-slug}.metadata.json` records company, role, provider, formats and
     this build's cost and tokens (`build_cost_usd` is `null` when any call's cost is unknown,
@@ -82,6 +82,48 @@ The model calls in one build: page research (plus a page-match judgment when the
 anchor), or the fallback research call and its fact distillation; the resume; the cover
 letter and its score; the fit score; and coverage analysis (skipped when cached). Every call's
 cost is recorded as it happens, so a build that fails partway keeps its real spend.
+
+## Timeline checks
+
+Groundedness proves a claim is quoted from the work history; it never asked whether the
+claim fits the dates of the role it sits under. `core/resume_timeline_checks.py` does, with
+regex over text and no model, as its own verify check named `resume_timeline` (a crash there
+is recorded as a failed check and cannot hide the structure checks). One role shape,
+`TimelineRole` in `core/resume_timeline.py`, comes from three parsers: the work history, a
+markdown resume (`### ` title, then an employer line) and the plain-text ATS resume (an
+`EXPERIENCE:` section; the 80-column wrap is joined back into its bullet). The claim
+patterns live in `core/resume_timeline_claims.py`.
+
+| Code | Severity | Fires when |
+|---|---|---|
+| `duration_exceeds_role` | MAJOR | A bullet states an elapsed span ("within five years", "over 60 months", "a 5-year build", "5 years of") longer than the role plus 3 months. Plan horizons ("3- and 5-year roadmap"), ranges, fractions and "years of experience" are skipped. |
+| `result_after_role_end` | MAJOR | A bullet cites a year (or month and year) after the role ended. A year equal to a year-only end never fires; plan, roadmap, budget, version and future years are exempt; "by 2019" is exempt only if the bullet has plan words. |
+| `promotion_line_dropped` | MAJOR | A `Promoted from X to Y` bullet in the work history is not the first bullet of that role on the resume, or does not name both titles. |
+| `promotion_titles_merged` | MAJOR | Two titles at one employer share one heading (a stacked layout, or one role whose dates span both). |
+| `short_role_growth` | MINOR | A role under 6 months holds a growth or revenue figure ("from one to five", "$1M"). Advisory: "if the dates are right, expect the question". |
+| `timeline_not_checked` | MINOR | A role's employer or dates cannot be read, the range is reversed or in the future, or the work history heading carries several ranges. A role not checked is never an all-clear. |
+
+A bullet may span titles only by saying so: "Across both roles" allows this role plus the
+better of its two same-employer neighbours; "across roles", "over my N years at" or "over my
+time at" allows the contiguous same-employer chain. Spans are real intervals, merged when
+they overlap or sit within a month of each other, so two roles with a gap between them never
+add up to the hull.
+
+None of these is FATAL: `core/packet_report.py` reserves FATAL for failures seen in the real
+application path, and a regex duration check will have false positives. So they never change
+whether a packet is sendable. Instead the packet page shows a **Check before sending** box
+listing them, and the build and refine logs print the same lines. Revisit this if a packet
+carrying one of these findings is ever sent. The same date checks run on `work_history.md`
+(`check_history`); the work-history page lists them as **Date consistency notes** under the
+editor, computed from the text on screen (on load, after a save, on a conflict and on an
+error), read-only, and never editing anything. A history heading with more than one date
+range is not guessed at: split it into one heading per title.
+
+The drafting prompts carry the same rules (`RESUME_SYSTEM`, `RESUME_ATS_SYSTEM`,
+`REFINE_SYSTEM`): keep the promotion line first, say "Across both roles" for a claim that
+covers both, never move a dated result under a role that ended earlier, never stack titles.
+Refine puts structure above feedback: a request to stack titles keeps separate headings
+(the model has no channel for a change note, so the revision just ignores that part).
 
 ## Company research
 

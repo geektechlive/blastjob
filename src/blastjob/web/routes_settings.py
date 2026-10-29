@@ -72,6 +72,18 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
         page.status_code = status_code
         return page
 
+    def _render_work_history(request: Request, view: wh.WorkHistoryView, **extra) -> HTMLResponse:
+        """The one place the work-history page is rendered, so every path (GET, a
+        saved page, a conflict, an empty body, a failed write) shows date notes for
+        the content actually on screen."""
+        return deps.render(
+            request,
+            "work_history.html",
+            view=view,
+            notes=wh.date_notes(view.content),
+            **extra,
+        )
+
     def _save(request: Request, cfg: BlastJobConfig, form: sf.Form) -> HTMLResponse | None:
         """Save `cfg` as an edit of the revision the form was loaded at; the
         page to show instead when that revision is no longer current."""
@@ -175,9 +187,7 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
 
     @app.get("/work-history", response_class=HTMLResponse)
     async def work_history_page(request: Request):
-        return deps.render(
-            request, "work_history.html", view=wh.read_work_history(deps.load_config())
-        )
+        return _render_work_history(request, wh.read_work_history(deps.load_config()))
 
     @app.post("/work-history", response_class=HTMLResponse)
     async def save_work_history_route(
@@ -190,29 +200,18 @@ def register(app: FastAPI, deps: Deps, save_config: SaveCfg) -> None:
         try:
             view = wh.save_work_history(cfg, content, expected_version=base_version)
         except wh.WorkHistoryConflictError as exc:
-            return deps.render(
-                request,
-                "work_history.html",
-                view=wh.with_content(exc.current, content),
-                error=str(exc),
+            return _render_work_history(
+                request, wh.with_content(exc.current, content), error=str(exc)
             )
         except wh.EmptyWorkHistoryError as exc:
             current = wh.read_work_history(cfg)
-            return deps.render(
-                request,
-                "work_history.html",
-                view=wh.with_content(current, content),
-                error=str(exc),
-            )
+            return _render_work_history(request, wh.with_content(current, content), error=str(exc))
         except OSError as exc:
             current = wh.read_work_history(cfg)
-            return deps.render(
-                request,
-                "work_history.html",
-                view=wh.with_content(current, content),
-                error=f"Save failed: {exc}",
+            return _render_work_history(
+                request, wh.with_content(current, content), error=f"Save failed: {exc}"
             )
-        return deps.render(request, "work_history.html", view=view, saved=True)
+        return _render_work_history(request, view, saved=True)
 
     # ----- ingest (source documents -> work_history.md + templates) -----
 

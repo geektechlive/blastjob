@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
 from blastjob.core.company import company_key
 
@@ -105,6 +106,16 @@ def _point(raw: str) -> DatePoint | None:
     return DatePoint(year=int(m.group("year")), month=month)
 
 
+def parse_ranges(text: str) -> list[DateRange]:
+    """Every date range found in `text`, in order of appearance (may be empty)."""
+    ranges: list[DateRange] = []
+    for m in _RANGE_RE.finditer(text):
+        start, end = _point(m.group("start")), _point(m.group("end"))
+        if start is not None and end is not None:
+            ranges.append(DateRange(start=start, end=end))
+    return ranges
+
+
 def parse_range(text: str) -> DateRange | None:
     """The full employment span described by `text`, or None.
 
@@ -115,17 +126,39 @@ def parse_range(text: str) -> DateRange | None:
     only the first range reported the resume as wrong when the resume was
     right.
     """
-    ranges: list[DateRange] = []
-    for m in _RANGE_RE.finditer(text):
-        start, end = _point(m.group("start")), _point(m.group("end"))
-        if start is not None and end is not None:
-            ranges.append(DateRange(start=start, end=end))
+    ranges = parse_ranges(text)
     if not ranges:
         return None
     return DateRange(
         start=min((r.start for r in ranges), key=lambda p: p.sort_key),
         end=max((r.end for r in ranges), key=lambda p: p.sort_key),
     )
+
+
+def month_indices(rng: DateRange, today: date) -> tuple[int, int] | None:
+    """(first, last) month index of `rng`, both inclusive, or None when the range
+    cannot be trusted (reversed, or starting or ending after `today`).
+
+    Index = year * 12 + month - 1. A missing month gives the benefit of the
+    doubt: a year-only start means January and a year-only end means December,
+    so a vague range is never read as shorter than it was. `present` ends today."""
+    now = today.year * 12 + today.month - 1
+    first = rng.start.year * 12 + (rng.start.month or 1) - 1
+    if rng.start.present or first > now:
+        return None
+    if rng.end.present:
+        return first, now
+    last = rng.end.year * 12 + (rng.end.month or 12) - 1
+    in_future = rng.end.year > today.year or (rng.end.month is not None and last > now)
+    if in_future or last < first:
+        return None
+    return first, last
+
+
+def role_span_months(rng: DateRange, today: date) -> int | None:
+    """Months a role covers, inclusive (Jan 2020 - Dec 2022 is 36), or None."""
+    idx = month_indices(rng, today)
+    return None if idx is None else idx[1] - idx[0] + 1
 
 
 def _date_line(line: str | None) -> str:
@@ -170,7 +203,7 @@ def employer_names(work_history_md: str) -> list[str]:
             continue
         parts = [p.strip() for p in line[4:].split("|")]
         if len(parts) >= 2 and parts[1]:
-            name = re.sub(r"\s*\([^)]*\)\s*$", "", parts[1]).strip()
+            name = re.sub(r"\s*\([^)]{0,80}\)\s*$", "", parts[1]).strip()
             if name and name not in out:
                 out.append(name)
     return out
@@ -194,7 +227,7 @@ def history_dates(work_history_md: str) -> dict[str, DateRange]:
     for parts, date_text in history_headings(work_history_md):
         if len(parts) < 2 or not parts[1]:
             continue
-        name = re.sub(r"\s*\([^)]*\)\s*$", "", parts[1]).strip()
+        name = re.sub(r"\s*\([^)]{0,80}\)\s*$", "", parts[1]).strip()
         rng = parse_range(date_text)
         if name and rng:
             ranges.setdefault(company_key(name), []).append(rng)

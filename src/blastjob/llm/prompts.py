@@ -129,6 +129,19 @@ deployment or distributed team are claims like any other. Check each one against
 history."""
 
 
+# Timeline rules (#105): a claim must fit the dates of the role it sits under.
+# `core/resume_timeline_checks.py` checks the same four things after the fact.
+_TIMELINE_RULES = """\
+- When the work history records a promotion, keep its promotion line ('Promoted from X to \
+Y') as the FIRST bullet under the later title, and name both titles in it.
+- A claim that covers more than one title at the same employer says so ('Across both roles, \
+...') and sits under the later title.
+- Never move a dated result ('by 2019') under a role that ended before that year. If the \
+work history places it there, keep the source wording and add no date.
+- Never stack two titles under one heading, whatever else you are asked: every title keeps \
+its own heading, its own employer line and its own dates.
+"""
+
 RESUME_SYSTEM = (
     """\
 You are an expert resume writing coach. Your job is to produce a concise, targeted resume \
@@ -154,6 +167,9 @@ carrying a heading and no bullets reads as unexplained time, which is a screen-o
 role earns only one line, give it one line — never zero. This applies to each title \
 separately when someone was promoted within one employer: the earlier title keeps its own \
 heading, its own dates, and at least one accomplishment from the years it covers.
+"""
+    + _TIMELINE_RULES
+    + """\
 - Prefer a metric, outcome, or specific result in every bullet. When the work history \
 states no number for a genuinely relevant accomplishment, say what the work was for or who \
 it served instead — never invent, estimate, or infer a figure to satisfy this rule.
@@ -230,10 +246,15 @@ CONTENT SELECTION:
 A role that ended 15-20 years ago earns one or two; inside 15 years, two to five. Same \
 rule as the standard resume (see RESUME_SYSTEM): one number, sourced, not two.
 - Every bullet must have a metric, outcome, or result. No generic activity statements.
+"""
+    + _TIMELINE_RULES
+    + """\
 - Skills: only include skills present in or directly relevant to the job description.
 - Summary: 3 sentences maximum. Lead with the most relevant credential.
 
 ATS FORMAT RULES:
+- Write each role as three parts: the title alone on one line, then one line reading \
+Employer | City, ST | Mon YYYY - Mon YYYY, then its hyphen bullets
 - ALL-CAPS section headings followed by colon: SUMMARY:, EXPERIENCE:, EDUCATION:, SKILLS:
 - Hyphen bullets only (-)
 - No tables, columns, bold, italic, or Unicode outside ASCII
@@ -361,6 +382,12 @@ section ordering. If the feedback asks for length changes, cut or expand bullets
 restructuring sections.
 - The feedback is the user's voice. Take it literally. Do not soften or reinterpret it.
 - Continue to mirror the language and priorities of the job description.
+- PRECEDENCE: structural truth and the ATS rules override the feedback. If the feedback asks \
+you to stack titles under one heading, or to move a result under a role it did not belong \
+to, keep separate headings and the source placement, and apply the rest of the feedback.
+"""
+    + _TIMELINE_RULES
+    + """\
 
 OUTPUT: the complete revised resume in the same Markdown format. No preamble, no commentary, \
 no diff. Start directly with the resume content."""

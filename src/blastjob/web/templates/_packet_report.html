@@ -46,6 +46,19 @@
     checks did not run is not a clean packet.</p>
   {% endif %}
 
+  {% if packet_report.timeline %}
+  <div class="pr-finding pr-major" id="timeline-banner">
+    <p><strong>Check before sending.</strong> These claims may not fit the dates of the role
+      they sit under, or a role could not be checked. They do not block the packet; read each
+      one against your work history first.</p>
+    <ul>
+      {% for f in packet_report.timeline %}
+      <li>{{ f.message }}{% if f.line %} <span class="dim">(line {{ f.line }})</span>{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
   {% if packet_report.quarantined_artifacts %}
   <p class="error">Held in quarantine: {{ packet_report.quarantined_artifacts | join(", ") }}.</p>
   {% endif %}
@@ -127,10 +140,11 @@
   {% if packet_report.minor %}
   <details>
     <summary>Minor / advisory &mdash; {{ packet_report.minor_count }}</summary>
-    <p class="dim">Advisory only, never blocking. These come from a parser
+    <p class="dim">Advisory only, never blocking. Most come from a parser
       (Textkernel's published Resume Quality spec) that does not sit behind any board
       you actually apply through &mdash; treat them as a second opinion worth a glance,
-      not proof of a parse failure.</p>
+      not proof of a parse failure. Date-consistency notes also appear here and are
+      repeated in the &ldquo;Check before sending&rdquo; box above.</p>
     {% for f in packet_report.minor %}
     <div class="pr-finding pr-minor">
       <p>{{ f.message }}</p>

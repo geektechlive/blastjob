@@ -518,6 +518,7 @@ async def _refine_locked(
     state = verdict.state.value if verdict is not None else "verification_failed"
     if on_text:
         on_text(f"\n\nRevision v{prior_n + 1} saved. Packet check: {state}.\n")
+        on_text(packet_verify.timeline_notice(report))
     reasons = tuple(verdict.reasons) if verdict is not None else ()
     return RefineResult(path, fit_score, state, reasons, held)
 
