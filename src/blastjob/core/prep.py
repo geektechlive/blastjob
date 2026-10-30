@@ -96,6 +96,26 @@ def _get(job: Mapping[str, Any], key: str, default: str = "") -> Any:
     return default if value is None else value
 
 
+def _evidence_items(raw: Any) -> list[dict]:
+    return [e for e in (raw or []) if isinstance(e, dict) and e.get("snippet")]
+
+
+_FENCE_TAG = re.compile(r"</?\s*MATERIAL[^>]*>", re.IGNORECASE)
+
+
+def _defang(text: str) -> str:
+    """A stored quote must not be able to close the prompt's material fence."""
+    return _FENCE_TAG.sub("", text)
+
+
+def _review_quotes(raw: Any) -> str:
+    """Review evidence as attributed quotes, never as bare numbers."""
+    return "\n".join(
+        f"- {e.get('site', '')} summary, {e.get('observed_at', '')}: {_defang(str(e['snippet']))}"
+        for e in _evidence_items(raw)
+    )
+
+
 def _profile_block(profile: dict | None) -> str:
     if not profile:
         return "No company workup on file.\n"
@@ -125,6 +145,9 @@ def _profile_block(profile: dict | None) -> str:
     if stack:
         rows = "\n".join(f"- {t.get('area', '')}: {t.get('vendor', '')}" for t in stack)
         parts.append(f"### Tech stack\n{rows}\n")
+    reviews = _review_quotes(profile.get("review_evidence"))
+    if reviews:
+        parts.append(f"### What review sites' summaries said\n{reviews}\n")
     return "\n".join(parts) if parts else "Company workup on file but empty.\n"
 
 
@@ -345,6 +368,12 @@ def trusted_numbers_text(
     culture = profile.get("culture_rating")
     if culture:
         lines.append(str(culture))
+    # Only the rating and the review count; numbers inside a snippet stay unverified.
+    for e in _evidence_items(profile.get("review_evidence")):
+        lines.append(str(e.get("value", "")))
+        count = e.get("review_count")
+        if isinstance(count, int):
+            lines.extend((str(count), f"{count:,}"))
 
     return "\n".join(lines)
 

@@ -6,6 +6,17 @@
   {% if profile.questions %}
   <div class="detail-block"><h3>Questions to ask</h3><ol>{% for q in profile.questions.split('\n') if q %}<li>{{ q }}</li>{% endfor %}</ol></div>{% endif %}
   {% if profile.risks %}<div class="detail-block"><h3>Risks</h3><p>{{ profile.risks }}</p></div>{% endif %}
+  {% if profile.review_evidence %}
+  <div class="detail-block">
+    <h3>Review-site summaries</h3>
+    <p class="dim">What each site's search summary said, verbatim. Not checked against the site.</p>
+    <ul>{% for e in profile.review_evidence %}
+      {% set href = e.url | safe_url %}
+      <li>{% if href %}<a class="ext" href="{{ href }}" target="_blank" rel="noopener noreferrer">{{ e.site }}</a>{% else %}{{ e.site }}{% endif %}
+        {{ 'other: see quote' if e.rating_kind == 'other' else e.rating_kind }} {{ e.value }}/5 <span class="dim">({{ e.observed_at }})</span>:
+        <q>{{ e.snippet }}</q></li>{% endfor %}
+    </ul>
+  </div>{% endif %}
 
   <details class="detail-block"{% if notes_error %} open{% endif %}>
     <summary>Edit notes</summary>

@@ -198,6 +198,11 @@ def _location_in(window: str, anchors: Anchors) -> bool:
     return bool(code) and re.search(rf"(?:,\s*{code}\b|\b{code}\s+\d{{5}}\b)", window) is not None
 
 
+def mentions_location(text: str, anchors: Anchors) -> bool:
+    """The job's state (by name, or as a ", WI" / "WI 53066" address shape) in `text`."""
+    return _location_in(text, anchors)
+
+
 def located_mention(text: str, company: str, anchors: Anchors) -> bool:
     """A company mention with the job's location within `NEAR_CHARS` of it."""
     return any(

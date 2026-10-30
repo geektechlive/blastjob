@@ -184,6 +184,12 @@ cannot become "serves aerospace":
   but its topic match is a word-overlap heuristic with an uncalibrated threshold
   (`SUPPORT_OVERLAP_MIN`).
 
+One narrow, labeled exception to "only a fetched page counts": review-site summaries
+(`core/review_evidence.py`, [employer data](how-it-works/employer-data.md#company-profiles-and-comp-signals)). A
+Glassdoor, Indeed or Comparably search snippet with a rating is kept as a verbatim record of
+what that site's summary said, shown with its site and date and quoted with attribution. It is
+built in Python, never read by a model, and never feeds a profile fact.
+
 Provenance is read off the text and defaults to unknown. Only facts verified against a page
 the app fetched are `web_search`; recall from training data is labelled "recalled from
 training data, NOT verified" in the letter prompt. How pages are found, anchored to the

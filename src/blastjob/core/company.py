@@ -424,6 +424,7 @@ def refresh_research_facts(
     *,
     expected_updated_at: str | None,
     output_root: str | Path | None = None,
+    replace_review_evidence: bool = False,
 ) -> int | None:
     """Save a research result without overwriting curated data. Returns the row
     id, or None (nothing written) when the profile changed since `expected_updated_at`
@@ -432,7 +433,9 @@ def refresh_research_facts(
     A new company is inserted whole; an existing one gets only the
     RESEARCH_OWNED columns, plus FILL_IF_EMPTY prose that is still empty.
     Compare-and-set on `updated_at` under one write lock. Pass `output_root`
-    so a `workup_path` is stored in root form."""
+    so a `workup_path` is stored in root form. `replace_review_evidence` (a successful
+    research run) writes `review_evidence` even when empty: "no review summaries
+    found" is information, so stale evidence must not outlive it."""
     key = company_key(profile.company)
     data = _profile_data(profile, output_root)
     if not conn.in_transaction:
@@ -457,6 +460,8 @@ def refresh_research_facts(
     # A thinner re-run (the model returned null/""/[]) must not erase stored facts.
     fresh = [c for c in RESEARCH_OWNED if getattr(profile, c) not in (None, "", [])]
     columns = [*fresh, *(c for c in FILL_IF_EMPTY if not (row[c] or "").strip())]
+    if replace_review_evidence and "review_evidence" not in columns:
+        columns.append("review_evidence")
     if not columns:
         conn.rollback()
         return int(row["id"])

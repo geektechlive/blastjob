@@ -30,7 +30,7 @@ from typing import Any
 import httpx
 
 from blastjob import config as cfg_mod
-from blastjob.core import cited_values, packet_research, research_match
+from blastjob.core import cited_values, packet_research, research_match, review_evidence
 from blastjob.core import company as co
 from blastjob.core.cited_values import coerce_int as _coerce_int
 from blastjob.core.jina import _PREFER as _PREFER
@@ -218,6 +218,10 @@ def anchored_queries(company: str, candidate, anchors: research_match.Anchors) -
     queries = [f"site:{d} about" for d in sorted(anchors.strong_domains)[:1]]
     if loc:
         queries.append(f'"{company}" {loc}')
+    if anchors.city:
+        # Surfaces "<Company> Reviews in <City>" pages, which carry the location that
+        # anchors a review site's other pages (core/review_evidence.py).
+        queries.append(f'"{company}" reviews {anchors.city} {anchors.state_code}')
     queries += [f"{q} {loc}".strip() for q in search_queries(company, candidate)]
     return [" ".join(q.split()) for q in dict.fromkeys(queries)]
 
@@ -312,6 +316,9 @@ async def _research_company(
     if not results:
         emit("log", "Search returned nothing.")
         return None
+    # Review-site summaries come from ALL the results, before the identity filter drops
+    # snippets, under their own anchor rule; the model never sees them (ADR 0069).
+    evidence = review_evidence.review_evidence(results, company, merged)
     pages_to_read = pick_research_pages(results, merged, company)
     emit("log", f"{len(results)} results; reading {len(pages_to_read)} pages...")
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
@@ -351,7 +358,21 @@ async def _research_company(
         return None
     basis = co.IDENTITY_JUDGED if judged else co.IDENTITY_ANCHORED
     profile = keep_cited_values(profile, text, pages).model_copy(update={"identity_basis": basis})
+    profile = _with_review_evidence(profile, evidence)
     return await _with_parent_news(cfg, company, text, matched, merged, profile, key, tracker, emit)
+
+
+def _with_review_evidence(
+    profile: co.CompanyProfile, evidence: list[dict[str, Any]]
+) -> co.CompanyProfile:
+    """Attach the review evidence. A Glassdoor overall rating also sets `culture_rating`;
+    that only matters for a NEW profile, since `refresh_research_facts` never writes
+    `culture_rating` over an existing row."""
+    update: dict[str, Any] = {"review_evidence": evidence}
+    glassdoor = review_evidence.glassdoor_overall(evidence)
+    if glassdoor is not None:
+        update["culture_rating"] = glassdoor
+    return profile.model_copy(update=update)
 
 
 async def _with_parent_news(
@@ -452,7 +473,11 @@ def make_research_work(company: str, load_config=cfg_mod.load_config, *, job_id:
                 run.emit("error", "Could not build a profile from what the web returned.")
                 return None
             pid = co.refresh_research_facts(
-                conn, profile, expected_updated_at=expected, output_root=cfg_mod.output_dir(cfg)
+                conn,
+                profile,
+                expected_updated_at=expected,
+                output_root=cfg_mod.output_dir(cfg),
+                replace_review_evidence=True,
             )
             if pid is None:
                 run.emit(
