@@ -206,14 +206,60 @@ def located_mention(text: str, company: str, anchors: Anchors) -> bool:
     )
 
 
-def page_matches(url: str, text: str, company: str, anchors: Anchors) -> bool:
-    """Whether a fetched page is anchored to this job's employer."""
+def _is_host_char(ch: str) -> bool:
+    return ch.isascii() and (ch.isalnum() or ch == "-")
+
+
+def names_domain(text: str, domains: frozenset[str]) -> bool:
+    """True when `text` carries one of `domains` as a token ("www.example.com",
+    "careers.example.com"), not inside another name ("notexample.com") or as the
+    front of another host ("example.com.attacker.example"). Plain `str.find` with
+    manual boundary checks, so hostile page text cannot cause backtracking."""
+    lowered = text.lower()
+    for domain in domains:
+        needle = domain.lower()
+        start = lowered.find(needle)
+        while start != -1:
+            end = start + len(needle)
+            before = lowered[start - 1] if start > 0 else ""
+            after = lowered[end] if end < len(lowered) else ""
+            after2 = lowered[end + 1] if end + 1 < len(lowered) else ""
+            # A preceding "." is a subdomain label ("careers.example.com").
+            front_ok = not _is_host_char(before)
+            if before == "." and start > 1 and _is_host_char(lowered[start - 2]):
+                front_ok = True
+            back_ok = not _is_host_char(after) and not (after == "." and _is_host_char(after2))
+            if front_ok and back_ok:
+                return True
+            start = lowered.find(needle, start + 1)
+    return False
+
+
+def domain_near_mention(text: str, company: str, domains: frozenset[str]) -> bool:
+    """The company's name with one of `domains` as a token within `NEAR_CHARS` of
+    it: a domain elsewhere on the page says nothing about whose name that is."""
+    return any(
+        names_domain(text[max(0, s - NEAR_CHARS) : e + NEAR_CHARS], domains)
+        for s, e in company_mentions(text, company)
+    )
+
+
+def page_matches(
+    url: str, text: str, company: str, anchors: Anchors, *, domain_token: bool = False
+) -> bool:
+    """Whether a fetched page is anchored to this job's employer. `domain_token`
+    adds a second identity path for third-party pages (the Research button only):
+    the page carries one of its own domains as a token within `NEAR_CHARS` of a
+    mention of the company, so an article with no location in it still counts
+    (issue #107)."""
     host = host_of(url)
     if on_domain(host, anchors.strong_domains):
         return True
     if on_domain(host, anchors.weak_domains) and names_company(text, company):
         return True
-    return located_mention(text, company, anchors)
+    if located_mention(text, company, anchors):
+        return True
+    return domain_token and domain_near_mention(text, company, anchors.strong_domains)
 
 
 def merge_anchors(anchors: Sequence[Anchors]) -> Anchors:
@@ -232,10 +278,17 @@ def merge_anchors(anchors: Sequence[Anchors]) -> Anchors:
     )
 
 
-def page_matches_any(url: str, text: str, company: str, anchors: Sequence[Anchors]) -> bool:
+def page_matches_any(
+    url: str,
+    text: str,
+    company: str,
+    anchors: Sequence[Anchors],
+    *,
+    domain_token: bool = False,
+) -> bool:
     """A company with jobs in several places: the page is its own if it matches
     the anchors of any one of them."""
-    return any(page_matches(url, text, company, a) for a in anchors)
+    return any(page_matches(url, text, company, a, domain_token=domain_token) for a in anchors)
 
 
 JUDGE_SYSTEM = """You decide, for each web page, whether it describes the SAME \

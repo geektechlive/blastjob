@@ -487,14 +487,21 @@ async def match_pages(
     anchors: Sequence[Anchors],
     pages: list[FetchedPage],
     cost_tracker: CostTracker,
+    *,
+    domain_token: bool = False,
 ) -> tuple[list[FetchedPage], tuple[str, ...]]:
     """The pages about THIS employer, and the note their admission earned. One
     Anchors per job location (a packet has one job; the Research button, which
     is per company, has one per distinct place); a page needs to match any one.
-    Shared with `web/research.py` (issue #60)."""
+    Shared with `web/research.py` (issue #60); `domain_token` is that button's
+    second identity path (issue #107), never packet research's."""
     if any(a.any for a in anchors):
         kept = [
-            p for p in pages if research_match.page_matches_any(p.url, p.text, ctx.company, anchors)
+            p
+            for p in pages
+            if research_match.page_matches_any(
+                p.url, p.text, ctx.company, anchors, domain_token=domain_token
+            )
         ]
         dropped = len(pages) - len(kept)
         if dropped:

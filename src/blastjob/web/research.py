@@ -19,9 +19,11 @@ docs/how-it-works/employer-data.md.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 import json
 import logging
 import os
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -32,7 +34,7 @@ from blastjob.core import cited_values, packet_research, research_match
 from blastjob.core import company as co
 from blastjob.core.cited_values import coerce_int as _coerce_int
 from blastjob.core.jina import _PREFER as _PREFER
-from blastjob.core.jina import JINA_KEY_ENV, jina_search
+from blastjob.core.jina import JINA_KEY_ENV, is_linkedin_url, jina_search
 from blastjob.core.jina import MAX_PAGES as MAX_PAGES
 from blastjob.core.jina import PAGE_CHARS as PAGE_CHARS
 from blastjob.core.jina import READER_URL as READER_URL
@@ -40,6 +42,7 @@ from blastjob.core.jina import company_search_queries as search_queries
 from blastjob.core.jina import pick_pages as pick_pages
 from blastjob.core.jina import read_page as read_page
 from blastjob.core.packet_research import FetchedPage
+from blastjob.core.page_fetch import host_of
 from blastjob.core.research_facts import strip_instructions
 from blastjob.core.research_match import JobContext
 from blastjob.db import client as dbc
@@ -49,11 +52,25 @@ from blastjob.llm.providers import make_stream
 from blastjob.matching.scorer import _extract_json
 from blastjob.models.config import BlastJobConfig
 from blastjob.secrets import secrets_file_hint
+from blastjob.web import research_parent
 from blastjob.web.research_context import company_job_contexts
 from blastjob.web.runtime import Run
 from blastjob.web.urls import safe_external_url
 
 log = logging.getLogger(__name__)
+
+# The Research button's page budget (issue #107): the employer's own site, then
+# third-party pages whose search result names the company. Packet research keeps
+# `pick_own_first` and `MAX_PAGES`.
+OWN_PAGES = 2
+THIRD_PARTY_PAGES = 4
+TOTAL_PAGES = 6
+_NEWS_PREFER = re.compile(
+    r"prnewswire|businesswire|globenewswire|bizjournals|reuters|apnews|news|press", re.I
+)
+# Review sites are never read as profile material (their summaries are a separate,
+# attributed record, issue #108).
+_REVIEW_HOST = re.compile(r"(?:^|\.)(?:glassdoor|indeed|comparably)\.", re.I)
 
 
 RESEARCH_SYSTEM = """You are a research analyst preparing a company workup for a candidate \
@@ -77,12 +94,19 @@ Schema (all keys required; USD integers, no strings for numbers):
  "culture_rating": float|null (Glassdoor overall), "culture_notes": str,
  "risks": str (what an incoming candidate should probe),
  "questions": str (5-7 sharp interview questions, one per line),
- "summary": str (3-5 sentences), 
+ "summary": str (3-5 sentences),
+ "parent_name": str (the company that owns this one, or ""),
+ "parent_span": str (ONE sentence copied verbatim from a page on the company's OWN site
+   that states who owns the company, or ""), 
  "sources": [{"label": str, "url": str}] (only URLs that appear in the material),
  "extra": {} (any other hard numbers worth keeping, snake_case keys),
  "value_sources": {"<field>": "<url of the ## Page whose text states it>"} for every
    non-null one of: hq, founded, employees, revenue_usd, revenue_growth_pct,
    total_assets_usd, net_income_usd, customers, locations, culture_rating, ceo}
+
+parent_span must be ONE sentence copied verbatim from a page on the employer's own site \
+that states who owns the company. If there is none, return "" for both parent_name and \
+parent_span.
 
 A single value (those fields) is kept only if it appears, as written, in the text of the \
 page its value_sources entry names; search-result snippets do not count. Copy it from \
@@ -198,6 +222,51 @@ def anchored_queries(company: str, candidate, anchors: research_match.Anchors) -
     return [" ".join(q.split()) for q in dict.fromkeys(queries)]
 
 
+def _page_key(url: str) -> str:
+    return re.sub(r"[?#].*$", "", url.lower())
+
+
+def is_review_or_linkedin(url: str) -> bool:
+    return is_linkedin_url(url) or bool(_REVIEW_HOST.search(host_of(url)))
+
+
+def pick_research_pages(
+    results: dict[str, dict], anchors: research_match.Anchors, company: str
+) -> list[dict]:
+    """Which search results the Research button reads: at most `OWN_PAGES`
+    own-domain pages (about, leadership and news first), up to `THIRD_PARTY_PAGES`
+    third-party pages whose title or description names the company (news and press
+    first), then more own-domain pages for any unused slot, up to `TOTAL_PAGES`.
+    When the employer's domain is unknown and too few pages qualified, the old
+    primary-looking pick tops the list up to `MAX_PAGES`. Review hosts and LinkedIn
+    are never picked; pages dedupe by host+path. Picking only ranks: every page read
+    still has to match the employer's anchors."""
+    seen: set[str] = set()
+    usable: list[dict] = []
+    for r in results.values():
+        key = _page_key(r["url"])
+        if key in seen or key.endswith(".pdf") or is_review_or_linkedin(r["url"]):
+            continue
+        seen.add(key)
+        usable.append(r)
+    own = [r for r in usable if research_match.on_domain(host_of(r["url"]), anchors.strong_domains)]
+    own = sorted(own, key=lambda r: 0 if _PREFER.search(r["url"]) else 1)
+    rest = [r for r in usable if r not in own]
+    third = [
+        r
+        for r in rest
+        if research_match.names_company(f"{r.get('title', '')} {r.get('description', '')}", company)
+    ]
+    third = sorted(third, key=lambda r: 0 if _NEWS_PREFER.search(r["url"]) else 1)
+    picked = own[:OWN_PAGES] + third[:THIRD_PARTY_PAGES]
+    picked += [r for r in own[OWN_PAGES:] if r not in picked]
+    picked = picked[:TOTAL_PAGES]
+    if len(picked) < MAX_PAGES:
+        floor = [r for r in pick_pages(rest, limit=MAX_PAGES) if r not in picked]
+        picked += floor[: MAX_PAGES - len(picked)]
+    return picked
+
+
 async def research_company(
     cfg: BlastJobConfig,
     company: str,
@@ -243,7 +312,7 @@ async def _research_company(
     if not results:
         emit("log", "Search returned nothing.")
         return None
-    pages_to_read = packet_research.pick_own_first(results, merged)
+    pages_to_read = pick_research_pages(results, merged, company)
     emit("log", f"{len(results)} results; reading {len(pages_to_read)} pages...")
     async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
         texts = [await read_page(client, p["url"], key) for p in pages_to_read]
@@ -255,7 +324,9 @@ async def _research_company(
     if not fetched:
         raise IdentityNotConfirmed(company)
     emit("log", "Checking which pages are about this company...")
-    matched, notes = await packet_research.match_pages(cfg, ctxs[0], anchor_list, fetched, tracker)
+    matched, notes = await packet_research.match_pages(
+        cfg, ctxs[0], anchor_list, fetched, tracker, domain_token=True
+    )
     if not matched:
         raise IdentityNotConfirmed(company)
     judged = bool(notes)
@@ -279,7 +350,53 @@ async def _research_company(
     if profile is None:
         return None
     basis = co.IDENTITY_JUDGED if judged else co.IDENTITY_ANCHORED
-    return keep_cited_values(profile, text, pages).model_copy(update={"identity_basis": basis})
+    profile = keep_cited_values(profile, text, pages).model_copy(update={"identity_basis": basis})
+    return await _with_parent_news(cfg, company, text, matched, merged, profile, key, tracker, emit)
+
+
+async def _with_parent_news(
+    cfg: BlastJobConfig,
+    company: str,
+    reply: str,
+    matched: list[FetchedPage],
+    anchors: research_match.Anchors,
+    profile: co.CompanyProfile,
+    api_key: str,
+    tracker: CostTracker,
+    emit,
+) -> co.CompanyProfile:
+    """Add the parent company's verified news to `profile`. Best-effort: any
+    failure is logged and the employer profile is returned unchanged."""
+    name, span = research_parent.raw_parent_fields(reply)
+    if not name and not span:
+        return profile
+    try:
+        if name and not research_parent.is_specific_name(name):
+            emit("log", "Parent check skipped: parent name too generic to search.")
+            return profile
+        claim = research_parent.verified_parent(
+            company, name, span, research_parent.own_domain_pages(matched, anchors)
+        )
+        if claim is None:
+            emit("log", "Parent check skipped: the company's own site does not confirm a parent.")
+            return profile
+        emit("log", f"Checking recent news about the parent, {claim.name}...")
+        result = await research_parent.parent_news(
+            cfg,
+            claim,
+            api_key,
+            tracker,
+            search=jina_search,
+            read=read_page,
+            stream_factory=make_stream,
+            is_excluded=is_review_or_linkedin,
+            today=dt.date.today(),
+        )
+        return research_parent.merge_into(profile, result)
+    except Exception as e:  # noqa: BLE001 - the parent pass never costs the profile
+        log.warning("parent check failed for %s: %s", company, e)
+        emit("log", f"Parent check skipped: {e}")
+        return profile
 
 
 def _value_sources(text: str) -> dict[str, Any]:
