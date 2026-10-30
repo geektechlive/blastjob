@@ -29,7 +29,6 @@
       {% if profile.customers %}<tr><th>Customers / members</th><td>{{ "{:,}".format(profile.customers) }}</td></tr>{% endif %}
       {% if profile.locations %}<tr><th>Locations</th><td>{{ profile.locations }}</td></tr>{% endif %}
       {% if profile.ceo %}<tr><th>CEO</th><td>{{ profile.ceo }}{% if profile.ceo_since %} <span class="dim">since {{ profile.ceo_since }}</span>{% endif %}</td></tr>{% endif %}
-      {% if profile.culture_rating %}<tr><th>Culture</th><td>{{ profile.culture_rating }}/5 <span class="dim">{{ profile.culture_notes }}</span></td></tr>{% endif %}
       {% for k, v in profile.extra.items() %}<tr><th class="dim">{{ k.replace('_', ' ') }}</th><td>{{ v }}</td></tr>{% endfor %}
     </table>
   </div>
@@ -53,9 +52,8 @@
 
   {% include "_comp_signals.html" %}
 
-  {% if profile.questions %}
-  <div class="detail-block"><h3>Questions to ask</h3><ol>{% for q in profile.questions.split('\n') if q %}<li>{{ q }}</li>{% endfor %}</ol></div>{% endif %}
-  {% if profile.risks %}<div class="detail-block"><h3>Risks</h3><p>{{ profile.risks }}</p></div>{% endif %}
+  {% set form = profile %}
+  {% include "_company_notes.html" %}
 
   <div class="detail-block"><h3>Jobs at {{ profile.company }}</h3>
     {% if jobs %}<ul>{% for j in jobs %}<li><a href="/jobs/{{ j.id }}">{{ j.title }}</a> <span class="badge state">{{ j.review_state }}</span>{% if j.application_state %} <span class="badge state">{{ j.application_state }}</span>{% endif %}{% if j.alignment_score is not none %} <span class="dim">{{ j.alignment_score }}%</span>{% endif %}</li>{% endfor %}</ul>

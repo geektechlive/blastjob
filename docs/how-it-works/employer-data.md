@@ -155,6 +155,12 @@ Needs `JINA_API_KEY` in the secrets file.
 
 The save is a compare-and-set on the `updated_at` read when the research started. If the profile changed meanwhile, nothing is saved and the run says so; run it again.
 
+Research also stores `review_evidence` (migration 74), a research-owned list of review-site summaries; it is refreshed like the other facts.
+
+**Editing your notes.** The company page has an **Edit notes** form (`POST /companies/{key}/curated`, behind the usual CSRF token and Origin check) for the four curated fields: **Culture rating (0 to 5)**, **Culture notes**, **Risks** and **Questions to ask (one per line)**. A blank rating clears it; a rating of 0 is kept and shown. The route rejects a rating outside 0 to 5 and text over 8000 characters (notes, risks) or 4000 (questions), and strips NUL characters. `company.update_curated` writes only those four columns and never the research-owned ones, `workup_path` or `extra`.
+
+Every profile write (`upsert_profile`, `refresh_research_facts`, `update_curated`) adds one to `company_profiles.revision` (migration 74). The form carries the revision it was opened at, and the save is a compare-and-set on it under one write lock. If the profile changed since (another edit, or a research run that saved), nothing is written and the form comes back with "The profile changed since you opened it. Reload and try again." Research keeps its own compare-and-set on `updated_at`.
+
 Long-form markdown workups live in the application folder, and the profile row points at them through `workup_path`. The path is stored in root form and resolved with `paths.locate`, because the folder may be filed into a bucket (see [events and filing](events-and-filing.md#stored-paths)).
 
 ## People and outreach

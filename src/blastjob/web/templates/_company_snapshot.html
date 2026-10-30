@@ -8,7 +8,7 @@
       {% if profile.revenue_usd %}${{ (profile.revenue_usd / 1e6) | round | int }}M revenue ·{% endif %}
       {% if profile.total_assets_usd %}${{ (profile.total_assets_usd / 1e9) | round(1) }}B assets ·{% endif %}
       {% if profile.ceo %}CEO {{ profile.ceo }} ·{% endif %}
-      {% if profile.culture_rating %}Glassdoor {{ profile.culture_rating }}/5{% endif %}
+      {% if profile.culture_rating is not none %}Glassdoor {{ profile.culture_rating }}/5{% endif %}
     </p>
   {% else %}
     <p class="dim">No workup on file for {{ job.company }}.</p>

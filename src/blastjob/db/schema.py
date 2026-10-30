@@ -825,4 +825,15 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_category_hits_category ON category_hits(category_id);
         """,
     ),
+    # 74: company profile edit guard and review evidence (#109, #108). `revision` counts every
+    # profile write; the cockpit's notes form carries the revision it read and saves only if
+    # it still matches. `review_evidence` is a JSON list of review-site summaries, owned by
+    # research.
+    (
+        74,
+        """
+        ALTER TABLE company_profiles ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE company_profiles ADD COLUMN review_evidence TEXT DEFAULT '';
+        """,
+    ),
 ]

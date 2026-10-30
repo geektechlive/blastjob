@@ -1,0 +1,30 @@
+<div id="company-notes" class="company-notes">
+  {% if profile.culture_rating is not none %}
+  <div class="detail-block"><h3>Culture</h3><p>{{ profile.culture_rating }}/5 <span class="dim">{{ profile.culture_notes }}</span></p></div>
+  {% elif profile.culture_notes %}
+  <div class="detail-block"><h3>Culture</h3><p>{{ profile.culture_notes }}</p></div>{% endif %}
+  {% if profile.questions %}
+  <div class="detail-block"><h3>Questions to ask</h3><ol>{% for q in profile.questions.split('\n') if q %}<li>{{ q }}</li>{% endfor %}</ol></div>{% endif %}
+  {% if profile.risks %}<div class="detail-block"><h3>Risks</h3><p>{{ profile.risks }}</p></div>{% endif %}
+
+  <details class="detail-block"{% if notes_error %} open{% endif %}>
+    <summary>Edit notes</summary>
+    {% if notes_error %}<p class="warn">{{ notes_error }}</p>{% endif %}
+    <form hx-post="/companies/{{ profile.company_key | urlencode }}/curated" hx-target="#company-notes" hx-swap="outerHTML" data-swap-errors>
+      <input type="hidden" name="revision" value="{{ profile.revision }}">
+      <label>Culture rating (0 to 5)
+        <input type="number" name="culture_rating" min="0" max="5" step="0.1" value="{{ form.culture_rating if form.culture_rating is not none else '' }}">
+      </label>
+      <label>Culture notes
+        <textarea name="culture_notes" rows="4" maxlength="8000">{{ form.culture_notes }}</textarea>
+      </label>
+      <label>Risks
+        <textarea name="risks" rows="4" maxlength="8000">{{ form.risks }}</textarea>
+      </label>
+      <label>Questions to ask (one per line)
+        <textarea name="questions" rows="4" maxlength="4000">{{ form.questions }}</textarea>
+      </label>
+      <button type="submit">Save notes</button>
+    </form>
+  </details>
+</div>

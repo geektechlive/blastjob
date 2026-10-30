@@ -30,6 +30,7 @@ from blastjob.core.paths import locate
 from blastjob.discovery import follow_seeds as fs
 from blastjob.web import people, recruiter_view, service
 from blastjob.web.asks_view import ask_context
+from blastjob.web.company_notes import STALE_NOTES_MESSAGE, parse_curated_form, typed_notes
 from blastjob.web.deps import Deps
 from blastjob.web.runtime import RUNTIME
 from blastjob.web.security import require_csrf
@@ -230,6 +231,44 @@ def register(app: FastAPI, deps: Deps) -> None:
                 comp_kinds=co.COMP_KINDS,
                 is_target=ts.get_target(c, key) is not None,
             )
+        finally:
+            c.close()
+
+    def _notes_panel(request: Request, profile: dict, form: dict, error: str, status: int):
+        """The company notes section; `form` holds the field values to show, so a
+        rejected submission keeps what the owner typed."""
+        resp = deps.render(
+            request, "_company_notes.html", profile=profile, form=form, notes_error=error
+        )
+        resp.status_code = status
+        return resp
+
+    @app.post("/companies/{key}/curated", response_class=HTMLResponse)
+    async def company_curated(
+        request: Request,
+        key: str,
+        culture_rating: str = Form(""),
+        culture_notes: str = Form(""),
+        risks: str = Form(""),
+        questions: str = Form(""),
+        revision: int = Form(..., ge=0, le=2**31),
+        _: None = Depends(require_csrf),
+    ):
+        c = deps.conn()
+        try:
+            profile = co.get_profile_by_key(c, key)
+            if profile is None:
+                return HTMLResponse("Not found", status_code=404)
+            parsed, error = parse_curated_form(culture_rating, culture_notes, risks, questions)
+            if error:
+                typed = {**profile, **typed_notes(culture_rating, culture_notes, risks, questions)}
+                return _notes_panel(request, profile, typed, error, 400)
+            new_revision = co.update_curated(c, key, parsed, revision)
+            if new_revision is None:
+                shown = {**profile, **parsed}
+                return _notes_panel(request, profile, shown, STALE_NOTES_MESSAGE, 409)
+            fresh = co.get_profile_by_key(c, key) or profile
+            return _notes_panel(request, fresh, fresh, "", 200)
         finally:
             c.close()
 

@@ -36,6 +36,20 @@
     }
   });
 
+  // data-swap-errors on a form: a 400 or 409 answer is a server-rendered form with its message,
+  // so htmx swaps it in like a success (the company notes form, #109).
+  document.addEventListener("htmx:beforeSwap", function (e) {
+    var xhr = e.detail && e.detail.xhr;
+    // beforeSwap fires on the swap target, which contains the form, so look from the
+    // requesting element (detail.elt) first.
+    var src = (e.detail && e.detail.elt) || e.target;
+    var el = src && src.closest ? src.closest("[data-swap-errors]") : null;
+    if (el && xhr && (xhr.status === 400 || xhr.status === 409)) {
+      e.detail.shouldSwap = true;
+      e.detail.isError = false;
+    }
+  });
+
   // data-ask-form on a Log ask form: after a saved ask, take a fresh one-use request token
   // (the server treats a repeated token as a double submit) and close the form.
   document.addEventListener("htmx:afterRequest", function (e) {

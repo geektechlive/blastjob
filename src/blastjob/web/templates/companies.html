@@ -15,7 +15,7 @@
       <td class="num">{% if p.employees %}{{ "{:,}".format(p.employees) }}{% endif %}</td>
       <td class="num">{% if p.revenue_usd %}${{ (p.revenue_usd / 1e6) | round | int }}M{% endif %}</td>
       <td class="num">{% if p.total_assets_usd %}${{ (p.total_assets_usd / 1e9) | round(1) }}B{% endif %}</td>
-      <td class="num">{% if p.culture_rating %}{{ p.culture_rating }}/5{% endif %}</td>
+      <td class="num">{% if p.culture_rating is not none %}{{ p.culture_rating }}/5{% endif %}</td>
       <td class="dim">{{ p.fiscal_period[:40] }}</td>
       <td class="num">{{ p.job_count }}</td>
     </tr>

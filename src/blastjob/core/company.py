@@ -60,7 +60,14 @@ COMP_KINDS: tuple[str, ...] = (
     "prior_salary",
 )
 
-JSON_COLUMNS = ("it_leadership", "tech_stack", "recent_events", "sources", "extra")
+JSON_COLUMNS = (
+    "it_leadership",
+    "tech_stack",
+    "recent_events",
+    "sources",
+    "extra",
+    "review_evidence",
+)
 PROFILE_COLUMNS = (
     "company",
     "legal_name",
@@ -92,6 +99,7 @@ PROFILE_COLUMNS = (
     "sources",
     "workup_path",
     "extra",
+    "review_evidence",
 )
 
 
@@ -330,6 +338,7 @@ class CompanyProfile(BaseModel):
     questions: str = ""
     summary: str = ""
     sources: list[dict[str, Any]] = Field(default_factory=list)
+    review_evidence: list[dict[str, Any]] = Field(default_factory=list)
     workup_path: str = ""
     extra: dict[str, Any] = Field(default_factory=dict)
     # How research tied its pages to this employer (IDENTITY_*). Stored by
@@ -380,7 +389,7 @@ def upsert_profile(
         return int(cur.lastrowid or 0)
     assignments = ", ".join(f"{c}=?" for c in PROFILE_COLUMNS)
     conn.execute(
-        f"UPDATE company_profiles SET {assignments}, updated_at=? WHERE id=?",
+        f"UPDATE company_profiles SET {assignments}, revision=revision+1, updated_at=? WHERE id=?",
         [*(data[c] for c in PROFILE_COLUMNS), now, existing["id"]],
     )
     conn.commit()
@@ -394,7 +403,7 @@ RESEARCH_OWNED = (
     "legal_name", "website", "hq", "founded", "industry", "ownership", "size_band",
     "employees", "revenue_usd", "revenue_growth_pct", "total_assets_usd", "net_income_usd",
     "customers", "locations", "fiscal_period", "ceo", "ceo_since", "it_leadership",
-    "tech_stack", "recent_events", "sources",
+    "tech_stack", "recent_events", "sources", "review_evidence",
 )  # fmt: skip
 # How research tied its pages to the employer (`CompanyProfile.identity_basis`).
 IDENTITY_ANCHORED = "anchored"
@@ -405,6 +414,8 @@ FILL_IF_EMPTY = ("strategy", "summary")
 USER_OWNED = (
     "workup_path", "culture_rating", "culture_notes", "risks", "questions", "extra",
 )  # fmt: skip
+# The subset the cockpit's "Edit notes" form may write (`update_curated`).
+EDITABLE_CURATED = ("culture_rating", "culture_notes", "risks", "questions")
 
 
 def refresh_research_facts(
@@ -454,11 +465,41 @@ def refresh_research_facts(
     # later anchored run does not turn those facts into confirmed ones.
     basis = _merged_identity_basis(row, profile, fresh)
     conn.execute(
-        f"UPDATE company_profiles SET {assignments}, identity_basis=?, updated_at=? WHERE id=?",
+        f"UPDATE company_profiles SET {assignments}, identity_basis=?, revision=revision+1, "
+        "updated_at=? WHERE id=?",
         [*(data[c] for c in columns), basis, now, row["id"]],
     )
     conn.commit()
     return int(row["id"])
+
+
+def update_curated(
+    conn: sqlite3.Connection,
+    key: str,
+    fields: Mapping[str, Any],
+    expected_revision: int,
+) -> int | None:
+    """Save the owner's edits to EDITABLE_CURATED columns. Returns the new revision,
+    or None (nothing written) for an unknown key or when the profile's revision is no
+    longer `expected_revision`. Other keys in `fields` are ignored; research-owned
+    columns, `workup_path` and `extra` are never touched. Compare-and-set under one
+    write lock."""
+    columns = [c for c in EDITABLE_CURATED if c in fields]
+    if not columns:
+        return None
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    assignments = ", ".join(f"{c}=?" for c in columns)
+    cur = conn.execute(
+        f"UPDATE company_profiles SET {assignments}, revision=revision+1, updated_at=? "
+        "WHERE company_key=? AND revision=?",
+        [*(fields[c] for c in columns), _now(), key, expected_revision],
+    )
+    if cur.rowcount != 1:
+        conn.rollback()
+        return None
+    conn.commit()
+    return expected_revision + 1
 
 
 def _merged_identity_basis(row: sqlite3.Row, profile: CompanyProfile, fresh: list[str]) -> str:
