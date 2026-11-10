@@ -9,6 +9,7 @@ tests pin all three halves of the fix.
 
 import logging
 import logging.handlers
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,16 @@ def test_log_path_returns_string():
     path = applog.log_path()
     assert isinstance(path, str)
     assert "blastjob.log" in path
+
+
+def test_log_path_never_resolves_to_the_owners_data_dir():
+    """#111: the owner's real blastjob.log once held lines from test runs (an
+    invented test firm's warnings). `tests/conftest.py` points the data dir at
+    a temp dir for the whole session; this pins that a test can never open the
+    default data dir's log."""
+    log_file = Path(applog.log_path()).resolve()
+    owners_dir = (Path.home() / ".blastjob").resolve()
+    assert owners_dir not in log_file.parents
 
 
 def test_log_exception_does_not_raise(caplog):

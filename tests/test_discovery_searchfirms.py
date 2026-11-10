@@ -117,6 +117,36 @@ def test_looks_like_posting_rejects_practice_page():
     )
 
 
+def test_looks_like_posting_rejects_interview_article():
+    """False-positive shape from a live sweep (#110): a firm's interview with a
+    sitting executive, published at the site root. The title names a Chief
+    role, so only the path can tell it from a posting."""
+    assert not sf.looks_like_posting(
+        "https://www.globexsearch.example/jordan-sample-interview/",
+        "C-suite conversations: Jordan Sample, CIO of Contoso Health",
+        "globexsearch.example",
+    )
+
+
+def test_looks_like_posting_rejects_practice_area_role_page():
+    """False-positive shape from a live sweep (#110): a practice-area page
+    under `/roles/` that sells the firm's search service for a role."""
+    assert not sf.looks_like_posting(
+        "https://www.globexsearch.example/roles/cio-executive-search/",
+        "CIO executive search",
+        "globexsearch.example",
+    )
+
+
+def test_looks_like_posting_keeps_jobs_page_on_same_site():
+    """The same site's real listings, under `/jobs/`, still count (#110)."""
+    assert sf.looks_like_posting(
+        "https://www.globexsearch.example/jobs/cio-contoso-credit-union/",
+        "Contoso Credit Union - Chief Information Officer",
+        "globexsearch.example",
+    )
+
+
 def test_looks_like_posting_rejects_missing_fields():
     assert not sf.looks_like_posting("", "Chief Operations Officer", "acmesearch.example")
     assert not sf.looks_like_posting(

@@ -82,6 +82,12 @@ _NOT_POSTING = re.compile(
     r"podcasts?|reports?|research|careers-at|what-we-do|functional-roles)\b|\.pdf$",
     re.I,
 )
+# The last path segment of a page that is about a role, not an opening (#110,
+# both seen on a live sweep 2026-11-09): an interview with a sitting executive
+# (`/<name>-interview/`) and a practice-area page selling the search service
+# (`/roles/cio-executive-search/`). Matched on the final segment only, so a
+# listing's own slug elsewhere in the path is untouched.
+_NOT_POSTING_SLUG = re.compile(r"(?:^|-)(?:interviews?|executive-search)$", re.I)
 _EXEC_TITLE = re.compile(r"\b(cio|cto|ciso|chief|vice president|vp|svp|director|head)\b", re.I)
 
 
@@ -199,7 +205,11 @@ def looks_like_posting(
     host = (parsed.netloc or "").lower()
     if not (host == domain.lower() or host.endswith("." + domain.lower())):
         return False
-    if _NOT_POSTING.search(parsed.path or ""):
+    path = parsed.path or ""
+    if _NOT_POSTING.search(path):
+        return False
+    last_segment = path.rstrip("/").rsplit("/", 1)[-1]
+    if _NOT_POSTING_SLUG.search(last_segment):
         return False
     keep, _ = classify_scope(title, "", keep_terms, drop_terms)
     if not keep:
