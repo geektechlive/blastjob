@@ -88,12 +88,20 @@ def label_date(iso: str | None) -> str:
         return ""
 
 
+def _place_label(row: sqlite3.Row) -> str:
+    """Where a row is, for the evidence line: its city, else the primary
+    location text it was placed from (the row may have no geo_city), else '?'."""
+    city = (row["geo_city"] or "").strip()
+    primary = (row["geo_location_raw"] or "").split(";", 1)[0].strip()
+    return city or primary or "?"
+
+
 def _evidence(job: sqlite3.Row, other: sqlite3.Row, geo: DiscoveryConfig) -> tuple[str, ...]:
     a, b = rc.place_of(job, geo), rc.place_of(other, geo)
     if a.remote and b.remote:
         metro = "both remote"
     else:
-        metro = f"same metro: {job['geo_city'] or '?'} / {other['geo_city'] or '?'}"
+        metro = f"same metro: {_place_label(job)} / {_place_label(other)}"
     title = (
         "same title"
         if (job["title"] or "").strip() == (other["title"] or "").strip()
