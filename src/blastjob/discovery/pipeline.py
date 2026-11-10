@@ -20,6 +20,7 @@ Design points:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import sqlite3
@@ -59,6 +60,8 @@ _ATS: dict[str, Callable[..., Adapter]] = {
     "lever": LeverAdapter,
     "ashby": AshbyAdapter,
 }
+
+log = logging.getLogger(__name__)
 
 MILES_TO_KM = 1.60934
 
@@ -463,7 +466,48 @@ async def run_discovery(
     """Fetch every configured source and save. Takes the run lock (`core/run_lock.py`) and
     raises `RunLockHeld` when another run holds it."""
     with run_lock.hold(cfg_mod.data_dir(cfg), "discovery"):
-        return await _run_discovery(cfg, conn, adapters)
+        if adapters is None:
+            adapters = build_adapters(cfg, conn)
+        result = await _run_discovery(cfg, conn, adapters)
+        await _reconcile_search_firms(cfg, conn, adapters, result)
+        return result
+
+
+async def run_search_firm_sweep(cfg: BlastJobConfig, conn: sqlite3.Connection) -> DiscoveryResult:
+    """The on-demand search-firm run (`daily.sweep_search_firms`): the firm adapter, then the
+    reconcile pass, under the run lock. The weekly path reaches the same reconcile through
+    `run_discovery`, so the two cannot drift (ADR 0073)."""
+    with run_lock.hold(cfg_mod.data_dir(cfg), "search-firm sweep"):
+        return await run_discovery(cfg, conn, adapters=[build_search_firm_adapter(cfg, conn)])
+
+
+async def _reconcile_search_firms(
+    cfg: BlastJobConfig,
+    conn: sqlite3.Connection,
+    adapters: list[Adapter],
+    result: DiscoveryResult,
+) -> None:
+    """After a run that included the search-firm adapter, reconcile the stored rows: back-fill
+    places and re-read open ones for the firm's filled sentence. A crash here is reported like
+    a source error and never sinks the discovery that just finished."""
+    from blastjob.discovery import searchfirm_reconcile as rec
+
+    firm = next((a for a in adapters if isinstance(a, SearchFirmAdapter)), None)
+    if firm is None:
+        return
+    try:
+        rres = await rec.reconcile_search_firm_rows(
+            cfg, conn, read=firm.read_page if firm.can_read else None
+        )
+    except Exception as e:  # noqa: BLE001 -- isolated: discovery already finished and saved
+        conn.rollback()
+        log.exception("search-firm reconcile failed")
+        result.errors["searchfirm reconcile"] = f"{type(e).__name__}: {e}"
+        return
+    if rres.closed:
+        result.notes["searchfirm closed"] = (
+            f"{len(rres.closed)} stored search(es) closed: the firm's page says filled."
+        )
 
 
 async def _run_discovery(

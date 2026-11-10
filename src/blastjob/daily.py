@@ -514,13 +514,12 @@ async def sweep_search_firms(
     schedule — for on-demand tuning/verification. Sends nothing to Discord and
     records no `daily_runs` row; it is a diagnostic tool, not part of the
     scheduled pipeline."""
-    from blastjob.discovery.pipeline import build_search_firm_adapter, run_discovery
+    from blastjob.discovery.pipeline import run_search_firm_sweep
     from blastjob.matching.pipeline import run_matching
 
-    sf = build_search_firm_adapter(cfg, conn)
     # One lock across both passes (each also takes it, reentrantly).
     with run_lock.hold(cfg_mod.data_dir(cfg), "search-firm sweep"):
-        dres = await run_discovery(cfg, conn, adapters=[sf])
+        dres = await run_search_firm_sweep(cfg, conn)
         if score:
             await run_matching(cfg, conn, CostTracker(), only_unscored=True)
     rows = conn.execute(

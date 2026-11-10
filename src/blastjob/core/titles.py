@@ -39,3 +39,21 @@ def normalize_role_title(title: str | None) -> str:
         text = pattern.sub(replacement, text)
     words = (_WORDS.get(w, w) for w in text.split())
     return " ".join(w for w in words if w not in _DROP)
+
+
+# The exec-title vocabulary: what makes a piece of text read as a leadership role.
+# One home for the search-firm title filter and `role_segment`.
+EXEC_TITLE = re.compile(r"\b(cio|cto|ciso|chief|vice president|vp|svp|director|head)\b", re.I)
+_SEGMENT_SPLIT = re.compile(r"\s+(?:-|\||\u2013)\s+")
+
+
+def role_segment(title: str | None) -> str | None:
+    """The one segment of `title` that reads as a leadership role, or None.
+
+    A search firm writes "<Employer> - <Title>"; the segment is what to compare with an
+    employer's own bare title (ADR 0072). Split on " - ", " | " or an en dash. With zero or
+    several segments matching `EXEC_TITLE` there is no safe pick, so None. A title with no
+    separator is its own single segment."""
+    segments = [s.strip() for s in _SEGMENT_SPLIT.split(title or "") if s.strip()]
+    matching = [s for s in segments if EXEC_TITLE.search(s)]
+    return matching[0] if len(matching) == 1 else None

@@ -14,6 +14,7 @@ so the same bounds as `blastjob setup set` apply.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -39,6 +40,7 @@ from blastjob.models.config import (
     BlastJobConfig,
     LimitsConfig,
     NotifyConfig,
+    SearchFirm,
     TargetBoard,
 )
 
@@ -79,6 +81,64 @@ def parse_employer_domains(text: str) -> dict[str, list[str]]:
         except ValueError as e:
             raise FormError(f"employer domains line {n}: {e}") from e
     return out
+
+
+def search_firms_text(firms: list[SearchFirm]) -> str:
+    """One 'Name | domain | slug' line per firm. The slug is always shown, so a line the user
+    edits (even its domain) keeps the identity `searchfirm:<slug>` sources hang on."""
+    return "\n".join(f"{f.name} | {f.domain} | {f.slug}" for f in firms)
+
+
+_SLUG = re.compile(r"[a-z0-9-]+")
+_SEARCH_FIRM_FORMAT = "expected 'Name | domain[ | slug]'"
+
+
+def _derived_slug(domain: str) -> str:
+    """The domain's first label (a leading 'www' skipped), already lowercase [a-z0-9-]."""
+    labels = domain.split(".")
+    return labels[1] if labels[0] == "www" and len(labels) > 2 else labels[0]
+
+
+def _search_firm_line(line: str, stored_slugs: Mapping[str, str]) -> SearchFirm:
+    """One line to a firm, or ValueError naming what is wrong. A line with no slug reuses the
+    slug stored for the same domain, else derives one from the domain."""
+    parts = [p.strip() for p in line.split("|")]
+    if len(parts) not in (2, 3) or not parts[0] or not parts[1]:
+        raise ValueError(_SEARCH_FIRM_FORMAT)
+    domain = employer_domains.normalize_domain(parts[1])
+    slug = parts[2] if len(parts) == 3 and parts[2] else ""
+    if slug and not _SLUG.fullmatch(slug):
+        raise ValueError(f"slug {slug!r} may only use lowercase letters, digits and hyphens")
+    return SearchFirm(
+        name=parts[0], domain=domain, slug=slug or stored_slugs.get(domain) or _derived_slug(domain)
+    )
+
+
+def parse_search_firms(text: str, existing: list[SearchFirm]) -> list[SearchFirm]:
+    """Firms from 'Name | domain | slug' lines. Every bad line is reported (by number) and
+    nothing is saved on any error. A bare-host domain (no scheme, path, port, IP or
+    'localhost'; same rule as employer domains) and unique slugs are required."""
+    stored = {f.domain: f.slug for f in existing if f.slug}
+    firms: list[SearchFirm] = []
+    errors: list[str] = []
+    seen: dict[str, int] = {}
+    for n, line in enumerate(lines(text), 1):
+        try:
+            firm = _search_firm_line(line, stored)
+        except ValueError as e:
+            errors.append(f"search firms line {n}: {e}")
+            continue
+        if firm.slug in seen:
+            first = seen[firm.slug]
+            errors.append(
+                f"search firms line {n}: slug {firm.slug!r} is already used by line {first}"
+            )
+            continue
+        seen[firm.slug] = n
+        firms.append(firm)
+    if errors:
+        raise FormError("; ".join(errors))
+    return firms
 
 
 def parse_towns(text: str) -> dict[str, list[float]]:
@@ -164,6 +224,8 @@ def _search(cfg: BlastJobConfig, form: Form) -> None:
     d.adzuna_where = form.get("adzuna_where", "").strip()
     d.title_keep_terms = lines(form.get("title_keep_terms", ""))
     d.title_drop_terms = lines(form.get("title_drop_terms", ""))
+    if "search_firms" in form:  # a form that omits the field keeps the stored firms
+        d.search_firms = parse_search_firms(form["search_firms"], d.search_firms)
     d.search_firm_queries = lines(form.get("search_firm_queries", ""))
     d.search_firm_regions = lines(form.get("search_firm_regions", ""))
     d.apple_queries = lines(form.get("apple_queries", ""))

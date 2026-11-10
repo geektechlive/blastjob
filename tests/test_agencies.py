@@ -44,15 +44,14 @@ def test_negatives_stay_false() -> None:
     assert not is_agency("Fabrikam Research Associates, Inc.")
 
 
-def test_search_firms_deliberately_not_flagged() -> None:
-    # company_key does not strip parentheticals, so these already end in
-    # "search" -- see the deliberate exclusion of "search" from
-    # _TRAILING_AGENCY_NOUNS in agencies.py for why this stays False.
+def test_search_firms_are_agencies_by_their_literal_suffix_only() -> None:
+    # ADR 0072: the adapter writes " (retained search)"; only that suffix counts, so an
+    # employer whose own name ends in "Search" is unchanged.
     assert co.company_key("Acme Executive Search (retained search)") == (
         "acme executive search retained search"
     )
-    assert not is_agency("Acme Executive Search (retained search)")
-    assert not is_agency("Globex Retained Search (retained search)")
+    assert is_agency("Acme Executive Search (retained search)")
+    assert is_agency("Globex Retained Search (retained search)")
     assert not is_agency("Contoso Dining Search")
 
 

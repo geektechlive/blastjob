@@ -22,7 +22,9 @@ Each job has a `posting_check` verdict:
 
 A job from an authoritative source (`workday:`, `greenhouse:`, `lever:`, `ashby:`, `dayforce:`) gets its verdict locally, with no request: `closed` once stale, else `verified_open`. That is safe because those pipelines stale-mark only after a full listing or a confirming 404 (see [snapshot vs incremental](discovery.md#snapshot-vs-incremental)).
 
-Jobs from LinkedIn, Adzuna, manual entry, search firms and Apple cannot prove anything themselves; their silence means nothing. They need an employer link.
+Jobs from LinkedIn, Adzuna, manual entry and Apple cannot prove anything themselves; their silence means nothing. They need an employer link.
+
+A search-firm job (`searchfirm:`) is an agency (see [same role](same-role.md#suggestions)) and is not in the closure pass at all: its verdict comes only from its own page. A re-read that carries the firm's filled sentence closes it (`close_from_page_evidence`, see [discovery](discovery.md#retained-search-firms)); nothing else does, and the pass never reopens it.
 
 ## Employer links
 

@@ -33,6 +33,9 @@ AGGREGATOR_COMPANIES: frozenset[str] = frozenset(
     }
 )
 
+# What the search-firm adapter appends to a firm's name (`discovery/searchfirms.py`).
+RETAINED_SUFFIX = " (retained search)"
+
 _EXTRA_AGENCIES: frozenset[str] = frozenset()
 
 
@@ -53,18 +56,10 @@ def known_agencies() -> frozenset[str]:
 # Research Associates" (ends in "associates") and "Talent Systems Inc" (ends
 # in "systems", "talent" leads rather than trails) both stay False.
 #
-# "search" is deliberately excluded even though it would catch the
-# search-firm adapter's own output ("Acme Executive Search (retained
-# search)", "Globex Retained Search (retained search)", and a pre-existing
-# DB row like "Contoso Dining Search"). Those company_keys already end in
-# "search" (company_key does not strip parentheticals), so adding it would
-# flip is_agency for those rows too — and closure.py short-circuits an
-# is_agency row straight to "unverifiable" with no employer-link search,
-# which is a real behavior change for rows already in the DB. That change
-# may well be correct (a retained-search listing has no named employer
-# either), but it wants a deliberate decision by the user, not a side effect
-# of widening this set. Revisit explicitly if they want search firms treated
-# as agencies for closure/clustering purposes.
+# "search" is deliberately NOT a trailing noun: an employer named "Contoso Dining Search"
+# stays an employer. The search-firm adapter's own rows are caught by `RETAINED_SUFFIX`
+# instead, the literal suffix the adapter writes (ADR 0072), which also makes closure give
+# them "unverifiable" without an employer-link search.
 _TRAILING_AGENCY_NOUNS: frozenset[str] = frozenset(
     {
         "staffing",
@@ -86,7 +81,9 @@ def is_agency(company: str) -> bool:
     well as a longer variant that still starts with it ("Acme Talent Partners
     Government Solutions"), so a subsidiary/division naming doesn't dodge the
     flag. Also catches an unlisted staffing shop whose name ends in an agency
-    noun (see `_TRAILING_AGENCY_NOUNS`)."""
+    noun (see `_TRAILING_AGENCY_NOUNS`) and a search-firm listing (`RETAINED_SUFFIX`)."""
+    if (company or "").strip().lower().endswith(RETAINED_SUFFIX):
+        return True
     key = co.company_key(company)
     if not key:
         return False

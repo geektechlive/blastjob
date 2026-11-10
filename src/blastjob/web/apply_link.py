@@ -3,12 +3,15 @@
 A role seen on LinkedIn, Adzuna and the employer's own Workday board should be
 applied to on Workday. Preference, best first:
 
+0. an OPEN retained search's own page (`searchfirm:` source), labelled "retained search
+   (<firm>)": the firm owns that process (ADR 0072). A search whose page is closed
+   (`posting_check='closed'` or `posting_closed_at` set) falls back to the tiers below;
 1. an authoritative member's own posting (`closure_links.is_authoritative`),
    labelled with its board, e.g. "employer site (Workday)";
 2. an employer link closure found on an authoritative board;
 3. an employer careers page link (`page:<host>`) or the user's manual link;
 4. a non-agency member's posting: LinkedIn > Indeed > Adzuna > anything else;
-5. an agency's posting, last.
+5. a contingency agency's posting, last.
 
 Every URL passes `safe_external_url`; one that fails is skipped. Within a
 tier an active posting beats a stale one, then the lowest id.
@@ -21,7 +24,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from blastjob.core.agencies import is_agency
+from blastjob.core.agencies import RETAINED_SUFFIX, is_agency
 from blastjob.core.closure_links import Link, is_authoritative
 from blastjob.core.page_links import apply_url
 from blastjob.web.urls import safe_external_url
@@ -43,14 +46,16 @@ _BOARD_NAMES = {
 _SOURCE_LABELS = {"category-web": "web search result"}
 _AGGREGATOR_ORDER = ("linkedin", "indeed", "adzuna")
 _AGGREGATOR_LABELS = {"linkedin": "LinkedIn", "indeed": "Indeed", "adzuna": "Adzuna"}
-# Tiers: 0 own board posting, 1 board link, 2 page/manual link,
+# Tiers: -1 an open retained search's page, 0 own board posting, 1 board link, 2 page/manual link,
 # 3..5 linkedin/indeed/adzuna, 6 other source, 7 agency.
 _TIER_OTHER = 3 + len(_AGGREGATOR_ORDER)
 _TIER_AGENCY = _TIER_OTHER + 1
+_TIER_RETAINED = -1
+SEARCH_FIRM_SOURCE_PREFIX = "searchfirm:"
 
 APPLY_COLS = (
     "id, source, company, url, employer_link_source, employer_link_external_id, "
-    "employer_link_url, source_state, cluster_id"
+    "employer_link_url, source_state, cluster_id, posting_check, posting_closed_at"
 )
 
 
@@ -77,6 +82,19 @@ def _board_label(source: str) -> str:
     return f"{EMPLOYER_SITE} ({name})" if name else EMPLOYER_SITE
 
 
+def _open_retained_search(row: Any) -> bool:
+    """A search-firm listing whose own page has not been found closed."""
+    return (
+        _get(row, "source").startswith(SEARCH_FIRM_SOURCE_PREFIX)
+        and _get(row, "posting_check") != "closed"
+        and not _get(row, "posting_closed_at")
+    )
+
+
+def _firm_name(company: str) -> str:
+    return company.removesuffix(RETAINED_SUFFIX).strip()
+
+
 def _candidates(row: Any) -> list[tuple[int, str, str]]:
     """(tier, url, label) for everything one member offers."""
     out: list[tuple[int, str, str]] = []
@@ -92,7 +110,10 @@ def _candidates(row: Any) -> list[tuple[int, str, str]]:
         link = Link(link_source, _get(row, "employer_link_external_id"), link_url)
         out.append((2, apply_url(link, _get(row, "company")), EMPLOYER_SITE))
     own = _get(row, "url")
-    if is_authoritative(source):
+    if _open_retained_search(row):
+        label = f"retained search ({_firm_name(_get(row, 'company'))})"
+        out.append((_TIER_RETAINED, own, label))
+    elif is_authoritative(source):
         out.append((0, own, _board_label(source)))
     elif is_agency(_get(row, "company")):
         out.append((_TIER_AGENCY, own, f"{_get(row, 'company')} (agency)"))

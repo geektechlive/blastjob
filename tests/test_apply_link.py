@@ -80,7 +80,7 @@ def test_order_after_the_board_posting():
     linkedin = _m("linkedin", "https://www.linkedin.com/jobs/view/2/")
     indeed = _m("indeed", "https://www.indeed.com/viewjob?jk=2")
     adzuna = _m("adzuna", "https://www.adzuna.com/details/2")
-    other = _m("searchfirm:kf", "https://kornferry.com/j/2")
+    other = _m("somefeed", "https://feed.example/j/2")
     agency = _m("linkedin", "https://www.linkedin.com/jobs/view/3/", company="Talonridge Global")
 
     pool = [agency, other, adzuna, indeed, linkedin, manual, page_link, board_link]
@@ -91,7 +91,7 @@ def test_order_after_the_board_posting():
         ("https://www.linkedin.com/jobs/view/2/", "LinkedIn"),
         ("https://www.indeed.com/viewjob?jk=2", "Indeed"),
         ("https://www.adzuna.com/details/2", "Adzuna"),
-        ("https://kornferry.com/j/2", "searchfirm:kf"),
+        ("https://feed.example/j/2", "somefeed"),
         ("https://www.linkedin.com/jobs/view/3/", "Talonridge Global (agency)"),
     ]
     for url, label in expected:

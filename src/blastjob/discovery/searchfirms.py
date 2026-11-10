@@ -48,13 +48,16 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from urllib.parse import urlparse
 
 import httpx
 
+from blastjob.core.agencies import RETAINED_SUFFIX
+from blastjob.core.titles import EXEC_TITLE
 from blastjob.discovery.base import RawPosting
 from blastjob.discovery.textutil import normalize_region
 from blastjob.matching.prefilter import classify_scope
@@ -88,7 +91,17 @@ _NOT_POSTING = re.compile(
 # (`/roles/cio-executive-search/`). Matched on the final segment only, so a
 # listing's own slug elsewhere in the path is untouched.
 _NOT_POSTING_SLUG = re.compile(r"(?:^|-)(?:interviews?|executive-search)$", re.I)
-_EXEC_TITLE = re.compile(r"\b(cio|cto|ciso|chief|vice president|vp|svp|director|head)\b", re.I)
+
+
+# The one sentence a firm uses for a completed search (ADR 0073). Nothing else counts.
+_FILLED_MARKER = re.compile(r"this (?:position|search|role) has been filled", re.I)
+
+
+def filled_sentence(text: str) -> str | None:
+    """The firm's "this position has been filled" sentence if `text` carries it, else None.
+    The matched wording is the evidence recorded when a stored search is closed."""
+    match = _FILLED_MARKER.search(text or "")
+    return match.group(0) if match else None
 
 
 def source_for(slug: str) -> str:
@@ -108,6 +121,8 @@ class FirmReport:
     results: int = 0
     kept: int = 0
     errors: int = 0
+    # Kept pages whose read carried the filled sentence: not returned, so not stored (#115).
+    filled: int = 0
 
     @property
     def silent(self) -> bool:
@@ -214,7 +229,7 @@ def looks_like_posting(
     keep, _ = classify_scope(title, "", keep_terms, drop_terms)
     if not keep:
         return False
-    return bool(_EXEC_TITLE.search(title))
+    return bool(EXEC_TITLE.search(title))
 
 
 def external_id_for(url: str) -> str:
@@ -233,19 +248,30 @@ def infer_geo(
     """(location_raw, region, remote) inferred from title/description text —
     search results carry no structured location field. `places` are the
     place names to look for (`discovery.search_firm_places`, else the search
-    regions); the first one found in the text is read back as the posting's
-    rough location. A spelled-out state name becomes its USPS code; any other
-    place is taken to be in the configured `home_state` (the places are the
-    user's own search area)."""
+    regions). The configured place that appears EARLIEST in the text is read
+    back as the posting's rough location, a city before a state: a state name
+    ("Wisconsin") wins only when no configured city appears, because a state
+    gives no centroid (#113). A spelled-out state name becomes its USPS code;
+    any other place is taken to be in the configured `home_state` (the places
+    are the user's own search area). `remote` comes from the text as given."""
     text = f"{title} {description}".lower()
     remote: bool | None = True if "remote" in text else None
+    cities: list[tuple[int, str, str]] = []
+    states: list[tuple[int, str, str]] = []
     for place in places:
         name = place.strip()
-        if not name or name.lower() == "remote" or name.lower() not in text:
+        pos = text.find(name.lower()) if name else -1
+        if pos < 0 or name.lower() == "remote":
             continue
         code = normalize_region(name)
-        region = code if code != name else home_state.strip().upper()
-        return name.title(), region, remote
+        if code != name:
+            states.append((pos, name, code))
+        else:
+            cities.append((pos, name, home_state.strip().upper()))
+    for hits in (cities, states):
+        if hits:
+            _pos, name, region = min(hits, key=lambda h: h[0])
+            return name.title(), region, remote
     return "", "", remote
 
 
@@ -341,6 +367,27 @@ class SearchFirmAdapter:
             return await self._reader(url)
         return await _default_reader(url, self.api_key, timeout_s=self.timeout_s)
 
+    @property
+    def can_read(self) -> bool:
+        """A page read is possible: an injected reader, or a Jina key."""
+        return self._reader is not None or bool(self.api_key)
+
+    async def read_page(self, url: str) -> str:
+        """Read one page through the adapter's reader (the reconcile re-read uses it)."""
+        return await self._read_one(url)
+
+    def _with_page_text(self, p: RawPosting, text: str) -> dict[str, object]:
+        """Fields a page read changes. The full page may name the place the snippet did not
+        (#113); `remote` is never taken from page text, since boilerplate can say "remote" on
+        an on-site role (only proof moves state)."""
+        update: dict[str, object] = {"description": text}
+        if p.location_raw:
+            return update
+        location_raw, region, _remote = infer_geo(p.title, text, self.places, self.home_state)
+        if location_raw:
+            update.update(location_raw=location_raw, region=region)
+        return update
+
     async def fetch(self) -> list[RawPosting]:
         if self._search is None and not self.api_key:
             raise RuntimeError(f"{JINA_KEY_ENV} is not set (add it to {secrets_file_hint()})")
@@ -378,7 +425,7 @@ class SearchFirmAdapter:
                     postings[ext_id] = RawPosting(
                         source=source_for(firm.slug),
                         external_id=ext_id,
-                        company=f"{firm.name} (retained search)",
+                        company=f"{firm.name}{RETAINED_SUFFIX}",
                         title=title,
                         url=url,
                         description=description,
@@ -413,7 +460,8 @@ class SearchFirmAdapter:
             )
 
         reads = 0
-        for ext_id, p in postings.items():
+        filled_by_slug: Counter[str] = Counter()
+        for ext_id, p in list(postings.items()):
             if ext_id in self.known_ids:
                 continue
             if reads >= self.max_reads:
@@ -424,7 +472,16 @@ class SearchFirmAdapter:
             except Exception as e:  # noqa: BLE001 — fail-soft; the search snippet stays
                 log.warning("searchfirm reader failed for %s: %s: %s", p.url, type(e).__name__, e)
                 continue
-            if text:
-                postings[ext_id] = p.model_copy(update={"description": text})
+            if not text:
+                continue
+            if filled_sentence(text):
+                del postings[ext_id]
+                filled_by_slug[str(p.extra.get("firm", ""))] += 1
+                continue
+            postings[ext_id] = p.model_copy(update=self._with_page_text(p, text))
 
+        self.firm_reports = [
+            replace(r, filled=filled_by_slug[r.slug]) if filled_by_slug[r.slug] else r
+            for r in self.firm_reports
+        ]
         return list(postings.values())

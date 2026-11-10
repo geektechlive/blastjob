@@ -64,6 +64,8 @@ For a `previous` suggestion the detail page says "You applied to this role on <M
 
 An agency and an employer posting of the same role are a suggestion, never a merge (`same_role.possible_same_role`). Applying through both can start a candidate-ownership dispute and cost the placement. The match is an equal normalized title, a strict same metro, and first seen within 60 days (`SUGGEST_WINDOW_DAYS`). Description overlap is shown as supporting evidence only, because agencies rewrite descriptions.
 
+A retained-search listing counts as an agency (`agencies.is_agency` matches the literal suffix ` (retained search)` the search-firm adapter writes; a company merely named "... Search" is unchanged). Its title usually leads with the employer ("<Employer> - <Title>"), so `same_role.title_keys` also knows an agency row under its **role segment**: the one piece of the title, split on ` - `, ` | ` or an en dash, that reads as a leadership title (`titles.role_segment`; with zero or several, nothing extra). Index and lookup use the same keys and dedupe by job id, so the pair is found from either side. Only the matching uses the segment; the displayed title is unchanged. The pair is still a suggestion the owner confirms, never a merge.
+
 The detail page warns (in red when the other posting is already applied). List rows get a chip such as "possible duplicate of <company>" or "already applied: <company>", and **Mark applied** and **Advance** carry a confirmation naming the posting. An agency posting with no match says "Employer not named in this posting". An agency's client is never named beyond "possibly the same role as <a posting already in the database>". Several matching employers are shown together and nothing is linked until the user decides.
 
 ## Same or different decisions
@@ -102,6 +104,7 @@ A recruiter can put you forward for a role you then apply to directly, and the e
 
 Each role shows one "apply here" link: the best URL across its cluster (`web/apply_link.py`, `best_apply_link`). Preference, best first:
 
+0. An open retained search's own page, labelled "retained search (<firm>)": a retained firm owns the process, so it comes first. A search whose page is closed (`posting_check = 'closed'` or `posting_closed_at` set) is skipped here and the link falls back to the best active member. Contingency agencies stay last (tier 5).
 1. The employer's own board posting, labelled with its board ("employer site (Workday)").
 2. A board link closure found.
 3. An employer careers-page link or the user's manual link. A limited-trust page contributes its ATS tenant root, or nothing until that is known (see [trust levels](closure.md#trust-levels)).

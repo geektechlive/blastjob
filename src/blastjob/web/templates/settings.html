@@ -94,6 +94,10 @@
     <textarea name="title_drop_terms" rows="3">{{ cfg.discovery.title_drop_terms | join('\n') }}</textarea>
     <small>Dropped before any LLM call unless the description shows people-management scope.</small>
   </label>
+  <label>Search firms (one per line: <code>Name | domain | slug</code>)
+    <textarea name="search_firms" rows="4">{{ search_firms_text }}</textarea>
+    <small>Domain is a bare host such as <code>firm.example</code>. The slug is optional (it defaults to the domain's first label) and never changes once saved, because stored jobs are tagged <code>searchfirm:slug</code>. Removing a line stops future sweeps of that firm; its stored jobs stay.</small>
+  </label>
   <label>Search-firm queries (one per line)
     <textarea name="search_firm_queries" rows="3">{{ cfg.discovery.search_firm_queries | join('\n') }}</textarea>
   </label>

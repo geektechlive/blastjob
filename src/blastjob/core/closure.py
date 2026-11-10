@@ -161,6 +161,31 @@ def close_transition(
     return moved
 
 
+def close_from_page_evidence(
+    conn: sqlite3.Connection, job_id: int, *, now: datetime, auto: bool, page_text: str
+) -> bool:
+    """Close a search-firm row on its own page's evidence (ADR 0073), atomically.
+
+    One transaction: the verdict (`posting_check='closed'`, stamped) and the page text as the
+    evidence in `raw_jd` (unless the user pasted a description by hand, which is never
+    replaced), then the usual `close_transition`. The first statement is guarded on
+    posting_check_manual=0; when it matches nothing (a pinned or missing row) nothing is
+    written and False is returned. Returns True when the closure was recorded."""
+    stamp = _stamp(now)
+    cur = conn.execute(
+        "UPDATE jobs SET posting_check='closed', posting_checked_at=?, "
+        "raw_jd=CASE WHEN COALESCE(jd_pasted_at,'')='' THEN ? ELSE raw_jd END "
+        f"WHERE id=?{_NOT_MANUAL}",
+        (stamp, page_text, job_id),
+    )
+    if cur.rowcount != 1:
+        # Nothing was written; no rollback, so a caller's own pending writes survive.
+        return False
+    close_transition(conn, job_id, now=now, auto=auto)
+    conn.commit()
+    return True
+
+
 def reopen_transition(
     conn: sqlite3.Connection, job_id: int, *, auto: bool, respect_manual: bool = True
 ) -> bool:
@@ -533,7 +558,12 @@ async def run_closure(
         radius_miles=cfg.discovery.commute_radius_miles,
         geo=cfg.discovery,
     )
-    rows = conn.execute(f"SELECT {_ROW_COLS} FROM jobs WHERE posting_check_manual=0").fetchall()
+    # A search-firm row's verdict comes from its own page (`close_from_page_evidence`); this
+    # pass would call it "unverifiable" and reopen what the page closed (ADR 0073).
+    rows = conn.execute(
+        f"SELECT {_ROW_COLS} FROM jobs WHERE posting_check_manual=0 "
+        "AND source NOT LIKE 'searchfirm:%'"
+    ).fetchall()
     linked, unlinked = _sweep_local(ctx, rows)
     conn.commit()  # release the write lock before the first network await
     for row in sorted(linked, key=_network_order):

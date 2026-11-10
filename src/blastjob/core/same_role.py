@@ -8,8 +8,10 @@ two into one cluster) or dismisses ('different', which suppresses it forever).
 It never names an agency's client: a candidate is an employer posting that is
 already in the database.
 
-Match: equal normalized title, same metro (strict: same city, centroids within
-the commute radius, or both remote), first seen within `SUGGEST_WINDOW_DAYS`.
+Match: equal normalized title (an agency row is also known by its role segment, so a search
+firm's "<Employer> - <Title>" meets the employer's bare title), same metro (strict: same
+city, centroids within the commute radius, or both remote), first seen within
+`SUGGEST_WINDOW_DAYS`.
 JD text is supporting evidence only: agencies rewrite descriptions.
 
 A second kind, PREVIOUS: the same employer re-posting a role the user already
@@ -31,7 +33,7 @@ from dataclasses import dataclass, replace
 from blastjob.core import role_clusters as rc
 from blastjob.core.agencies import is_agency
 from blastjob.core.company import company_key
-from blastjob.core.titles import normalize_role_title
+from blastjob.core.titles import normalize_role_title, role_segment
 from blastjob.models.config import DiscoveryConfig
 
 # Agency re-posts trail or lead the employer's by weeks, not months.
@@ -138,6 +140,18 @@ def _matches(
     return rc.same_metro(rc.place_of(job, geo), rc.place_of(other, geo), radius_miles, loose=False)
 
 
+def title_keys(row: sqlite3.Row) -> set[str]:
+    """The normalized titles `row` is matched under: its own, plus (for an agency row only)
+    its role segment when exactly one segment reads as a leadership title. Used to index AND
+    to look up, so a pair is found from either side. Empty keys are dropped."""
+    keys = {normalize_role_title(row["title"])}
+    if is_agency(row["company"] or ""):
+        segment = role_segment(row["title"])
+        if segment:
+            keys.add(normalize_role_title(segment))
+    return {k for k in keys if k}
+
+
 class SameRoleIndex:
     """Every job's matching facts, loaded once (two queries) so a whole list
     can be checked without a query per row."""
@@ -149,9 +163,8 @@ class SameRoleIndex:
         self.decided = rc.decisions(conn)
         self.by_title: dict[str, list[sqlite3.Row]] = {}
         for r in self.rows.values():
-            title = normalize_role_title(r["title"])
-            if title:
-                self.by_title.setdefault(title, []).append(r)
+            for key in title_keys(r):
+                self.by_title.setdefault(key, []).append(r)
 
     def for_job(self, job_id: int) -> list[Candidate]:
         job = self.rows.get(job_id)
@@ -177,15 +190,22 @@ class SameRoleIndex:
     ) -> Iterable[tuple[sqlite3.Row, str, str]]:
         job_id = int(job["id"])
         job_is_agency = is_agency(job["company"] or "")
-        for other in self.by_title.get(normalize_role_title(job["title"]), []):
-            if other["id"] == job_id:
-                continue
+        for other in self._same_title(job):
             decision = self.decided.get(rc.pair_of(job_id, int(other["id"])), "")
             if decision == rc.DIFFERENT:
                 continue
             kind = self._kind(job, other, job_is_agency, require_applied)
             if kind:
                 yield other, decision, kind
+
+    def _same_title(self, job: sqlite3.Row) -> list[sqlite3.Row]:
+        """Rows sharing any title key with `job`, once each, in id order."""
+        found: dict[int, sqlite3.Row] = {}
+        for key in title_keys(job):
+            for other in self.by_title.get(key, []):
+                if other["id"] != job["id"]:
+                    found[int(other["id"])] = other
+        return [found[i] for i in sorted(found)]
 
     def _kind(
         self, job: sqlite3.Row, other: sqlite3.Row, job_is_agency: bool, require_applied: bool

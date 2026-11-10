@@ -836,4 +836,7 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE company_profiles ADD COLUMN review_evidence TEXT DEFAULT '';
         """,
     ),
+    # 75: when a stored search-firm row's own page was last read successfully (#115, ADR 0073).
+    # The re-read queue orders by it (blanks first), so every open row gets a turn.
+    (75, "ALTER TABLE jobs ADD COLUMN firm_page_checked_at TEXT DEFAULT '';"),
 ]
