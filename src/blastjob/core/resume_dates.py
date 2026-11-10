@@ -209,6 +209,19 @@ def employer_names(work_history_md: str) -> list[str]:
     return out
 
 
+def education_names(work_history_md: str) -> set[str]:
+    """The `employer_names` entries that sit under an `## Education` heading:
+    schools, which a resume may list without dates (#118)."""
+    out: set[str] = set()
+    in_education = False
+    for line in work_history_md.splitlines():
+        if line.startswith("## "):
+            in_education = "education" in line.lower()
+        elif in_education and line.startswith("### "):
+            out.update(employer_names(line))
+    return out
+
+
 def history_dates(work_history_md: str) -> dict[str, DateRange]:
     """company_key -> the authoritative span for that employer, unioned across
     every heading that names it.
@@ -304,5 +317,6 @@ def verify(resume_md: str, work_history_md: str) -> tuple[list[DateFinding], lis
         if not span.agrees_with(actual):
             findings.append(DateFinding(employer=label[key], claimed=str(span), actual=str(actual)))
 
-    undated = [n for n in names if company_key(n) in seen - set(found)]
+    schools = education_names(work_history_md)
+    undated = [n for n in names if company_key(n) in seen - set(found) and n not in schools]
     return findings, undated
