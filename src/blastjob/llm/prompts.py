@@ -1,3 +1,4 @@
+from blastjob.llm.fence import UNTRUSTED_JD_RULE
 from blastjob.models.config import CandidateConfig
 
 INGEST_SYSTEM = """\
@@ -225,6 +226,8 @@ showcase, boast, intricate, tapestry, surpass, and "not just X, but Y" construct
     + """
 
 Format: Markdown with ## headings and - bullets."""
+    + "\n\n"
+    + UNTRUSTED_JD_RULE
 )
 
 RESUME_ATS_SYSTEM = (
@@ -267,6 +270,8 @@ Employer | City, ST | Mon YYYY - Mon YYYY, then its hyphen bullets
     + """
 
 Write the complete ATS resume as plain text."""
+    + "\n\n"
+    + UNTRUSTED_JD_RULE
 )
 
 COVER_LETTER_SYSTEM = (
@@ -327,9 +332,12 @@ person talking, including one sentence that is warm or self-aware rather than a 
 
 FORMAT: plain Markdown paragraphs separated by blank lines. No headings, no bullets. Do not \
 invent a letterhead, a date, or a recipient address; those are added around your text."""
+    + "\n\n"
+    + UNTRUSTED_JD_RULE
 )
 
-COVERAGE_SYSTEM = """\
+COVERAGE_SYSTEM = (
+    """\
 You are a strict job-fit auditor. Given a job description and a candidate's master work \
 history, decide how well the work history actually supports the JD's requirements — BEFORE \
 any resume is written.
@@ -366,6 +374,9 @@ Return valid JSON matching this schema exactly — no prose outside the JSON obj
     }
   ]
 }"""
+    + "\n\n"
+    + UNTRUSTED_JD_RULE
+)
 
 REFINE_SYSTEM = (
     """\
@@ -398,6 +409,8 @@ no diff. Start directly with the resume content."""
     # place.
     + _TRUTH_BOUNDARY
     + _CREDENTIAL_RULE
+    + "\n\n"
+    + UNTRUSTED_JD_RULE
 )
 
 FIT_SCORE_SYSTEM = (
@@ -439,6 +452,8 @@ Return valid JSON matching this schema exactly — no prose outside the JSON obj
   "unsupported_count": <int>,
   "summary": "<2-3 sentence verdict>"
 }"""
+    + "\n\n"
+    + UNTRUSTED_JD_RULE
 )
 
 

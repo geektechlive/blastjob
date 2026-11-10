@@ -36,12 +36,14 @@ The truth rules that live in prompts (no imported nouns, no borrowed qualifiers,
 summed figures, no completion-tense upgrades, credentials quoted) are
 `prompts._TRUTH_BOUNDARY` and `prompts._CREDENTIAL_RULE`. They are prompt rules, not checks;
 [Truth guarantees](../truth-guarantees.md) says which rules code enforces and which it does
-not. Fencing is uneven, so do not assume it: research and fetched pages are sanitized
-(`research_facts.strip_instructions`) and fenced in isolated calls; the matching scorer fences
-each job (`<JOB>`, with the tag defanged by `prompts.fence_safe`), the prep pack fences its
-material, and the cover-letter scorer fences the research and the letter. In the resume,
-cover-letter, refine and fit-score calls the job description is plain text under a
-`## Job Description` heading, constrained only by prompt rules.
+not. Research and fetched pages are sanitized (`research_facts.strip_instructions`) and
+fenced in isolated calls. The job description is fenced in every call that carries it: the
+matching scorer fences each job (`<JOB>`), and the resume, cover-letter, coverage, refine and
+fit-score builders wrap it with `fence.fence_job`. Both defang the tag with `fence.fence_safe`,
+and each of those system prompts ends with `fence.UNTRUSTED_JD_RULE`. The prep pack fences its
+material, and the cover-letter scorer fences the research and the letter. A fence is a hint to
+the model, not a control: the draft-only rule and the toolless CLI are what stop an injected
+instruction from acting.
 
 ## Prompt caching
 

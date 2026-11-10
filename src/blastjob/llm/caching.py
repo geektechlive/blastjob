@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from blastjob.llm.fence import fence_job
+
 
 def cached_text(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
@@ -9,6 +11,11 @@ def cached_text(text: str) -> dict[str, Any]:
 
 def plain_text(text: str) -> dict[str, Any]:
     return {"type": "text", "text": text}
+
+
+def _jd_block(job_description: str) -> str:
+    """The job description as untrusted data: fenced, the tag defanged (#103)."""
+    return f"## Job Description\n\n{fence_job(job_description)}"
 
 
 def build_ingest_messages(
@@ -39,9 +46,7 @@ def build_resume_messages(
     user_content = [
         cached_text(work_history_md),  # BP 2
         cached_text(template_md),  # BP 3
-        plain_text(
-            f"## Job Description\n\n{job_description}\n\n## Company Facts\n\n{company_facts_md}"
-        ),
+        plain_text(f"{_jd_block(job_description)}\n\n## Company Facts\n\n{company_facts_md}"),
     ]
     return system, user_content
 
@@ -67,9 +72,7 @@ def build_cover_letter_messages(
     user_content = [
         cached_text(work_history_md),  # BP 2
         plain_text(f"## Current Resume\n\n{resume_md}"),
-        plain_text(
-            f"## Job Description\n\n{job_description}\n\n## Company Facts\n\n{company_facts_md}"
-        ),
+        plain_text(f"{_jd_block(job_description)}\n\n## Company Facts\n\n{company_facts_md}"),
     ]
     return system, user_content
 
@@ -86,7 +89,7 @@ def build_coverage_messages(
     system = [cached_text(system_prompt)]  # BP 1
     user_content = [
         cached_text(work_history_md),  # BP 2
-        plain_text(f"## Job Description\n\n{job_description}"),
+        plain_text(_jd_block(job_description)),
     ]
     return system, user_content
 
@@ -108,7 +111,7 @@ def build_refine_messages(
     user_content = [
         cached_text(work_history_md),  # BP 2
         plain_text(f"## Current Resume\n\n{current_resume_md}"),
-        plain_text(f"## Feedback\n\n{feedback}\n\n## Job Description\n\n{job_description}"),
+        plain_text(f"## Feedback\n\n{feedback}\n\n{_jd_block(job_description)}"),
     ]
     return system, user_content
 
@@ -129,8 +132,6 @@ def build_score_messages(
     system = [cached_text(system_prompt)]  # BP 1
     user_content = [
         cached_text(work_history_md),  # BP 2
-        plain_text(
-            f"## Generated Resume\n\n{resume_md}\n\n## Job Description\n\n{job_description}"
-        ),
+        plain_text(f"## Generated Resume\n\n{resume_md}\n\n{_jd_block(job_description)}"),
     ]
     return system, user_content

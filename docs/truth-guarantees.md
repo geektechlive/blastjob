@@ -43,7 +43,7 @@ scoring, research, closure or same-role paths. The mechanics live in
 
 | Input | Trust | Defence |
 |---|---|---|
-| Board JSON, job text, alert mail | untrusted data | Pydantic at the boundary; rendered through Jinja autoescaping. In scoring and prep prompts the job text is fenced (`<JOB>`, `<MATERIAL>`) and the fence tag is defanged; in the resume, letter, refine and fit-score calls it is plain text under a heading, constrained only by prompt rules |
+| Board JSON, job text, alert mail | untrusted data | Pydantic at the boundary; rendered through Jinja autoescaping. In every prompt that carries it (scoring, prep, resume, letter, coverage, refine, fit score) the job text is fenced (`<JOB>`, `<MATERIAL>`), the fence tag is defanged, and the system text says it is data, not instructions |
 | Any URL reaching an `href` | untrusted | `urls.safe_external_url` (see [Safe links](#safe-links)) |
 | Model-authored people or sources | untrusted | allowlisted to URLs actually fetched (see [Never invent a person](#never-invent-a-person)) |
 | Company research | untrusted | anchored to the employer, every fact span-verified against the page it cites, distilled in an isolated call (see [Research is a trust boundary](#research-is-a-trust-boundary)) |

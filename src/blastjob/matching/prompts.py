@@ -14,8 +14,7 @@ Design constraints baked into the wording:
 
 from __future__ import annotations
 
-import re
-
+from blastjob.llm.fence import fence_safe as fence_safe  # re-exported for callers
 from blastjob.models.config import CandidateConfig
 
 ALIGN_SYSTEM = """You are a recruiter scoring how well ONE candidate fits each role, \
@@ -117,18 +116,6 @@ def system_for(candidate: CandidateConfig | None) -> str:
 
 
 MAX_REJECTION_EXAMPLES = 15
-
-# Any `<JOB` / `</JOB` (case-insensitive, whitespace tolerated) inside posting text.
-_FENCE_TAG = re.compile(r"<(\s*/?\s*JOB)", re.IGNORECASE)
-
-
-def fence_safe(text: object) -> str:
-    """Defang the fence tag in untrusted text. A posting that contains `</JOB>`
-    would otherwise close its own fence and put the rest in the prompt's
-    instruction space (or open a forged `<JOB id=N>` for another job). The `<` is
-    swapped for a full-width look-alike, so the text stays readable to the model
-    but can never match the fence."""
-    return _FENCE_TAG.sub(lambda m: "＜" + m.group(1), str(text or ""))
 
 
 def rejection_block(rejections: list[dict]) -> str:
