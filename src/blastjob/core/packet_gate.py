@@ -229,6 +229,9 @@ _SKIPPED_LABELS = {
     "this packet has no letter.",
     "resume_groundedness": "Resume groundedness was not checked (the scoring call did not run), "
     "so claims in the resume were not verified against your work history.",
+    "resume_groundedness_unreliable": "Resume groundedness was not checked: the scoring run was "
+    "unreliable (it marked most claims unsupported although they appear word for word in your "
+    "work history). Refine or rebuild the packet to re-score it.",
     "cover_letter_claims": "The cover letter's claims were not checked (the scoring call did not "
     "run), so its statements about you and the employer are unverified.",
     "company_research_sources": "Company facts have no cited source: no fetched web page "

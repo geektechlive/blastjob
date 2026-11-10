@@ -84,6 +84,16 @@ history says something narrower, industry re-framing of a past employer, and qua
 borrowed from the posting ("multi-site", "global team"). The resume prompts forbid each of
 these (`prompts._TRUTH_BOUNDARY`, a prompt rule).
 
+**Rule: a scoring run that contradicts the history is not checked, not low.** When more than
+half of the model's claims are unsupported, yet at least 80% of those appear word for word
+(whole tokens, bullet and bold markers stripped) in `work_history.md`, `scoring.run_is_unreliable`
+marks the run unreliable. Date findings are left out of the test. The packet then reads like a
+scorer that did not run: no score, no unsupported-claim findings, and a "not checked, re-score"
+reason in the gate (`packet_verify.SKIPPED_RESUME_UNRELIABLE`) and the cockpit. It never marks a
+claim grounded: a verbatim line can still sit under the wrong employer. Both shares
+(`scoring.UNRELIABLE_UNSUPPORTED_SHARE`, `scoring.UNRELIABLE_VERBATIM_SHARE`) are uncalibrated,
+set from one observed run.
+
 **Rule: the floor is uncalibrated and never blocks.** Below `GROUNDEDNESS_FLOOR_DEFAULT`
 (85, in `core/scoring.py`) a packet is badged "needs review" in the cockpit
 (`web/fitscore.py`). It compares groundedness, not the overall score, and it is never a

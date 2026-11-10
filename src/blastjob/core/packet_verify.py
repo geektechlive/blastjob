@@ -45,6 +45,8 @@ log = logging.getLogger(__name__)
 # `checks_skipped` names for the two model-backed scorers. A scorer that did not
 # run is not evidence of a clean packet, so its absence is recorded and shown.
 SKIPPED_RESUME_SCORE = "resume_groundedness"
+# The scorer ran but its verdicts contradicted the work history (#106).
+SKIPPED_RESUME_UNRELIABLE = "resume_groundedness_unreliable"
 SKIPPED_COVER_LETTER_SCORE = "cover_letter_claims"
 # The letter was asked for but its generation failed (e.g. a `claude -p` CLIError).
 # Fail-soft so the finished resume is not lost, but never silent.
@@ -219,6 +221,12 @@ def verify_packet(
     # them here produced a second finding with an EMPTY evidence field, filed
     # under "claims with no support in your work history" -- which is a mislabel
     # for a date range, and made one defect look like three.
+    #
+    # A run `scoring.parse_score` marked unreliable (#106) is treated as a scorer
+    # that did not run: recorded as not checked, never as a low score or findings.
+    unreliable_score = fit_score is not None and fit_score.unreliable
+    if unreliable_score:
+        fit_score = None
     if fit_score is not None:
         findings.extend(
             Finding(
@@ -238,7 +246,9 @@ def verify_packet(
         findings.extend(carried_cover_findings)
 
     skipped: list[str] = []
-    if fit_score is None:
+    if unreliable_score:
+        skipped.append(SKIPPED_RESUME_UNRELIABLE)
+    elif fit_score is None:
         skipped.append(SKIPPED_RESUME_SCORE)
     if cover_letter_expected and not cover_letter_md:
         skipped.append(SKIPPED_COVER_LETTER_GENERATION)

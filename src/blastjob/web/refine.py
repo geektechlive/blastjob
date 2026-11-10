@@ -202,10 +202,16 @@ def make_refine_work(
                 _register(cfg, job_id, artifact_dir)
             _refile(cfg, job_id)
         score = getattr(fit, "groundedness_score", None)
+        if getattr(fit, "unreliable", False):
+            rescored = " — scorer run unreliable, groundedness not checked; re-score"
+        elif score is not None:
+            rescored = f" — groundedness now {score}"
+        else:
+            rescored = " — not re-scored"
         run.emit(
             "log",
             f"Saved {new_path.name}"
-            + (f" — groundedness now {score}" if score is not None else " — not re-scored")
+            + rescored
             + f". Cost {describe_cost(tracker.total_call_cost)}.",
         )
         if new_path.parent.name == "quarantine":

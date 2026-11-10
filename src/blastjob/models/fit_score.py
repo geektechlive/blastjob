@@ -36,3 +36,6 @@ class FitScore(_NullTolerant):
     # statement, so it does not count against groundedness, but it is reported.
     undated_employers: list[str] = Field(default_factory=list)
     summary: str = ""
+    # Set by `scoring.parse_score` when the run contradicts the work history
+    # (#106). Every consumer treats it as "not checked", never as a score.
+    unreliable: bool = False

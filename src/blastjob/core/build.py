@@ -348,6 +348,7 @@ async def run_build(
     # parse a usage figure); the *_cost_usd fields below are `None` in that
     # case, never a partial sum passed off as the whole.
     build_total: CallCost = aggregate_calls(cost_tracker.calls[_calls_before_this_build:])
+    reliable = fit_score if fit_score is not None and not fit_score.unreliable else None
 
     (out_dir / f"{role_slug}.metadata.json").write_text(
         json.dumps(
@@ -401,9 +402,11 @@ async def run_build(
                 ),
                 "formats": list(formats),
                 "ats_mode": use_ats,
-                "fit_score": fit_score.overall_score if fit_score else None,
-                "groundedness_score": fit_score.groundedness_score if fit_score else None,
-                "unsupported_claims": fit_score.unsupported_count if fit_score else None,
+                # An unreliable run (#106) records no numbers, only the flag.
+                "fit_score": reliable.overall_score if reliable else None,
+                "groundedness_score": reliable.groundedness_score if reliable else None,
+                "unsupported_claims": reliable.unsupported_count if reliable else None,
+                "groundedness_unreliable": bool(fit_score and fit_score.unreliable),
                 "include_cover_letter": include_cover_letter,
                 "cover_letter_cost_usd": (
                     round(cover_letter_cost.cost_usd, 6)

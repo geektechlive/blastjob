@@ -6,6 +6,7 @@ pulling in the full build module (which would create a circular import).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 
 from blastjob.core import resume_dates
@@ -24,6 +25,16 @@ GROUNDEDNESS_FLOOR_DEFAULT = 85
 # A quote shorter than this (normalized) is a substring of almost any history ("led",
 # "AWS"), so it proves nothing. Shared with research-fact spans (`core/research_facts.py`).
 MIN_SPAN_CHARS = 16
+
+# A run is unreliable (#106) when MORE than this share of the model's claims are
+# unsupported AND at least UNRELIABLE_VERBATIM_SHARE of those appear word for word
+# in the work history. UNCALIBRATED: set from one observed run (23 verbatim claims
+# marked unsupported, groundedness 100 -> 43 -> 100 on consecutive passes).
+UNRELIABLE_UNSUPPORTED_SHARE = 0.5
+UNRELIABLE_VERBATIM_SHARE = 0.8
+
+# Bullet and bold markers around a claim's text, which the history may not carry.
+_CLAIM_EDGES = re.compile(r"^[\s*\-•]+|[\s*]+$")
 
 
 def needs_review(groundedness_score: int, floor: int = GROUNDEDNESS_FLOOR_DEFAULT) -> bool:
@@ -70,6 +81,31 @@ def _quote_supported(quote: str, normalized_history: str) -> bool:
     return normalized in normalized_history
 
 
+def _verbatim_in_history(claim_text: str, normalized_history: str) -> bool:
+    """True when the claim, stripped of bullet and bold markers, appears in the
+    history as whole tokens (no partial word at either end)."""
+    body = _normalize_ws(_CLAIM_EDGES.sub("", claim_text.replace("**", "")))
+    if len(body) < MIN_SPAN_CHARS:
+        return False
+    return re.search(rf"(?<!\w){re.escape(body)}(?!\w)", normalized_history) is not None
+
+
+def run_is_unreliable(claims: Sequence[ClaimCheck], work_history_md: str) -> bool:
+    """True when the model's verdicts contradict the history: most of its claims
+    are unsupported, yet nearly all of those appear verbatim in the history.
+
+    This never marks a claim grounded. A verbatim claim can still be wrong (placed
+    under the wrong employer), so the run is reported as not checked and re-scored,
+    not passed. Date findings are deterministic and are left out of the test."""
+    model_claims = [c for c in claims if c.source_section != "dates"]
+    unsupported = [c for c in model_claims if not c.grounded]
+    if not model_claims or len(unsupported) <= len(model_claims) * UNRELIABLE_UNSUPPORTED_SHARE:
+        return False
+    haystack = _normalize_ws(work_history_md.replace("**", ""))
+    verbatim = sum(1 for c in unsupported if _verbatim_in_history(c.claim_text, haystack))
+    return verbatim >= len(unsupported) * UNRELIABLE_VERBATIM_SHARE
+
+
 async def score_resume(
     resume_md: str,
     work_history_md: str,
@@ -103,7 +139,9 @@ async def score_resume(
 
         score = parse_score(full_text, work_history_md, resume_md)
 
-        if on_text:
+        if on_text and score.unreliable:
+            on_text("Fit score: scorer run unreliable, groundedness not checked; re-score.\n")
+        elif on_text:
             on_text(
                 f"Fit score: {score.overall_score}/100"
                 f"  (JD alignment: {score.jd_alignment_score},"
@@ -133,6 +171,15 @@ def parse_score(text: str, work_history_md: str, resume_md: str = "") -> FitScor
     # Python-side verification: downgrade any claim whose evidence_quote is not an
     # actual substring of work_history_md — prevents Claude from fabricating quotes.
     score.claims = verify_claims(score.claims, work_history_md)
+
+    score.unreliable = run_is_unreliable(score.claims, work_history_md)
+    if score.unreliable:
+        unsupported = sum(1 for c in score.claims if not c.grounded)
+        score.summary = (
+            f"Scorer run unreliable: it marked {unsupported} of {len(score.claims)} claims "
+            "unsupported, yet they appear word for word in the work history. Groundedness was "
+            "not checked; refine or rebuild the packet to re-score it. Model summary: "
+        ) + score.summary
 
     # Employment dates, checked deterministically rather than left to the model.
     # A generated resume once carried six invented date ranges -- two four-month
@@ -164,15 +211,23 @@ def parse_score(text: str, work_history_md: str, resume_md: str = "") -> FitScor
 
 
 def render_score_md(score: FitScore) -> str:
-    lines = [
-        "# Fit Score Report",
-        "",
-        f"**Overall:** {score.overall_score}/100",
-        f"**JD Alignment:** {score.jd_alignment_score}/100",
-        f"**Groundedness:** {score.groundedness_score}/100",
-        f"**Unsupported claims:** {score.unsupported_count}",
-        "",
-    ]
+    if score.unreliable:
+        lines = [
+            "# Fit Score Report",
+            "",
+            "**Groundedness:** not checked (scorer run unreliable; re-score)",
+            "",
+        ]
+    else:
+        lines = [
+            "# Fit Score Report",
+            "",
+            f"**Overall:** {score.overall_score}/100",
+            f"**JD Alignment:** {score.jd_alignment_score}/100",
+            f"**Groundedness:** {score.groundedness_score}/100",
+            f"**Unsupported claims:** {score.unsupported_count}",
+            "",
+        ]
     if score.undated_employers:
         lines += [
             "**Employers with no dates shown:** "

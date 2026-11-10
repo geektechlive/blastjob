@@ -535,7 +535,8 @@ def _write_sidecars(
             version_n=prior_n + 1,
             feedback=feedback,
             cost=cost,
-            fit_score=fit_score.overall_score if fit_score else None,
+            # An unreliable run (#106) logs no score.
+            fit_score=(fit_score.overall_score if fit_score and not fit_score.unreliable else None),
         )
     except Exception:  # noqa: BLE001 -- fail-soft by design
         log.warning("refine: could not write the sidecars for %s", target.stem, exc_info=True)

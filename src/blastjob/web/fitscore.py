@@ -97,6 +97,13 @@ def load_fit_score(
         score = FitScore.model_validate_json(picks[0].path.read_text(encoding="utf-8"))
     except Exception as exc:  # unreadable, truncated, or a shape we do not know
         return _not_scored(f"Fit score could not be read ({type(exc).__name__}).", floor)
+    if score.unreliable:
+        return _not_scored(
+            "The scoring run was unreliable: it marked most claims unsupported although they "
+            "appear word for word in your work history. Refine or rebuild the packet to "
+            "re-score it.",
+            floor,
+        )
 
     note = NOTE
     warning = mismatch_note(picks, role_slug)
